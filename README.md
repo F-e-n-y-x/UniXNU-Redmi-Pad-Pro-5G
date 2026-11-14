@@ -1,4 +1,4 @@
-# ruan-ipados
+# iPadOS on Redmi Pad Pro 5G
 
 UniXNU port of iPadOS 17.7.11 (21H461) to the Xiaomi Redmi Pad Pro 5G / POCO Pad 5G ("ruan", SM7435), booted RAM-only
 with `fastboot boot` (nothing is flashed). Status: kernel, launchd, daemons, writable `/private/var` and the first iPadOS
