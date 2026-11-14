@@ -430,7 +430,7 @@ sources = [GOPFB / 'NativeLegacyDisplay.cpp', GOPFB / 'NativeLegacyRequest.h',
            GOPFB / 'OriginalMobileFramebufferABI.h', PROBE_SOURCE, OUT / 'OriginalLegacyFramebufferABI.h', *GOPFB_PATCHES,
            HID_SOURCE, PROBE_SOURCE.parent / 'HidInputProbe.cpp', OUT / 'OriginalHidDeviceABI.h',
            *(PROBE_SOURCE.parent / n for n in ('UsbDebugCdc.cpp', 'UsbDebugCdc.h', 'UsbDebugHw.h', 'UsbDebugCommands.h',
-                                               'UsbDebugWire.h', 'SmmuBypass.h'))]
+                                               'UsbDebugWire.h', 'SmmuBypass.h', 'UsbDebugFiles.h'))]
 (OUT / 'build-report.json').write_text(json.dumps(dict(
     source_sha256={str(path.relative_to(ROOT)): sha(path) for path in sources},
     original_candidate_sha256=sha(candidate), original_audit_sha256=sha(audit_out),

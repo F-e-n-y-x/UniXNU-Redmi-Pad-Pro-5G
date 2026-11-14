@@ -14,6 +14,13 @@
 #include <libkern/c++/OSSharedPtr.h>
 #include <kern/task.h>
 #include <kern/thread.h>
+#include <sys/param.h>
+#include <sys/errno.h>
+#include <sys/fcntl.h>
+#include <sys/vnode.h>
+#include <sys/uio.h>
+#include <sys/dirent.h>
+#include <sys/msgbuf.h>
 #include <pexpert/pexpert.h>
 
 extern "C" {
@@ -35,8 +42,10 @@ extern volatile uint32_t ruan_touch_events __attribute__((weak_import));
 extern volatile uint32_t ruan_button_events __attribute__((weak_import));
 extern char ruan_input_row[96] __attribute__((weak_import));
 
-// package/BootReset.c: "bootloader" into the PMIC reboot-reason cell, then PSCI SYSTEM_RESET; returns only when refused.
-extern int boot_reset_bootloader(char *text, unsigned cap) __attribute__((weak_import));
+// package/BootReset.c: probe the PMIC reboot-reason cell; write "bootloader" into it and read it back.
+extern int boot_reset_probe(char *text, unsigned cap) __attribute__((weak_import));
+extern int boot_reset_mark_bootloader(char *text, unsigned cap) __attribute__((weak_import));
+extern struct msgbuf *msgbufp;   // bsd/kern/subr_log.c (XNU_KERNEL_PRIVATE in sys/msgbuf.h)
 
 // The boot-progress banner prints this (package/BootProgress.c defines it weak; this definition wins when linked).
 char ruan_usb_short[48] = "usb: off";
@@ -48,6 +57,7 @@ inline void *operator new(size_t, void *p, UsbPlaceTag) noexcept { return p; }
 namespace {
 
 #include "UsbDebugCommands.h"
+#include "UsbDebugFiles.h"
 #include "UsbDebugHw.h"
 
 static const char *const kUsbStrings[4] = {
@@ -418,7 +428,9 @@ struct TerminalSession {
     OSSharedPtr<IOMemoryMap> ramoopsMap;
     volatile const uint8_t *ramoops    = nullptr;
     uint32_t lastRamoopsPos            = 0;
-    bool pendingFastboot               = false;
+    bool pendingFastboot               = false;   // a reset is queued (rebootKind says which)
+    unsigned rebootKind                = 0;       // 1 = fastboot (reason marked), 2 = plain (PSCI only)
+    UsbFileXfer xfer                   = {};
     bool pendingXdci                   = false;
     uint32_t pendingXdciSec            = 0;
     char cmdLine[256]                  = {};
@@ -468,15 +480,18 @@ static void replayRamoops(TerminalSession &s, bool currentBootOnly) {
 
 static unsigned gRebootAllowed = 0;   // ruan-usbdbg-reboot=1
 
+#include "UsbDebugGpu.h"   // ruan: the gpu command (gpu-dev stage S1)
+
 static void handleCommand(TerminalSession &s, const char *raw) {
     while (*raw == ' ' || *raw == '\t') ++raw;
     if (!*raw) return;
     char buf[512];
+    if (usbGpuCommand(s, raw, buf, sizeof(buf))) return;
 
     if (strEq(raw, "ping")) {
         s.reply.writeStr("[usb] PONG ruan\r\n");
     } else if (strEq(raw, "features") || strEq(raw, "help")) {
-        s.reply.writeStr("FEATURES: ping status bootargs display usb touch replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot.fastboot\r\n");
+        s.reply.writeStr("FEATURES: ping status bootargs display usb touch replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg gpu\r\n");
     } else if (strEq(raw, "info") || strEq(raw, "uptime") || strEq(raw, "status")) {
         const uint64_t ms = nowMs();
         snprintf(buf, sizeof(buf),
@@ -540,18 +555,49 @@ static void handleCommand(TerminalSession &s, const char *raw) {
     } else if (strEq(raw, "reboot.status")) {
         snprintf(buf, sizeof(buf), "GIULIA REBOOT: pending=%u allowed=%u\r\n", s.pendingFastboot ? 1u : 0u, gRebootAllowed);
         s.reply.writeStr(buf);
-    } else if (strEq(raw, "reboot.fastboot")) {
-        if (!gRebootAllowed || !&boot_reset_bootloader) {
-            s.reply.writeStr(gRebootAllowed ? "GIULIA REBOOT: refused (no package/BootReset.c in this kernel)\r\n"
-                                            : "GIULIA REBOOT: refused (boot with ruan-usbdbg-reboot=1)\r\n");
-        } else {
-            s.screen.streaming = false;
-            s.hw.needReplay    = false;
-            s.reply.reset();
-            s.pendingFastboot  = true;
-            logStage("usb: reboot.fastboot requested by host");
-            s.reply.writeStr("GIULIA REBOOT: resetting target=fastboot\r\n");
+    } else if (strStarts(raw, "ls ")) {
+        usbLs(s.reply, raw + 3);
+    } else if (strStarts(raw, "cat ")) {
+        usbCatStart(s.xfer, s.reply, raw + 4);
+    } else if (strEq(raw, "dmesg")) {
+        usbDmesgStart(s.xfer, s.reply);
+    } else if (strEq(raw, "reboot") || strEq(raw, "reboot.fastboot")) {
+        const bool fastboot = strEq(raw, "reboot.fastboot");
+        (void)PE_parse_boot_argn("ruan-usbdbg-reboot", &gRebootAllowed, sizeof(gRebootAllowed));
+        if (!gRebootAllowed) {
+            s.reply.writeStr("GIULIA REBOOT: refused (boot with ruan-usbdbg-reboot=1)\r\n");
+            return;
         }
+        if (s.pendingFastboot) {
+            s.reply.writeStr("GIULIA REBOOT: already queued\r\n");
+            return;
+        }
+        s.screen.streaming = false;
+        s.hw.needReplay    = false;
+        if (s.xfer.active) usbFileEnd(s.xfer);
+        if (fastboot) {
+            // Every step is reported before the next one acts, so a hang or a reset shows where it happened.
+            char text[160];
+            if (!&boot_reset_probe || !&boot_reset_mark_bootloader) {
+                s.reply.writeStr("GIULIA REBOOT: step 0 refused: no package/BootReset.c in this kernel\r\n");
+                return;
+            }
+            s.reply.writeStr("GIULIA REBOOT: step 1 probe (PMIC arbiter, reboot-reason cell)\r\n");
+            int rc = boot_reset_probe(text, sizeof(text));
+            snprintf(buf, sizeof(buf), "GIULIA REBOOT: step 1 rc=%d %s\r\n", rc, text);
+            s.reply.writeStr(buf);
+            if (rc) { s.reply.writeStr("GIULIA REBOOT: stopped before any write\r\n"); return; }
+            s.reply.writeStr("GIULIA REBOOT: step 2 mark bootloader + read back\r\n");
+            rc = boot_reset_mark_bootloader(text, sizeof(text));
+            snprintf(buf, sizeof(buf), "GIULIA REBOOT: step 2 rc=%d %s\r\n", rc, text);
+            s.reply.writeStr(buf);
+            if (rc) { s.reply.writeStr("GIULIA REBOOT: stopped before PSCI\r\n"); return; }
+        }
+        s.reply.writeStr(fastboot ? "GIULIA REBOOT: step 3 PSCI SYSTEM_RESET once this line is sent (target fastboot)\r\n"
+                                  : "GIULIA REBOOT: PSCI SYSTEM_RESET once this line is sent, no reboot reason (target: normal boot)\r\n");
+        logStage(fastboot ? "usb: reboot.fastboot by host" : "usb: reboot by host");
+        s.rebootKind      = fastboot ? 1u : 2u;
+        s.pendingFastboot = true;
     } else {
         snprintf(buf, sizeof(buf), "[usb] unsupported command: %s\r\n", raw);
         s.reply.writeStr(buf);
@@ -681,13 +727,22 @@ static void pollUsbEvents(TerminalSession &s) {
 }
 
 // Returns only when BootReset refused (the reason is logged); the caller then reconnects.
-static void executeWarmFastbootReboot(UsbHw &hw) {
-    // Drop the pull-up so the host closes the tty before the reset.
+// The reply ring has been sent (the caller waits for it): drop the pull-up so the host closes the tty, then PSCI SYSTEM_RESET.
+// rebootKind 1: the reboot-reason cell already says "bootloader" (boot_reset_mark_bootloader, read back); 2 leaves it alone.
+__attribute__((noreturn)) static void executeWarmFastbootReboot(UsbHw &hw) {
     hw.wr(DWC3_DCTL, hw.rd(DWC3_DCTL) & ~DWC3_DCTL_RUN_STOP);
     IOSleep(100);
-    char text[120];
-    (void)boot_reset_bootloader(text, sizeof(text));
-    logStage(text);
+    __asm__ volatile("msr daifset, #3" ::: "memory");
+    {
+        register uint64_t x0 __asm__("x0") = J716F_PSCI_SYSTEM_RESET;
+        register uint64_t x1 __asm__("x1") = 0;
+        register uint64_t x2 __asm__("x2") = 0;
+        register uint64_t x3 __asm__("x3") = 0;
+        __asm__ volatile("smc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3)
+                         : : "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11",
+                             "x12", "x13", "x14", "x15", "x16", "x17", "memory");
+    }
+    for (;;) __asm__ volatile("wfe");
 }
 
 static bool bringUpController(TerminalSession &s) {
@@ -881,6 +936,7 @@ static void usbDebugThread(void *arg, int waitResult) {
 
     uint8_t *txScratch = static_cast<uint8_t *>(IOMalloc(DMA_EP3_MAX_CHUNK));
     if (!txScratch) return;
+    gFlushScratch = txScratch;
 
     uint64_t bootTick = nowMs();
     uint64_t hudTick  = 0;
@@ -936,6 +992,7 @@ static void usbDebugThread(void *arg, int waitResult) {
                 s->screen.nextFrameTick = now + interval;
                 (void)usbCaptureAndQueueGsc1(s->screen, s->reply, false);
             }
+            if (s->xfer.active) usbFilePump(s->xfer, s->reply);
             if (!s->hw.ep3Busy) {
                 if (s->reply.used > 0) {
                     const uint32_t n = s->reply.pop(txScratch, DMA_EP3_MAX_CHUNK);
@@ -960,11 +1017,11 @@ static void usbDebugThread(void *arg, int waitResult) {
             }
         }
 
+        usbGpuPump(s);
+
         if (s->pendingFastboot && (!s->hw.configured || !s->hw.hostReady || (s->reply.used == 0 && !s->hw.ep3Busy))) {
             IOSleep(50);
             executeWarmFastbootReboot(s->hw);
-            s->pendingFastboot = false;   // refused: reconnect and keep serving
-            (void)bringUpController(*s);
         }
 
         if (!s->hw.configured) {
@@ -989,7 +1046,6 @@ extern "C" void native_usb_debug_probe(void) {
     unsigned enable = 0;
     (void)PE_parse_boot_argn("ruan-usbdbg", &enable, sizeof(enable));
     if (!enable) return;
-    (void)PE_parse_boot_argn("ruan-usbdbg-reboot", &gRebootAllowed, sizeof(gRebootAllowed));
     strlcpy(ruan_usb_short, "usb: starting", sizeof(ruan_usb_short));
     thread_t th = nullptr;
     if (kernel_thread_start(usbDebugThread, nullptr, &th) == KERN_SUCCESS && th) {

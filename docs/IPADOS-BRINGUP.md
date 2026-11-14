@@ -171,3 +171,11 @@ TAG=<tag> bash zima-ramroot.sh usb <dir>     # tablet in stock fastboot
 - **Spotlight and searchd crash:** NSInvalidArgumentException (nil AssetProperties key).
 - **PridePosterExtension killed** (ns 7, code 3). Widgets stay white.
 - **Settings → Accessibility crashes when opened.** Reduce Motion and Reduce Transparency are preset in the Data seed instead (com.apple.Accessibility).
+
+### 17. Remote test loop and GPU S1 (rbu3b, 2026-11-14 evening)
+- **USB commands work:** `dmesg` (full msgbuf), `ls`, `cat`/`get`, `gpu <mode>` (traced, run after boot) and `reboot-fastboot`.
+- **reboot-fastboot works:** it probes the PMIC reboot-reason cell (SDAM 0x48), marks it 00→04 and calls PSCI SYSTEM_RESET. The tablet is back in fastboot about 2 s later. So the fully remote loop is: boot via zima, then test over USB, then reboot-fastboot. The old 84 s autoreset bug was not this write.
+- **GPU S1 g3, run over USB after boot:** CX GDSC on (0022f001→f8228800, first try, not refused), the GPU clocks on, the GPU SMMU readable (scr0 00210406, id0 4c017e18, id1 40000016, 24 SMRs, none valid). Run at boot instead, the same sequence reset the tablet: S1/S2 stay post-boot USB commands.
+- **ruan-cpufreq confirmed:** d0 1804→1958 MHz, d1 1900→2400 MHz.
+- **No swap** ("Failed to open swap file"): iPadOS kills apps instead of paging.
+- **Settings → Accessibility:** Preferences SIGSEGV with PC=0, LR 0x1a040eac4 (a call through NULL; a missing stripped piece). Spotlight crash-loops every ~20 s (nil AssetProperties). CollectionsPoster/PridePosterExtension get killed (ns 7, code 3). Symbolization in progress.
