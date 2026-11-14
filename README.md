@@ -5,6 +5,8 @@ with `fastboot boot` (nothing is flashed). Status: boots to the **iPadOS 17 home
 
 ![Lock screen on ruan](docs/img/lockscreen-rb13.jpg)
 
+![Settings > About: iPadOS 17.7.11 on ruan](docs/img/settings-about-rb14f.jpg)
+
 - [docs/IPADOS-BRINGUP.md](docs/IPADOS-BRINGUP.md): every blocker, error text, cause and fix, in order. Start here.
 - [unixnu-ruan/](unixnu-ruan/): the board package (board.toml, XNU patches, kernel-side packages, build scripts, DTS).
 - [docs/research/](docs/research/): GPU (offline and Adreno 710), display and method plans.
