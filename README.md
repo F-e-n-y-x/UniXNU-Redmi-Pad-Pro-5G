@@ -38,6 +38,26 @@ live diagnostic banner (boot time, frame copies, milestones, touch, buttons, USB
 | Settings → Accessibility | ❌ crashes: CoreImage's GL path needs a GPU |
 | Wi-Fi, audio, sensors (auto-rotate), camera | ❌ not started |
 
+### Hardware status
+
+| Component | Hardware | Status | Notes |
+|---|---|---|---|
+| CPU | Snapdragon 7s Gen 2 (SM7435): 4× Cortex-A78 + 4× Cortex-A55 | ✅ all 8 cores | SMP (`smp=1`); `ruan-cpufreq` sets the big cluster to 2400 MHz and the little cluster to 1958 MHz. No PAC (ARMv8.2). |
+| RAM | 8 GB LPDDR4X | ✅ about 8.1 GB usable | 2.75 GiB DarwinBoot window plus 702720 adopted outside pages (`memory-outside=1`); no swap yet |
+| GPU | Adreno 710 (gen7-3-0) | 🔧 bring-up | Powered, clocked, GMU firmware loaded (S1–S2b-1); not yet usable by iPadOS |
+| Display | 12.1" 2560×1600 LCD, GOP framebuffer | ✅ | CPU-composited frames, write-combined copy 13–18 ms per frame; no brightness control yet |
+| Touch | Novatek NT36532 (SPI) | ✅ | HakiOS driver + UniXNU NativeHidInput |
+| Buttons | Power, volume up/down (PMK8350 PON, PMIC GPIO) | ✅ | |
+| Storage | UFS | ➖ unused | RAM root + RAM Data volume (RamBlock); nothing on the tablet's storage is touched |
+| USB | DWC3 (high speed) | ✅ debug only | CDC-ACM link: screenshots, log, files, `gpu` commands, reboot to fastboot |
+| Battery / charging | PMIC fuel gauge | ❌ | Battery icon shown without a real level |
+| Wi-Fi / Bluetooth | WCN6750 | ❌ | not started |
+| Audio | WCD/ADSP | ❌ | audiomxd crashes without hardware |
+| Cellular | X62 modem | ❌ | not started |
+| Sensors (auto-rotate) | Qualcomm sensor hub (SSC/ADSP) | ❌ | not started |
+| Cameras | | ❌ | not started |
+| RTC / clock | PMIC RTC | ❌ | clock always starts at the build's time (Fri Nov 13, 7:00) |
+
 ### GPU (Adreno 710) bring-up
 
 | Stage | What it does | Status |
