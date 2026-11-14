@@ -86,13 +86,13 @@ void boot_progress_exit_reason(int pid,unsigned signal,char *out,unsigned long c
  if(signal!=6 || pid!=proc_selfpid() || __atomic_exchange_n(&reason_busy,1,__ATOMIC_ACQUIRE))return;
  vm_map_t map=current_map();
  vm_map_offset_t addr=0;uint64_t scanned=0;int best=0;
- while(scanned<(160ull<<20) && best<2) {
+ while(scanned<(16ull<<20) && best<2) {   // 160 MiB of copyin faulted in untouched malloc pages on every SIGABRT
   vm_map_size_t size=0;natural_t depth=0;vm_region_submap_info_data_64_t info;
   mach_msg_type_number_t count=VM_REGION_SUBMAP_INFO_V2_COUNT_64;
   if(vm_map_region_recurse_64(map,&addr,&size,&depth,(vm_region_submap_info_64_t)&info,&count)!=KERN_SUCCESS)break;
   vm_map_offset_t base=addr;addr+=size;
   if(info.is_submap || (info.protection&(VM_PROT_READ|VM_PROT_WRITE))!=(VM_PROT_READ|VM_PROT_WRITE) ||
-     info.user_tag<1 || info.user_tag>11)continue;
+     info.user_tag<1 || info.user_tag>11 || !info.pages_resident)continue;
   for(vm_map_offset_t off=0;off<size && best<2;off+=REASON_CHUNK) {
    unsigned long len=(size-off)<REASON_CHUNK?(unsigned long)(size-off):REASON_CHUNK;
    if(copyin((user_addr_t)(base+off),reason_chunk,len))continue;

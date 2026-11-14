@@ -329,9 +329,15 @@ SEED_PREFERENCES = {
         'ShouldRunPaymentMiniBuddy', 'ShouldRunStandardMiniBuddy', 'SilentICDPUpgrade')},
     'com.apple.managedconfiguration.notbackedup': {'LockdownActivationIndicatesCloudConfigurationAvailable': False},
     'backboardd': CA_FRAMEBUFFER, '.GlobalPreferences': CA_FRAMEBUFFER,
+    # CPU-only CoreAnimation (no GPU): Reduce Motion + Reduce Transparency cut most animations and blurs. Settings >
+    # Accessibility crashed when opened (rb16), so they are preset here.
+    'com.apple.Accessibility': {'ReduceMotionEnabled': True, 'ReduceMotionReduceSlideTransitionsPreference': True,
+                                'EnhancedBackgroundContrastEnabled': True},
 }
 DISABLED_JOBS = ('com.apple.watchdogd', 'com.apple.identityservicesd', 'com.apple.locationd', 'com.apple.CommCenter',
-                 'com.apple.iconservices.iconservicesagent', 'com.apple.bluetoothd',
+                 # iconservicesagent stays enabled: disabled (amethyst's list), every icon on the home screen is a blank
+                 # placeholder (rb14f, 2026-11-14). It keeps its cache in the system group container on Data.
+                 'com.apple.bluetoothd',
                  'com.apple.telephonyutilities.callservicesd', 'com.apple.fitcored', 'com.apple.liveactivitiesd',
                  'com.apple.privacyaccountingd', 'com.apple.ScreenTimeAgent', 'com.apple.dmd', 'com.apple.assistantd',
                  'com.apple.biomesyncd', 'com.apple.biomed',

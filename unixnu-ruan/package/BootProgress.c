@@ -299,6 +299,8 @@ draw_all(bool clear)
 	draw_ring(r_log, n_log, lg, lg_n, cur, 0xa0a0a0);
 }
 
+static volatile int log_dirty;   /* console lines since the log panel was last drawn */
+
 static bool
 lock(void)
 {
@@ -511,7 +513,7 @@ boot_progress_putc(char c)
 		lg_n++;
 		cur_len = 0;
 		cur[0] = 0;
-		DRAW(draw_ring(r_log, n_log, lg, lg_n, cur, 0xa0a0a0));
+		log_dirty = 1;   /* drawn by monitor(): a ring redraw is ~1.3M uncached stores, too slow for every console line */
 		if (c == '\n') {
 			return;
 		}
@@ -711,6 +713,17 @@ extern void ram_data_describe(char *, size_t) __attribute__((weak_import));
 
 /* After the hand-off lock() refuses every drawer (yield_wanted); the banner takes draw_lock itself and points fb at the
  * panel for the length of one paint. */
+/* boot-progress-banner: 0 off, 1 the full banner (9 rows), 2 the status row plus the two input rows (3 rows at the bottom). A row is
+ * 100 glyphs of 16x32 32-bit stores into the scanout, about 51,000 stores. (display-perf/BootProgress-banner.patch, adapted.) */
+static unsigned banner_mode = 1;
+/* Written by package/RuanGpuPower.c (ruan-gpu=<n> or ruan-gpu-survey=1), whose strong definitions replace these empty weak ones. */
+char ruan_gpu_row[128] __attribute__((weak)), ruan_gpu_short[32] __attribute__((weak));
+/* package/UsbDebugCdc.cpp (ruan-usbdbg=1): its USB state ("usb e<events> r<resets> c<configured>[o = tty open]") or why it stopped. */
+char ruan_usb_short[48] __attribute__((weak));
+/* LegacyDisplayProbe.cpp: the last and the longest frame copy, in counter ticks (cntpct_el0, 19.2 MHz on ruan). */
+extern volatile uint64_t native_legacy_copy_last __attribute__((weak_import));
+extern volatile uint64_t native_legacy_copy_max __attribute__((weak_import));
+
 static void
 banner(void)
 {
@@ -728,8 +741,16 @@ banner(void)
 	unsigned row = rows > 9 ? rows - 9 : 0;
 	fb = ban_fb;
 	ban_painting = 1;
-	snprintf(line, sizeof(line), "bp t=%llus copies=%llu exits=%u LD %c DM %c BB %c SB %c x%u sw a%u r%u ret%u vs%llu i%llu st%llu ar%llu to%llu",
-	    ms() / 1000, copies, exits, "-+X"[m_state[M_LAUNCHD]], "-+X"[m_state[M_DAEMONS]], "-+X"[m_state[M_BACKBOARDD]],
+	uint64_t hz = 0;
+	__asm__ volatile("mrs %0, cntfrq_el0" : "=r"(hz));
+	hz = hz ? hz / 1000 : 19200;
+	const uint64_t cp_last = &native_legacy_copy_last ? native_legacy_copy_last / hz : 0;
+	const uint64_t cp_max = &native_legacy_copy_max ? native_legacy_copy_max / hz : 0;
+	if (banner_mode == 2) {
+		row = rows > 3 ? rows - 3 : 0;
+	}
+	snprintf(line, sizeof(line), "bp t=%llus copies=%llu cp%llu/%llums exits=%u LD %c DM %c BB %c SB %c x%u sw a%u r%u ret%u vs%llu i%llu st%llu ar%llu to%llu",
+	    ms() / 1000, copies, cp_last, cp_max, exits, "-+X"[m_state[M_LAUNCHD]], "-+X"[m_state[M_DAEMONS]], "-+X"[m_state[M_BACKBOARDD]],
 	    "-+X"[m_state[M_SPRINGBOARD]], m_count[M_SPRINGBOARD],
 	    &native_legacy_swap_accepted_count ? native_legacy_swap_accepted_count : 0,
 	    &native_legacy_swap_rejected_count ? native_legacy_swap_rejected_count : 0,
@@ -740,14 +761,35 @@ banner(void)
 	    &native_legacy_vsync_events ? native_legacy_vsync_events[0] : 0,   /* ar: armed for a registered client */
 	    &native_legacy_swap_timeouts ? native_legacy_swap_timeouts : 0);
 	row_text(row++, line, 0x000000, 0xc0c0c0);
-	for (unsigned part = 0; part < 3; part++, row++) {
-		row_text(row, strlen(ban_crash) > part * (cols - 6) ? ban_crash + part * (cols - 6) : "", 0xff6060, 0x101010);
+	if (banner_mode != 2) {
+		for (unsigned part = 0; part < 3; part++, row++) {
+			row_text(row, strlen(ban_crash) > part * (cols - 6) ? ban_crash + part * (cols - 6) : "", 0xff6060, 0x101010);
+		}
+		row_text(row++, ban_reason[0] || !ruan_gpu_row[0] ? ban_reason : ruan_gpu_row, 0xffa070, 0x101010);   /* survey line until an abort */
 	}
-	for (unsigned part = 0; part < 3; part++, row++) {
-		row_text(row, strlen(ban_reason) > part * (cols - 6) ? ban_reason + part * (cols - 6) : "", 0xffa070, 0x101010);
+	{	/* input (package/RuanInput.c): tp = touch samples, btn = button changes, hid = reports NativeHidInput sent;
+		 * raw = the NT36532's last point and max its fw-info axes, n = the 0..65535 position posted; then each driver's last line */
+		extern volatile uint32_t ruan_touch_events, ruan_button_events, ruan_buttons_mask, native_touch_hid_reports;
+		extern volatile uint32_t ruan_touch_raw_x, ruan_touch_raw_y, ruan_touch_max_x, ruan_touch_max_y, ruan_touch_norm_x,
+		    ruan_touch_norm_y;
+		extern char ruan_input_row[96], ruan_buttons_row[96];
+		/* HidInputProbe.cpp: hs = start stage (3 = done), r = last touch handleReport result (0 = taken), ev = event driver seen */
+		extern volatile uint32_t native_hid_stage, native_hid_input_events[8];
+		extern volatile int native_hid_input_results[8];
+		snprintf(line, sizeof(line), "in tp%u hid%u r%x hs%u ev%u raw %u,%u max %u,%u n %u,%u | %s", ruan_touch_events,
+		    native_touch_hid_reports, native_hid_input_results[6], native_hid_stage, native_hid_input_events[3],
+		    ruan_touch_raw_x, ruan_touch_raw_y, ruan_touch_max_x, ruan_touch_max_y, ruan_touch_norm_x, ruan_touch_norm_y, ruan_input_row);
+		row_text(row++, line, 0x80ffff, 0x101010);
+		/* package/RuanGpuPower.c (ruan-gpu=<n>): the GPU stage summary, so a photo after the hand-off has it */
+		snprintf(line, sizeof(line), "%s%s%s%sbtn%u m%x | %s", ruan_usb_short, ruan_usb_short[0] ? " " : "",
+		    ruan_gpu_short, ruan_gpu_short[0] ? " " : "",
+		    ruan_button_events, ruan_buttons_mask, ruan_buttons_row);
+		row_text(row++, line, 0x80ffff, 0x101010);
 	}
-	row_text(row++, ban_exit[(ban_exits + 1) % 2], 0xffe060, 0x101010);
-	row_text(row, ban_exit[ban_exits % 2], 0xffe060, 0x101010);
+	if (banner_mode != 2) {
+		row_text(row++, ban_exit[(ban_exits + 1) % 2], 0xffe060, 0x101010);
+		row_text(row, ban_exit[ban_exits % 2], 0xffe060, 0x101010);
+	}
 	ban_painting = 0;
 	fb = NULL;
 	unlock();
@@ -758,11 +800,12 @@ monitor(void *arg __unused, wait_result_t wr __unused)
 {
 	unsigned banner_on = 1;
 	PE_parse_boot_argn("boot-progress-banner", &banner_on, sizeof(banner_on));
+	banner_mode = banner_on;
 	for (unsigned tick = 0;; tick++) {
 		if (yielded && banner_on) {
 			banner();
 		}
-		DRAW(draw_title(); if (n_log) draw_partial(r_log, n_log, lg_n, cur));
+		DRAW(draw_title(); if (n_log && log_dirty) { log_dirty = 0; draw_ring(r_log, n_log, lg, lg_n, cur, 0xa0a0a0); } else if (n_log) draw_partial(r_log, n_log, lg_n, cur));
 		if (&ram_data_describe && m_state[M_LAUNCHD] && tick % 5 == 0) {
 			char line[MAXCOLS];
 			ram_data_describe(line, sizeof(line));
@@ -815,10 +858,15 @@ autoreset_thread(void *arg __unused, wait_result_t wr __unused)
 	event(text);
 }
 
+extern void ruan_cpufreq_start(void);   /* package/RuanCpuFreq.c, ruan-cpufreq=<n>; strong: a weak import would not pull it from the archive */
+
 void
 boot_progress_start(void)
 {
 	thread_t thread;
+	ruan_cpufreq_start();
+	extern void ruan_gpu_survey(void);
+	ruan_gpu_survey();   /* package/RuanGpuPower.c: ruan-gpu=<1-3> (gpu-dev stage S1), ruan-gpu-survey=1 = mode 1; nothing otherwise */
 	if (enabled) {
 		zone_map();
 		char line[MAXCOLS];
@@ -831,6 +879,9 @@ boot_progress_start(void)
 		thread_set_thread_name(thread, "boot-progress");
 		thread_deallocate(thread);
 	}
+	/* Touch and buttons (package/RuanInput.c): each driver checks its own boot-arg (ruan_touch=1, garnet_buttons=1). */
+	extern void ruan_input_start(void);
+	ruan_input_start();
 	PE_parse_boot_argn("ruan-autoreset-max", &autoreset_max, sizeof(autoreset_max));
 	if (enabled && PE_parse_boot_argn("ruan-autoreset", &autoreset, sizeof(autoreset)) && autoreset &&
 	    kernel_thread_start_priority(autoreset_thread, NULL, MAXPRI_KERNEL, &thread) == KERN_SUCCESS) {

@@ -53,7 +53,7 @@ if restore is not None and (len(restore) != RESTORE_BYTES or struct.unpack_from(
     '#define RAM_RESTORE_EMBEDDED 1\n' + array('ram_restore_original', restore) if restore else '#define RAM_RESTORE_EMBEDDED 0\n')
 
 
-def compile_like(record_name, source, obj):
+def compile_like(record_name, source, obj, extra=()):
     record = json.loads((ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837' / record_name)
                         .read_text().strip().rstrip(','))
     command, arguments, i = [], record['arguments'], 0
@@ -70,7 +70,7 @@ def compile_like(record_name, source, obj):
         elif not value.startswith('-W') and value not in ('-MD', '-MP'):
             command.append(value)
         i += 1
-    command += ['-I', str(OUT), '-mgeneral-regs-only', '-Wall', '-Wextra', '-Werror']
+    command += ['-I', str(OUT), '-mgeneral-regs-only', '-Wall', '-Wextra', '-Werror', *extra]
     result = subprocess.run(command, cwd=record['directory'], capture_output=True, text=True)
     (OUT / (obj.stem + '.log')).write_text(result.stdout + result.stderr)
     if result.returncode:
@@ -151,6 +151,9 @@ compile_cxx_like('iokit/DEVELOPMENT/IOPlatformExpert.cpo.json', ramblock / 'Nati
 subprocess.run(['python3', ROOT / 'scripts/build-ufs-original-bindings.py', '--component', 'NativeRamBlock',
                 '--objects-dir', ramblock, '--candidate', ROOT / 'build/xnu-prelink/ruan-candidate.macho'], check=True)
 
+# HakiOS's C is warning-clean under its own flags, not under -Wextra -Werror; its firmware headers live outside git.
+HAKIOS_C = ['-I', str(DEVICE / '.cache/hakios-fw'), '-Wno-error', '-Wno-unused-function', '-Wno-unused-parameter',
+            '-Wno-unused-variable', '-Wno-unused-but-set-variable', '-Wno-sign-compare', '-Wno-missing-prototypes']
 objects = [ramblock / 'NativeRamBlock.o', ramblock / 'original-bindings.o',
            compile_like('bsd/DEVELOPMENT/kern_exec.o.json', DEVICE / 'package/RamBlockNoStore.c', OUT / 'RamBlockNoStore.o'),
            compile_like('bsd/DEVELOPMENT/kern_exec.o.json', DEVICE / 'package/RamRootProbe.c', OUT / 'RamRootProbe.o'),
@@ -163,7 +166,16 @@ objects = [ramblock / 'NativeRamBlock.o', ramblock / 'original-bindings.o',
            # ruan-autoreset's reboot into fastboot (package/BootReset.c, from UniXNU-Dizi-Ruan)
            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/BootReset.c', OUT / 'BootReset.o'),
            # EL0 fault records and the SIGABRT reason scan for the crash banner (package/BootFaultProbe.c, from UniXNU-fuxi)
-           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/BootFaultProbe.c', OUT / 'BootFaultProbe.o')]
+           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/BootFaultProbe.c', OUT / 'BootFaultProbe.o'),
+           # Touch and buttons (HakiOS drivers, proven on ruan with iOS 16.5) feeding NativeHidInput: package/RuanInput.c.
+           # The NT36532 firmware header is generated from stock vendor firmware and stays out of git (.cache/hakios-fw).
+           compile_like('bsd/DEVELOPMENT/kern_exec.o.json', DEVICE / 'package/RuanInput.c', OUT / 'RuanInput.o'),
+           compile_like('bsd/DEVELOPMENT/kern_exec.o.json', DEVICE / 'package/RuanTouch.c', OUT / 'RuanTouch.o', HAKIOS_C),
+           compile_like('bsd/DEVELOPMENT/kern_exec.o.json', DEVICE / 'package/RuanButtons.c', OUT / 'RuanButtons.o', HAKIOS_C),
+           # ruan-cpufreq: EPSS frequency vote (package/RuanCpuFreq.c, layout from UniXNU-Dizi-Ruan CpuFreqProbe.cpp)
+           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanCpuFreq.c', OUT / 'RuanCpuFreq.o'),
+           # Adreno 710 bring-up stage S1 (gpu-dev): gated GCC/GPUCC reads, CX GDSC power-up, GPU SMMU survey (ruan-gpu=<1-3>)
+           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanGpuPower.c', OUT / 'RuanGpuPower.o')]
 archive = OUT / 'libRamRootProbe.a'
 archive.unlink(missing_ok=True)
 subprocess.run(['xcrun', 'ar', 'rcs', archive, *objects], check=True)

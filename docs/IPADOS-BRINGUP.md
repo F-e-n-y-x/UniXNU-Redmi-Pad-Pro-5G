@@ -33,7 +33,10 @@ Image tags (`out-<tag>`): md1 → rb → rb3 → rb4 → rb5 … rb13. Each fix 
 | **Touch (Novatek NT36532, HakiOS driver + j716f NativeHidInput)** | ✅ rb14f: lock screen → home screen, Settings opens from a tap |
 | Home screen icons | ⚠️ white placeholders: iconservicesagent was in DISABLED_JOBS (fix in rb15) |
 | UI speed | ⚠️ about 1 fps (CPU render + uncached 16 MiB copy per frame); write-combined mapping, damage-only copy next |
-| Buttons | ⏳ btn0 so far (rb15) |
+| Buttons (PMK8350 PON + PMIC GPIO, HakiOS driver) | ✅ rb18: btn events, power press handled |
+| **Live USB debug (j716f UsbDebugCdc on ruan's DWC3, arena DMA at 0x80D00000)** | ✅ rb18g1: screenshots, kernel log and status over USB (`host/ruan-usbdbg.py`) |
+| Frame copy (write-combined GOP, `fb-wc=1`) | ✅ 13–18 ms per frame, from about 330 ms |
+| GPU S1 g1 (read-only GPUCC/GDSC survey) | ✅ gcc ok, cc ok, w0 e0; CX/GX collapsed (0x0022f001) |
 | Boot speed | ✅ rb14f: lock screen at about 540 s, from about 1000 s (console redraw throttle, ruan-cpufreq=2, fault-scan cap) |
 | GPU, audio, Wi-Fi, RTC | not started (GPU plan in `research/gpu-adreno710.md`) |
 
@@ -156,3 +159,15 @@ TAG=<tag> bash zima-ramroot.sh usb <dir>     # tablet in stock fastboot
 - **When most daemons SIGABRT,** look for files that live only in the cryptex (libobjc-trampolines).
 - **A logo freeze after a few frames is usually userspace:** missing `/Applications` scene apps, or daemons that crash-loop. It is rarely the GPU.
 - **If the USB host's network drops during `fastboot boot`, the stock fastboot can wedge.** Recover with Power + Volume-down.
+
+### 15. USB debug link
+- **rb16:** `usb: dmaDesc alloc/prepare failed`. A contiguous allocation searches only DarwinBoot's 2.75 GiB window, which the RAM root nearly fills (`prep=0xe00002bd`, kIOReturnNoMemory).
+- **rb17:** falls back to a 64 KiB arena in the unused dmesg-0 part of the ramoops region (0x80D00000).
+- **rb18g1:** enumerates as 1209:0001. On the host: `ruan-usbdbg.py cmd status | shot | log` (use one tty client at a time).
+- **USB transfers to DarwinBoot's receiver dropping data** ("short download", desynced replies): this was the cable. Re-plugging fixed it.
+
+### 16. Findings from the first USB log (rb18g1)
+- **68 s between `exec launchd` and launchd's "hello":** the largest remaining boot cost. It is likely code-signature checking of the dyld cache.
+- **Spotlight and searchd crash:** NSInvalidArgumentException (nil AssetProperties key).
+- **PridePosterExtension killed** (ns 7, code 3). Widgets stay white.
+- **Settings → Accessibility crashes when opened.** Reduce Motion and Reduce Transparency are preset in the Data seed instead (com.apple.Accessibility).

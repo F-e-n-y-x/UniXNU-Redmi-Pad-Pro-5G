@@ -54,6 +54,7 @@ volatile uint64_t native_legacy_transfer_bytes, native_legacy_copy_n, native_leg
 volatile uint32_t native_legacy_client_calls, native_legacy_retirement_calls, native_legacy_gpu_fallbacks;
 volatile int native_legacy_client_pid, native_legacy_client_status = -1;
 volatile uint64_t native_legacy_gop_physical, native_legacy_gop_bytes;
+volatile uint64_t native_legacy_gop_virtual;   // the scanout mapping: package/UsbDebugCdc.cpp screen.snapshot reads it
 volatile uint32_t native_legacy_gop_width, native_legacy_gop_height;
 volatile uint64_t native_legacy_vsync_events[6];
 
@@ -202,6 +203,7 @@ bool native_legacy_gop_mapping_observed(IOService *object, IOMemoryMap *mapping,
 		panic("NativeLegacyDisplay: wrong mapping owner");
 	}
 	native_legacy_gop_physical = mapping->getPhysicalAddress();
+	native_legacy_gop_virtual = mapping->getVirtualAddress();
 	native_legacy_gop_bytes = mapping->getLength();
 	native_legacy_gop_width = width;
 	native_legacy_gop_height = height;
@@ -328,6 +330,13 @@ void native_legacy_display_late_probe(void) {
 	if (started) {
 		native_legacy_stage = 10;
 		OSSafeReleaseNULL(arm_io);
+		// Touch and buttons: the HID publisher (package/NativeHidInput.cpp + HidInputProbe.cpp, from UniXNU-j716f), started the
+		// way j716f does it, once the display is up (offline-hid-input=1 offline-hid-home=1 sheng-touch-hid=1).
+		extern void native_hid_input_probe(void);
+		native_hid_input_probe();
+		// Live USB terminal, screen capture and (opt-in) reboot to fastboot: package/UsbDebugCdc.cpp, off unless ruan-usbdbg=1.
+		extern void native_usb_debug_probe(void);
+		native_usb_debug_probe();
 		return native_legacy_display_checkpoint();  // nub, memory and ranges stay owned by the registry
 	}
 	native_legacy_stage = 6;
