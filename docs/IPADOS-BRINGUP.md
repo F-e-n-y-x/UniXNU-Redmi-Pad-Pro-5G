@@ -29,8 +29,10 @@ Image tags (`out-<tag>`): md1 → rb → rb3 → rb4 → rb5 … rb13. Each fix 
 | **First iPadOS frame (Apple logo) on the panel** | ✅ rb7 |
 | SMP (8 cores) | ✅ rb8s |
 | On-screen crash banner after the hand-off | ✅ rb10 |
-| Lock screen / SpringBoard UI | ⏳ rb13 under test |
-| Touch, GPU, audio, Wi-Fi | not started (GPU plan in `research/gpu-adreno710.md`) |
+| **Lock screen (wallpaper, clock, status bar)** | ✅ rb13, about 17 min after `continue` (banner t≈1000 s, copies=21) |
+| Touch | ⏳ next (rb14); HakiOS iOS 16.5 touch worked on this tablet |
+| Boot speed | ⏳ research (CPU clocks, first-boot caches, boot-page cost) |
+| GPU, audio, Wi-Fi, RTC | not started (GPU plan in `research/gpu-adreno710.md`) |
 
 ## Blockers and fixes, in order
 
@@ -113,6 +115,7 @@ Image tags (`out-<tag>`): md1 → rb → rb3 → rb4 → rb5 … rb13. Each fix 
   - missing scene apps;
   - crash-looping daemons.
 - **Fix rb12:** keep `/Applications`, which had been dropped entirely. PosterBoard, InputUI, PaperBoard and others back 13 LaunchAngels. `SKIP_APPS` leaves out 11 large apps. The root grew 39 MiB.
+- **Result:** rb13 reached the lock screen, confirming both causes.
 - **Fix rb13:** disable the crash-loopers (audiomxd, searchd, siriactionsd, maild) plus amethyst's list. `missing_jobs()` also disables the ~40 jobs whose executable isn't in the root (55 entries in `disabled.plist` in all). Added `armcpu-self-ipi=1`: without it, multi-core XNU hangs at the logo in `DebuggerXCallEnter` (amethyst V20–V25).
 
 ## GPU: needed?
