@@ -1,0 +1,9 @@
+Copyright (c) 2026, the UniXNU-iPadOS-on-Redmi-Pad-Pro-5G contributors and UniXNU contributors.
+
+SPDX-License-Identifier: BSD-2-Clause-Patent
+
+This repository's own files are licensed under the BSD-2-Clause-Patent license, the same license as UniXNU
+(full text in LICENSE-UniXNU). Code copied or adapted from UniXNU and its device ports (amethyst, fuxi, Dizi-Ruan,
+j716f, gts7xlwifi, nabu) keeps its original copyright and license notices.
+The XNU patches are diffs against Apple's open-source xnu (APSL 2.0). No Apple binaries, IPSW contents or
+vendor firmware are included.
