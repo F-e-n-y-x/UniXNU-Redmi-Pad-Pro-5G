@@ -152,7 +152,13 @@ assert not heavy_feature_resource('System/Library/PrivateFrameworks/SpringBoard.
 # take 257 MiB uncompressed; these large ones are not needed for the lock/home screen (Setup is skipped by the Data seed).
 SKIP_APPS = tuple(f'Applications/{name}.app/' for name in (
     'Setup', 'AppStore', 'SharingViewService', 'DiagnosticsService', 'MTLReplayer', 'Diagnostics', 'GameCenterWidgets',
-    'HDSViewService', 'SOSBuddy', 'TVRemoteUIService', 'Climate'))
+    'HDSViewService', 'SOSBuddy', 'TVRemoteUIService', 'Climate',
+    # Spotlight.app aborts every ~20 s (MobileAsset: setObject:forKey: nil, key AssetProperties, via SpotlightResources), rb18g1.
+    'Spotlight'))
+# No GPU: AppleMetalGLRenderer gives OpenGLES a context whose dispatch table is empty, and CoreImage (via MobileIcons) calls
+# glDisable through it, PC 0 (Settings > Accessibility, rb18g1). Without the renderer the context fails and CoreImage should
+# take its software path. shortcut: experiment, restore the bundle once a Metal device exists (Adreno track).
+NO_GPU_SKIP = ('System/Library/Extensions/AppleMetalGLRenderer.bundle/',)
 def select(slt, work):
     """HakiOS's selection with ruan's tighter limits; returns the files list and the manifest."""
     spec = importlib.util.spec_from_file_location('select_system', SELECT)
@@ -167,7 +173,7 @@ def select(slt, work):
     wanted = pick.wanted_file
     # the window leaves XNU what the image does not take: the large applications (SKIP_APPS), and string tables over 2 MB
     # (every language in one file; a missing one shows keys, not text)
-    pick.wanted_file = lambda path, size: not path.startswith(pick.SKIP_PREFIX + SKIP_APPS) and \
+    pick.wanted_file = lambda path, size: not path.startswith(pick.SKIP_PREFIX + SKIP_APPS + NO_GPU_SKIP) and \
         not (path.endswith('.loctable') and size > 2 << 20) and not heavy_feature_resource(path, size) and \
         path not in SKIP_DAEMON_PATHS and \
         wanted(path, size)
@@ -283,6 +289,33 @@ def cryptex_union(tree):
                 dirs.remove(name)
     assert links.get('usr/lib/libobjc-trampolines.dylib') or (tree / 'usr/lib/libobjc-trampolines.dylib').exists()
     return links
+
+
+# Adreno 710 firmware for the GPU bring-up (gpu-dev; read by the USB link's `gpu 5`+ from the root). From the locally
+# extracted stock vendor image (never in git); FIRMWARE_DIR overrides the path. Sizes and hashes: gpu-dev/package/RuanGmuBoard.h.
+FIRMWARE_DIR = Path(os.environ.get('FIRMWARE_DIR',
+                                   '/DATA/tower/Projects/Redmi Pad Pro 5G/work/analysis-vendor/stock/vendor_a/firmware'))
+GPU_FIRMWARE = ('gmu_gen70000.bin', 'a710_sqe.fw', 'a710_zap.mdt', 'a710_zap.b00', 'a710_zap.b01', 'a710_zap.b02')
+GPU_FIRMWARE_PATH = 'usr/standalone/firmware/ruan'
+
+
+def gpu_firmware(tree, manifest):
+    """Copies GPU_FIRMWARE into GPU_FIRMWARE_PATH (root:wheel 0644) with manifest lines for the files and new directories."""
+    present = {line.split('\t')[3] for line in manifest.read_text().splitlines()}
+    dest = tree / GPU_FIRMWARE_PATH
+    dest.mkdir(parents=True, exist_ok=True)
+    with open(manifest, 'a') as out:
+        parts = GPU_FIRMWARE_PATH.split('/')
+        for i in range(1, len(parts) + 1):
+            d = '/'.join(parts[:i])
+            if d not in present:
+                out.write(f'{stat.S_IFDIR | 0o755:o}\t0\t0\t{d}\t\n')
+        for name in GPU_FIRMWARE:
+            src = FIRMWARE_DIR / name
+            if not src.is_file():
+                raise SystemExit(f'{src}: GPU firmware missing (set FIRMWARE_DIR)')
+            shutil.copyfile(src, dest / name)
+            out.write(f'{stat.S_IFREG | 0o644:o}\t0\t0\t{GPU_FIRMWARE_PATH}/{name}\t\n')
 
 
 def add_links(manifest, links):
@@ -486,6 +519,8 @@ def main():
             for path in ('private/preboot/Cryptexes', CRYPTEX, 'System/Cryptexes', 'System/Library/Caches'):
                 out.write(f'{stat.S_IFDIR | 0o755:o}\t0\t0\t{path}\t\n')
     add_links(manifest, links)
+    if args.full:
+        gpu_firmware(tree, manifest)
     volumes = [f'System={tree},manifest={manifest}']
     if args.data:
         data_tree, data_manifest = data_volume(args.os, slt, args.work)

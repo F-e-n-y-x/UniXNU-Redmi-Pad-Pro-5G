@@ -71,8 +71,26 @@ def read_for(fd, seconds, wire, on_text, stop=None):
     return False
 
 
-def send(fd, line):
-    os.write(fd, line.encode() + b'\r\n')
+def send(fd, line, timeout=5.0):
+    """Write one command line whole. The tty is non-blocking: drain stale input first (it would otherwise be parsed with the
+    next reply), lead with CR LF so a half-sent earlier line ends on the device as its own (ignored or rejected) command, then
+    write until every byte is out, retrying on EAGAIN and partial writes (rb18g1: EAGAIN garbled "gpu 4")."""
+    while True:
+        try:
+            if not os.read(fd, 65536):
+                break
+        except BlockingIOError:
+            break
+    data = b'\r\n' + line.encode() + b'\r\n'
+    end = time.time() + timeout
+    while data:
+        try:
+            data = data[os.write(fd, data):]
+        except BlockingIOError:
+            if time.time() > end:
+                sys.exit(f'ruan-usbdbg: timed out sending {line!r}')
+            time.sleep(0.01)
+    termios.tcdrain(fd)
 
 
 class Lines:

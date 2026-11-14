@@ -179,3 +179,12 @@ TAG=<tag> bash zima-ramroot.sh usb <dir>     # tablet in stock fastboot
 - **ruan-cpufreq confirmed:** d0 1804→1958 MHz, d1 1900→2400 MHz.
 - **No swap** ("Failed to open swap file"): iPadOS kills apps instead of paging.
 - **Settings → Accessibility:** Preferences SIGSEGV with PC=0, LR 0x1a040eac4 (a call through NULL; a missing stripped piece). Spotlight crash-loops every ~20 s (nil AssetProperties). CollectionsPoster/PridePosterExtension get killed (ns 7, code 3). Symbolization in progress.
+
+### 18. GPU S2 progress (rbu4–rbu5c, run remotely over USB)
+- **S2a, `gpu 4`:** GPLL0 GPU votes 0060257f→0061a57f; gmu_clk_src 200 MHz (cfg 0x602) and hub_clk_src 150 MHz (0x603) from GPLL0_DIV; branches gmu/cxo/hub/aon running (rcgfail 0). The GMU window is readable: CM3_SYSRESET 1, cm3cfg 0x4052, rpmh 0xf, the AO counter ticking.
+- **S2b part 1, `gpu 5`:** `gmu_gen70000.bin` (57272 B, sha256 b2d3f0e2…) is shipped in the root at /usr/standalone/firmware/ruan. 15 blocks, 11 preallocations; ITCM/DTCM loaded and verified (135 words, 0 bad), with the GMU still in reset. The main code (56492 B at GMU VA 0x4000) runs from DDR through the GPU SMMU, stream 5, so the GMU boot (`gpu 6`) needs an S1 context bank and page tables.
+- **Bugs fixed along the way:**
+  - a hand-typed digest array: the expected hash is now a hex string checked by a host test;
+  - the USB host tool's EAGAIN and garbled commands: blocking writes and draining input.
+- **Intermittent early boot failure:** about 1 in 5 boots freezes at bsd_autoconf or resets into Android before USB comes up. The same image boots fine on retry. Not yet understood. Recovery is remote (`adb reboot bootloader`).
+- **The Settings → Accessibility crash cannot be fixed by files:** CoreImage's GL engine is inside the dyld shared cache and calls a GL dispatch table with no backend. It needs a Metal device (GPU) or a code shim. Spotlight was dropped from the root, which ends its AssetProperties crash loop.
