@@ -30,8 +30,11 @@ Image tags (`out-<tag>`): md1 → rb → rb3 → rb4 → rb5 … rb13. Each fix 
 | SMP (8 cores) | ✅ rb8s |
 | On-screen crash banner after the hand-off | ✅ rb10 |
 | **Lock screen (wallpaper, clock, status bar)** | ✅ rb13, about 17 min after `continue` (banner t≈1000 s, copies=21) |
-| Touch | ⏳ next (rb14); HakiOS iOS 16.5 touch worked on this tablet |
-| Boot speed | ⏳ research (CPU clocks, first-boot caches, boot-page cost) |
+| **Touch (Novatek NT36532, HakiOS driver + j716f NativeHidInput)** | ✅ rb14f: lock screen → home screen, Settings opens from a tap |
+| Home screen icons | ⚠️ white placeholders: iconservicesagent was in DISABLED_JOBS (fix in rb15) |
+| UI speed | ⚠️ about 1 fps (CPU render + uncached 16 MiB copy per frame); write-combined mapping, damage-only copy next |
+| Buttons | ⏳ btn0 so far (rb15) |
+| Boot speed | ✅ rb14f: lock screen at about 540 s, from about 1000 s (console redraw throttle, ruan-cpufreq=2, fault-scan cap) |
 | GPU, audio, Wi-Fi, RTC | not started (GPU plan in `research/gpu-adreno710.md`) |
 
 ## Blockers and fixes, in order

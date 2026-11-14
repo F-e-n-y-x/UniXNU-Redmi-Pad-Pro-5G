@@ -1,7 +1,7 @@
 # UniXNU: iPadOS on Redmi Pad Pro 5G
 
 UniXNU port of iPadOS 17.7.11 (21H461) to the Xiaomi Redmi Pad Pro 5G / POCO Pad 5G ("ruan", SM7435), booted RAM-only
-with `fastboot boot` (nothing is flashed). Status: boots to the **iPadOS 17 lock screen** (wallpaper, clock, status bar). Touch, boot speed and the GPU are next.
+with `fastboot boot` (nothing is flashed). Status: boots to the **iPadOS 17 home screen** with working touch (Settings opens). About 1 fps without a GPU; icons, buttons and speed are next.
 
 ![Lock screen on ruan](docs/img/lockscreen-rb13.jpg)
 
