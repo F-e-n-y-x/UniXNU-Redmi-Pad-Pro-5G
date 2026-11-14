@@ -19,6 +19,42 @@ live diagnostic banner (boot time, frame copies, milestones, touch, buttons, USB
   <img src="docs/img/settings-about-rb14f.jpg" alt="Settings > About on ruan (photo)" width="45%">
 </p>
 
+## Progress
+
+| Area | Status |
+|---|---|
+| Boot chain: stock ABL `fastboot boot` → Mu-Silicium UEFI → DarwinBoot → XNU | ✅ |
+| RAM root over USB (about 2.6 GB, about 140 s), dyld shared cache, launchd | ✅ |
+| Writable `/private/var` (UniXNU RamBlock Data volume) | ✅ |
+| Daemons, backboardd, SpringBoard | ✅ |
+| Display (GOP framebuffer, write-combined copies, 13–18 ms per frame) | ✅ |
+| Lock screen, home screen, wallpaper, app icons | ✅ |
+| Touch (Novatek NT36532) | ✅ |
+| Buttons (power, volume) | ✅ |
+| All 8 CPU cores at full clock (cpufreq 1958 / 2400 MHz) | ✅ |
+| Live USB debug: screenshots, kernel log, file pull, reboot to fastboot | ✅ |
+| Boot time to lock screen | ⚠️ about 7–9 min (about 2 min of it is the USB upload) |
+| Smoothness | ⚠️ CPU rendering only (no GPU yet) |
+| Settings → Accessibility | ❌ crashes: CoreImage's GL path needs a GPU |
+| Wi-Fi, audio, sensors (auto-rotate), camera | ❌ not started |
+
+### GPU (Adreno 710) bring-up
+
+| Stage | What it does | Status |
+|---|---|---|
+| S1 | Power the GPU CX domain and clocks, read the GPU SMMU | ✅ |
+| S2a | GMU clocks (200 MHz GMU, 150 MHz hub), GMU registers readable | ✅ |
+| S2b-1 | GMU firmware (`gmu_gen70000.bin`) verified and loaded into its TCM | ✅ |
+| S2b-2 | SMMU stream-5 page tables, GMU main code copied to DDR, GMU released, wait for "HFI ready" | ⏳ in progress |
+| S3 | GPU microcode (SQE), zap shader via SCM, first command ring and fence | next |
+| S4 | Publish the GPU to iPadOS (IOGPU / AGX-style provider) | later |
+| S5 | Metal through Turnip (FD710), GPU-composited UI | later |
+
+Each stage runs on the tablet as a USB debug command (`gpu <n>`), after boot. Every register access is streamed to the host
+before it happens, so a hang or reset names its exact step.
+
+## Documents
+
 - [docs/IPADOS-BRINGUP.md](docs/IPADOS-BRINGUP.md): every blocker, error text, cause and fix, in order. Start here.
 - [unixnu-ruan/](unixnu-ruan/): the board package (board.toml, XNU patches, kernel-side packages, build scripts, DTS).
 - [docs/research/](docs/research/): GPU (offline and Adreno 710), display and method plans.
