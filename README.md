@@ -65,7 +65,7 @@ live diagnostic banner (boot time, frame copies, milestones, touch, buttons, USB
 | S1 | Power the GPU CX domain and clocks, read the GPU SMMU | ✅ |
 | S2a | GMU clocks (200 MHz GMU, 150 MHz hub), GMU registers readable | ✅ |
 | S2b-1 | GMU firmware (`gmu_gen70000.bin`) verified and loaded into its TCM | ✅ |
-| S2b-2 | SMMU stream-5 page tables, GMU main code copied to DDR, GMU released, wait for "HFI ready" | ⏳ in progress |
+| S2b-2 | SMMU stream-5 page tables, GMU main code copied to DDR, GMU released, wait for "HFI ready" | ⏳ needs a reserved GPU memory pool (contiguous allocations fail outside the DarwinBoot window) |
 | S3 | GPU microcode (SQE), zap shader via SCM, first command ring and fence | next |
 | S4 | Publish the GPU to iPadOS (IOGPU / AGX-style provider) | later |
 | S5 | Metal through Turnip (FD710), GPU-composited UI | later |
