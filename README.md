@@ -51,9 +51,9 @@ live diagnostic banner (boot time, frame copies, milestones, touch, buttons, USB
 | Storage | UFS | ➖ unused | RAM root + RAM Data volume (RamBlock); nothing on the tablet's storage is touched |
 | USB | DWC3 (high speed) | ✅ debug only | CDC-ACM link: screenshots, log, files, `gpu` commands, reboot to fastboot |
 | Battery / charging | PMIC fuel gauge | ❌ | Battery icon shown without a real level |
-| Wi-Fi / Bluetooth | WCN6750 | ❌ | not started |
-| Audio | WCD/ADSP | ❌ | audiomxd crashes without hardware |
-| Cellular | X62 modem | ❌ | not started |
+| Wi-Fi / Bluetooth | Qualcomm (integrated) | ❌ | not started |
+| Audio | Qualcomm ADSP + codec | ❌ | audiomxd crashes without hardware |
+| Cellular | Qualcomm modem | ❌ | not started |
 | Sensors (auto-rotate) | Qualcomm sensor hub (SSC/ADSP) | ❌ | not started |
 | Cameras | | ❌ | not started |
 | RTC / clock | PMIC RTC | ❌ | clock always starts at the build's time (Fri Nov 13, 7:00) |
