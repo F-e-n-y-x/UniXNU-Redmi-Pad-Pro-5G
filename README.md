@@ -1,7 +1,7 @@
 # UniXNU: iPadOS on Redmi Pad Pro 5G
 
 UniXNU port of iPadOS 17.7.11 (21H461) to the Xiaomi Redmi Pad Pro 5G / POCO Pad 5G ("ruan", SM7435), booted RAM-only
-with `fastboot boot` (nothing is flashed). Status: boots to the **iPadOS 17 home screen** with working touch, buttons, icons and wallpaper; live USB debug (screenshots, logs, reboot to fastboot). CPU-rendered (no GPU yet): the Adreno 710 bring-up is in progress (power, clocks, GMU clocks and GMU firmware load work).
+with `fastboot boot` (nothing is flashed). Status: boots to the **iPadOS 17 home screen** with working touch, buttons, icons and wallpaper; live USB debug (screenshots, logs, reboot to fastboot). CPU-rendered (no GPU yet): the Adreno 710 bring-up is in progress (power, clocks, GMU firmware load and GMU SMMU context work; the GMU starts and needs a privileged mapping fix).
 
 <p>
   <img src="docs/img/usb-lockscreen-full.png" alt="Lock screen" width="32%">
@@ -44,7 +44,7 @@ live diagnostic banner (boot time, frame copies, milestones, touch, buttons, USB
 |---|---|---|---|
 | CPU | Snapdragon 7s Gen 2 (SM7435): 4× Cortex-A78 + 4× Cortex-A55 | ✅ all 8 cores | SMP (`smp=1`); `ruan-cpufreq` sets the big cluster to 2400 MHz and the little cluster to 1958 MHz. No PAC (ARMv8.2). |
 | RAM | 8 GB LPDDR4X | ✅ about 8.1 GB usable | 2.75 GiB DarwinBoot window plus 702720 adopted outside pages (`memory-outside=1`); no swap yet |
-| GPU | Adreno 710 (gen7-3-0) | 🔧 bring-up | Powered, clocked, GMU firmware loaded (S1–S2b-1); not yet usable by iPadOS |
+| GPU | Adreno 710 (gen7-3-0) | 🔧 bring-up | Powered, clocked, GMU firmware loaded, GMU released from reset (S1–S2b-2); not yet usable by iPadOS |
 | Display | 12.1" 2560×1600 LCD, GOP framebuffer | ✅ | CPU-composited frames, write-combined copy 13–18 ms per frame; no brightness control yet |
 | Touch | Novatek NT36532 (SPI) | ✅ | HakiOS driver + UniXNU NativeHidInput |
 | Buttons | Power, volume up/down (PMK8350 PON, PMIC GPIO) | ✅ | |
@@ -65,7 +65,7 @@ live diagnostic banner (boot time, frame copies, milestones, touch, buttons, USB
 | S1 | Power the GPU CX domain and clocks, read the GPU SMMU | ✅ |
 | S2a | GMU clocks (200 MHz GMU, 150 MHz hub), GMU registers readable | ✅ |
 | S2b-1 | GMU firmware (`gmu_gen70000.bin`) verified and loaded into its TCM | ✅ |
-| S2b-2 | SMMU stream-5 page tables, GMU main code copied to DDR, GMU released, wait for "HFI ready" | ⏳ needs a reserved GPU memory pool (contiguous allocations fail outside the DarwinBoot window) |
+| S2b-2 | SMMU stream-5 page tables, GMU main code copied to DDR, GMU released, wait for "HFI ready" | 🔧 GMU context accepted and GMU released from reset; first instruction fetch hits an SMMU permission fault (fix: privileged-only mappings) |
 | S3 | GPU microcode (SQE), zap shader via SCM, first command ring and fence | next |
 | S4 | Publish the GPU to iPadOS (IOGPU / AGX-style provider) | later |
 | S5 | Metal through Turnip (FD710), GPU-composited UI | later |

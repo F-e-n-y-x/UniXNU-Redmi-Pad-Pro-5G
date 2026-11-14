@@ -63,6 +63,7 @@
  * 219-227): the RSC sequence is generic gen7 (the same five SEQ_MEM words mainline uses for A7xx: eaaae5a0 e1a1ebab a2e0a581
  * ecac82e2 0020edad; PDC_SEQ_START 0x4520, MATCH 0x4510/0x4514), PDC GPU_SEQ_START 0 then ENABLE_PDC 0x80000001,
  * SYS_BUS/ICACHE/DCACHE_CONFIG 1. ShengGmu.c already does this for gen7; ruan changes the windows and the firmware only. */
+#define RUAN_A710_CHIPID_GMU 0x07010000u   /* adreno.h ADRENO_GMU_CHIPID(0x07010000): core 7, major 1, minor 0, patch 0 */
 #define RUAN_GMU_FW "gmu_gen70000.bin"     /* 57272 bytes, sha256 b2d3f0e2a98fd6259ab9ffef16df63265542e6cc9a970d53d476e823d432042a */
 #define RUAN_GMU_FW_BYTES 57272u
 #define RUAN_GMU_FW_SHA256 "b2d3f0e2a98fd6259ab9ffef16df63265542e6cc9a970d53d476e823d432042a"   /* sha256sum of the file */
@@ -81,4 +82,9 @@ static inline int ruan_gmu_fw_ok(const uint8_t *data, size_t size)
 #define RUAN_ZAP_PAS_ID 13u
 #define RUAN_ZAP_REGION_BASE 0x89e1a000ULL
 #define RUAN_ZAP_REGION_BYTES 0x2000ULL
+/* The GPU pool: board.toml owned_memory_outside_reserved keeps it out of the memory-outside adoption (the tail of the HLOS
+ * bank 0x880000000-0x8B9B00000); RuanGpuPower.c maps it write-combined after checking /chosen/darwinboot-memory-outside-kept. */
+#define RUAN_GPU_POOL_BASE 0x8B8B00000ULL
+#define RUAN_GPU_POOL_BYTES 0x1000000ULL
+#define RUAN_GMU_POOL_BYTES 0x80000ULL     /* the GMU's slice at the start of the pool (65 of 128 pages used) */
 #endif

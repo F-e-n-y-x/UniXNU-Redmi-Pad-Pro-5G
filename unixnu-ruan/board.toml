@@ -141,7 +141,12 @@ owned_memory_outside_ranges = 16
 #   0x830000000+256M  "HYP Reserved" in the UEFI map (Gunyah), incl. the /memory hole 0x83FC00000-0x840000000.
 #   0x8B9B00000+6M    hole in Android's /memory (not HLOS RAM: hypervisor / another VM).
 #   0x8BBF00000+65M   hole in Android's /memory up to the 0x8C0000000 bank.
-owned_memory_outside_reserved = ["0x80000000:0x80000000", "0x830000000:0x10000000", "0x8B9B00000:0x600000", "0x8BBF00000:0x4100000"]
+#   0x8B8B00000+16M   the GPU pool (gpu-dev, package/RuanGpuPower.c): the last 16 MiB of the HLOS bank 0x880000000-0x8B9B00000
+#                     (Android /memory), no fixed reserved-memory node above 0x800000000, inside the outside span XNU adopted
+#                     on rbu6 (so stage-2 mapped for HLOS and free in the UEFI map). Kept out of the VM so the GMU page tables,
+#                     DDR regions and later rings/SQE/zap get physically contiguous memory (the window has none to give).
+owned_memory_outside_reserved = ["0x80000000:0x80000000", "0x830000000:0x10000000", "0x8B9B00000:0x600000", "0x8BBF00000:0x4100000",
+                                 "0x8B8B00000:0x1000000"]
 
 # Display scale for MobileGestalt/FrontBoard: 1600x2560 at 2x = 800x1280 points, as UniXNU-j716f (same 1600x2560 GOP).
 [adt.chosen.u32]

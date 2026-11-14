@@ -188,3 +188,26 @@ TAG=<tag> bash zima-ramroot.sh usb <dir>     # tablet in stock fastboot
   - the USB host tool's EAGAIN and garbled commands: blocking writes and draining input.
 - **Intermittent early boot failure:** about 1 in 5 boots freezes at bsd_autoconf or resets into Android before USB comes up. The same image boots fine on retry. Not yet understood. Recovery is remote (`adb reboot bootloader`).
 - **The Settings → Accessibility crash cannot be fixed by files:** CoreImage's GL engine is inside the dyld shared cache and calls a GL dispatch table with no backend. It needs a Metal device (GPU) or a code shim. Spotlight was dropped from the root, which ends its AssetProperties crash loop.
+
+### 19. GPU S2b-2: first GMU boot attempt (rbu6–rbu6d, 2026-11-14 night)
+- **rbu6:** "no usable GMU pool". The 512 KiB contiguous allocation fails because contiguous allocations only search DarwinBoot's 2.75 GiB window.
+- **rbu6b:** a **reserved 16 MiB GPU pool** at phys 0x8B8B00000 (the last 16 MiB of HLOS bank 0x880000000–0x8B9B00000, kept out of memory-outside adoption via board.toml `owned_memory_outside_reserved`; checked against the kernel's kept list before use). Pool OK.
+- **rbu6b panic:** `Kernel data abort … esr 0x96000010` (synchronous external abort) writing GPU-SMMU GR1 **CBAR(1) = 0** in the teardown path.
+  - The trace showed every stage-1 write sticking except CB1 TCR2 (wrote 0x2, read 0x62: hardware-set bits), which tripped an over-strict readback.
+  - Under Gunyah, HLOS may program CBAR TYPE 1 (S1) but a write of 0 (TYPE 0, S2) is rejected with an SEA.
+  - Fix: no GR1 "disable" writes anywhere; TCR2 compared as a superset.
+- **DT facts** (`kgsl-smmu@3da0000`): `qcom,num-context-banks-override = 6`, `qcom,num-smr-override = 6`, `qcom,skip-init`. Banks 0–5 hold power-on garbage with SCTLR.M off; all CBARs and SMRs are 0. The GMU is SID 5 (mask 0x400).
+- **`gpu 7`:** a read-only survey of banks 0–5 and SMR/S2CR 0–5.
+- **rbu6d `gpu 6`:** stage 4 reached. The SMMU context was accepted (SMR 84000005, S2CR 1, CBAR 0001f300, SCTLR 27, refused 0) and the GMU was released from reset. It **then faulted on its first instruction fetch**: FSR 0x408 (permission fault, AArch64 format), FAR 0x4000 (GMU code start), FSYNR0 0x00100063 (instruction fetch). The tablet stayed up.
+  - **Cause:** the GMU page descriptors use AP[1]=1 (EL0-accessible, 0x643). Privileged execution of EL0-writable memory is not permitted, and the GMU fetches privileged.
+  - **Next fix:** map the GMU regions privileged-only (descriptor 0x603, like KGSL's IOMMU_PRIV). The code region may also be read-only (AP[2]=1).
+
+### Resume here (next session)
+1. `RuanGpuPower.c` / `gmu_mmu_host.c`: GMU page descriptor 0x643 → 0x603 (AP[1]=0). Update the host test. Rebuild the kernel only (rbu5 root via hard links). Run `gpu 6`; expect `booted 1 fwinit 00000100 … hfi 1`.
+2. If it still does not boot: compare with KGSL's gen7 GMU start (the DDR bandwidth vote, the AOP ACD message, GMU IRQs).
+3. Then S3: SQE microcode, zap via SCM PAS 13, a first ringbuffer and fence (the 15.5 MiB left in the GPU pool).
+4. Open issue: about 1 in 5 boots freezes early (bsd_autoconf) or resets into Android before USB comes up. On retry the same image boots.
+5. Lab procedure:
+   - zima `~/usbdbg/ruan-usbdbg.py`: `shot | log | dmesg | ls | get | gpu N | reboot-fastboot`. Use one tty client at a time.
+   - If the receiver replies get out of step ("size differs"), use `fastboot -s unixnu-ramdisk reboot`, then `adb reboot bootloader`, for a fresh connection.
+   - Never `pkill -f` a pattern contained in your own ssh command.

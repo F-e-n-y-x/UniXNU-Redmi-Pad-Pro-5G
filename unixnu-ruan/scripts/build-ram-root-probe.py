@@ -175,7 +175,9 @@ objects = [ramblock / 'NativeRamBlock.o', ramblock / 'original-bindings.o',
            # ruan-cpufreq: EPSS frequency vote (package/RuanCpuFreq.c, layout from UniXNU-Dizi-Ruan CpuFreqProbe.cpp)
            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanCpuFreq.c', OUT / 'RuanCpuFreq.o'),
            # Adreno 710 bring-up stage S1 (gpu-dev): gated GCC/GPUCC reads, CX GDSC power-up, GPU SMMU survey (ruan-gpu=<1-3>)
-           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanGpuPower.c', OUT / 'RuanGpuPower.o')]
+           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanGpuPower.c', OUT / 'RuanGpuPower.o'),
+           # HFI queue table for gpu 6 (UniXNU kits/AdrenoFirmware/AdrenoHfi.c, copied into package/)
+           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/AdrenoHfi.c', OUT / 'AdrenoHfi.o')]
 archive = OUT / 'libRamRootProbe.a'
 archive.unlink(missing_ok=True)
 subprocess.run(['xcrun', 'ar', 'rcs', archive, *objects], check=True)

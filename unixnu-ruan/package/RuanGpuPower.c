@@ -18,6 +18,9 @@
 #include <machine/machine_routines.h>
 #include "RuanGpuPowerBoard.h"
 #include "RuanGmuBoard.h"
+#include <pexpert/device_tree.h>
+#include "RuanGmuMmu.h"
+#include "AdrenoHfi.h"   // UniXNU kits/AdrenoFirmware: the modern 16 KiB HFI queue table
 #include "RuanSha256.h"   // self-contained: libkern SHA256_* gave rbu5 a wrong digest for correct bytes
 
 extern void boot_progress_stage(const char *s);
@@ -31,12 +34,16 @@ struct gpb_result ruan_gpu_result;
 
 // Stage S2a adds two read-only windows: the GMU block (GMU core and AO registers; it also spans GPUCC and CX_MISC, so writes
 // are allowed by register, never by window) and the GMU's RSCC. Both are mapped only by mode 4, after the GMU clocks run.
-enum {W_GMU = GPB_WINDOWS, W_RSCC, NWIN};
+// Stage S2b (gpu 6) adds the whole GPU SMMU (its stream-5 context bank), CX_MISC (TCM retention) and the GMU PDC. The GPU
+// window grows to 64 KiB for GBIF_HALT (CX side, 0xf114); RBBM is still read only once GX is on.
+enum {W_GMU = GPB_WINDOWS, W_RSCC, W_SMMUF, W_CXMISC, W_PDC, NWIN};
 static const uint64_t phys[NWIN] = {GPB_GCC_GPU_PAGE, GPB_GCC_VOTE_PAGE, GPB_GPUCC_BASE, GPB_SMMU_BASE, GPB_GPU_BASE, RUAN_GMU_BASE,
-                                    RUAN_GMU_RSCC_BASE};
-static const uint64_t len[NWIN] = {0x1000, 0x1000, GPB_GPUCC_SIZE, GPB_SMMU_GR0_SIZE, GPB_GPU_WINDOW, RUAN_GMU_SIZE, RUAN_GMU_RSCC_SIZE};
+                                    RUAN_GMU_RSCC_BASE, GPB_SMMU_BASE, RUAN_GPU_CX_MISC_BASE, RUAN_GMU_PDC_BASE};
+static const uint64_t len[NWIN] = {0x1000, 0x1000, GPB_GPUCC_SIZE, GPB_SMMU_GR0_SIZE, 0x10000, RUAN_GMU_SIZE, RUAN_GMU_RSCC_SIZE, 0x40000,
+                                   RUAN_GPU_CX_MISC_SIZE, RUAN_GMU_PDC_SIZE};
 static const char *const name[NWIN] = {"GCC GPU page 0x181000", "GCC vote page 0x162000", "GPUCC 0x3d90000",
-                                       "GPU SMMU GR0 0x3da0000", "GPU RBBM 0x3d00000", "GMU 0x3d68000", "GMU RSCC 0x3d50000"};
+                                       "GPU SMMU GR0 0x3da0000", "GPU 0x3d00000", "GMU 0x3d68000", "GMU RSCC 0x3d50000",
+                                       "GPU SMMU 0x3da0000 (whole)", "CX_MISC 0x3d9e000", "GMU PDC 0xb270000"};
 static vm_offset_t va[NWIN];
 
 // S2a (mode 4) and `off`: GMU clock registers in GPUCC (gpucc-parrot.c) and the GCC GPLL0 vote.
@@ -64,8 +71,40 @@ void ruan_gpu_set_firmware(const void *data, size_t size)
 }
 static const uint32_t s2a_branch[4] = {RUAN_CC_CX_GMU_CLK, RUAN_CC_CXO_CLK, RUAN_CC_HUB_CX_INT_CLK, RUAN_CC_HUB_AON_CLK};
 
+// gpu 6: the GMU registers KGSL's first boot writes (gen7_reg.h dwords from the GPU base), the RSCC/PDC microcode registers
+// (gen7_load_rsc_ucode / gen7_load_pdc_ucode, dwords from their own bases), and the SMMU registers of one context bank.
+#define GMU_REG(dw) ((uint32_t)((dw) * 4u - (uint32_t)(RUAN_GMU_BASE - RUAN_GPU_BASE)))
+static const uint32_t gmu_writable[] = {0x1f800, 0x1f801, 0x1f81c, 0x1f82d, 0x1f400, 0x1f401, 0x1f40f, 0x1f984, 0x1f985, 0x1f986,
+                                        0x1f9cd, 0x1f9ce, 0x1f9cf, 0x1f8f0, 0x1f8f1, 0x23b11};
+static const uint32_t rscc_writable[] = {0x4, 0x8, 0x9, 0xa, 0xb, 0xd, 0xe, 0xf, 0x10, 0x11, 0x12, 0x100, 0x180, 0x181, 0x182, 0x183, 0x184};
+// The DT limits HLOS to the first 6 context banks and 6 SMRs (kgsl-smmu qcom,num-context-banks-override / num-smr-override); the
+// others belong to the secure world or the hypervisor and are never touched. Bank 0 stays for the GPU, as adreno-smmu assigns
+// it; gpu 6 takes the lowest bank 1..5 and slot 0..5 that the survey (gpu 7) proves free.
+#define SMMU_HLOS_BANKS 6u
+#define SMMU_HLOS_SMRS 6u
+static unsigned gmu_bank = ~0u, gmu_slot = ~0u;
+#define GMU_SMMU_BANK gmu_bank
+#define GPB_SMMU_S2CR_FAULT_RUAN 0x00020000u   // S2CR TYPE fault: what every unused slot read on ruan (g3)
+#define GMU_SMMU_SLOT gmu_slot
+static uint32_t gmu_cb_off;              // the bank's page in the SMMU window, from ID1 (0 until computed)
 static int allowed(unsigned w, uint32_t off)
 {
+	if (w == GPB_WIN_GPU) return off == 0x3c45u * 4u;            // GBIF_HALT
+	if (w == W_CXMISC) return off == 0x39u * 4u;                 // GPU_CX_MISC_TCM_RET_CNTL
+	if (w == W_PDC) return off == 0x1140u * 4u || off == 0x1148u * 4u;
+	if (w == W_RSCC) {
+		for (unsigned i = 0; i < sizeof rscc_writable / sizeof *rscc_writable; i++) if (off == rscc_writable[i] * 4u) return 1;
+		return 0;
+	}
+	if (w == W_SMMUF) {
+		if (gmu_bank >= SMMU_HLOS_BANKS || gmu_bank == 0 || gmu_slot >= SMMU_HLOS_SMRS) return 0;
+		if (off == GPB_SMMU_SMR(GMU_SMMU_SLOT) || off == GPB_SMMU_S2CR(GMU_SMMU_SLOT)) return 1;
+		if (off == 0x1000u + 4u * GMU_SMMU_BANK || off == 0x1800u + 4u * GMU_SMMU_BANK) return 1;   // GR1 CBAR, CBA2R
+		return gmu_cb_off && off >= gmu_cb_off && off < gmu_cb_off + 0x1000u;
+	}
+	if (w == W_GMU) {
+		for (unsigned i = 0; i < sizeof gmu_writable / sizeof *gmu_writable; i++) if (off == GMU_REG(gmu_writable[i])) return 1;
+	}
 	if (w == GPB_WIN_GCC_GPU) return off == GPB_GCC_GPU_CFG_AHB;
 	if (w == GPB_WIN_GCC_VOTE) return off == GPB_GCC_PLL_VOTE;
 	if (w == W_GMU) return off >= TCM_ITCM_OFF && off < TCM_DTCM_OFF + TCM_BYTES;   // S2b: ITCM and DTCM only (GMU in reset)
@@ -77,7 +116,7 @@ static int allowed(unsigned w, uint32_t off)
 }
 static int (*trace_fn)(void *, const char *);
 static void *trace_ctx;
-static const char *const wshort[NWIN] = {"GCC+0x81000", "GCC+0x62000", "GPUCC", "SMMU", "GPU", "GMU", "RSCC"};
+static const char *const wshort[NWIN] = {"GCC+0x81000", "GCC+0x62000", "GPUCC", "SMMU", "GPU", "GMU", "RSCC", "SMMUF", "CXMISC", "PDC"};
 static const char *regname(unsigned w, uint32_t off)
 {
 	if (w == GPB_WIN_GCC_GPU) return off == GPB_GCC_GPU_CFG_AHB ? "gpu_cfg_ahb" : off == GPB_GCC_GPU_MEMNOC_GFX ? "gpu_memnoc_gfx" :
@@ -90,6 +129,9 @@ static const char *regname(unsigned w, uint32_t off)
 	    off == CC_HUB_RCG ? "hub_rcg_cmd" : off == CC_HUB_RCG + 4 ? "hub_rcg_cfg" : "";
 	if (w == W_GMU) return "gmu";
 	if (w == W_RSCC) return "rscc";
+	if (w == W_SMMUF) return off < 0x1000u ? "smmu_gr0" : off < 0x2000u ? "smmu_gr1" : "smmu_cb";
+	if (w == W_CXMISC) return "cx_misc";
+	if (w == W_PDC) return "pdc";
 	return w == GPB_WIN_SMMU ? "smmu_gr0" : "rbbm";
 }
 static int say(const char *line)
@@ -149,7 +191,7 @@ static void result_line(const char *line)
 
 // What this code itself turned on, so `off` (mode 99) reverts only that and leaves what the firmware left running.
 static struct {
-	unsigned cx, smmu_clock, vote_bits, branch_mask, gmu_cfg_valid, hub_cfg_valid;
+	unsigned cx, smmu_clock, vote_bits, branch_mask, gmu_cfg_valid, hub_cfg_valid, gmu_ctx, gmu_started;
 	uint32_t gmu_cfg_old, hub_cfg_old;
 } owned;
 struct ruan_gpu_s2a {
@@ -255,10 +297,18 @@ static void s2a(const struct gpb_result *r, struct ruan_gpu_s2a *k)
 	k->gmu_read = 1;
 }
 
+
+static int need(unsigned w);
+static void smmu_ctx_off(void);
+
 // `gpu off`: undo, in reverse, only what this code turned on: GMU branches, RCG rates, GPLL0 votes, the SMMU vote clock, CX.
 static void gpu_off(void)
 {
 	uint32_t v = 0;
+	if (owned.gmu_started && !need(W_GMU)) (void)wr(NULL, W_GMU, GMU_REG(0x1f800), 1);   // CM3_SYSRESET: the GMU back in reset
+	owned.gmu_started = 0;
+	if (owned.gmu_ctx) smmu_ctx_off();
+	owned.gmu_ctx = 0;
 	for (int i = 3; i >= 0; i--) {
 		if (!(owned.branch_mask & (1u << i)) || rd(NULL, GPB_WIN_GPUCC, s2a_branch[i], &v)) continue;
 		(void)wr(NULL, GPB_WIN_GPUCC, s2a_branch[i], v & ~GPB_CBCR_ENABLE);
@@ -371,13 +421,298 @@ static void s2b_tcm(struct ruan_gpu_s2b *b)
 	if (b->tcm_bad) snprintf(b->why, sizeof b->why, "%u TCM words read back wrong", b->tcm_bad);
 }
 
+// ---- stage S2b `gpu 6`: GMU context on the GPU SMMU, DDR regions, cold boot to FW_INIT and HFI init --------------------
+static uint8_t *pool_cpu;
+static uint64_t pool_pa;
+static size_t pool_bytes;
+// The reserved GPU pool (RuanGmuBoard.h RUAN_GPU_POOL_*), mapped once, write-combined (Normal NC: no cache maintenance needed
+// for the SMMU walker or the GMU) and kept for good. Refused unless the range is in /chosen/darwinboot-memory-outside-kept,
+// i.e. DarwinBoot passed board.toml's reservation and memory-outside did not hand it to the VM.
+static int gpu_pool_reserved(void)
+{
+	DTEntry chosen;
+	const uint8_t *kept = NULL;
+	unsigned int kept_size = 0;
+	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess ||
+	    SecureDTGetProperty(chosen, "darwinboot-memory-outside-kept", (void const **)&kept, &kept_size) != kSuccess) return 0;
+	for (unsigned int o = 0; o + 16 <= kept_size; o += 16) {
+		uint64_t b, n;
+		memcpy(&b, kept + o, 8);
+		memcpy(&n, kept + o + 8, 8);
+		if (b <= RUAN_GPU_POOL_BASE && b + n >= RUAN_GPU_POOL_BASE + RUAN_GPU_POOL_BYTES) return 1;
+	}
+	return 0;
+}
+static int gpu_pool(void)
+{
+	if (pool_cpu) return 0;
+	if (!gpu_pool_reserved()) return -1;
+	pool_cpu = (uint8_t *)ml_io_map_unmappable((vm_offset_t)RUAN_GPU_POOL_BASE, (vm_size_t)RUAN_GPU_POOL_BYTES, 6);   // VM_WIMG_WCOMB
+	if (!pool_cpu) return -2;
+	pool_pa = RUAN_GPU_POOL_BASE, pool_bytes = RUAN_GPU_POOL_BYTES;
+	return 0;
+}
+static int need(unsigned w)
+{
+	if (!va[w]) va[w] = ml_io_map_unmappable((vm_offset_t)phys[w], (vm_size_t)len[w], 7);
+	return va[w] ? 0 : -1;
+}
+static void clean_pool(void)   // dc civac over the pool: the SMMU walks and the GMU read it non-cacheable
+{
+	uint64_t ctr = 0;
+	__asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
+	const uintptr_t line = (uintptr_t)4u << ((ctr >> 16) & 15u);
+	__asm__ volatile("dsb sy" ::: "memory");
+	for (uintptr_t a = (uintptr_t)pool_cpu & ~(line - 1); a < (uintptr_t)pool_cpu + RUAN_GMU_POOL_BYTES; a += line)
+		__asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
+	__asm__ volatile("dsb sy" ::: "memory");
+}
+static int hfi_notify_unused(void *c) {(void)c; return -1;}   // gpu 6 stops at HFI init; it sends no message
+static AdrenoHfi gmu_hfi;
+
+struct ruan_gpu_s2c {
+	unsigned regions, pt_used, smmu_refused, booted, hfi_ready, fw_polls, hfi_polls, stage;
+	uint32_t id1, cb_off, smr_before, s2cr_before, cbar_before, sctlr_before;
+	uint32_t smr_after, s2cr_after, cbar_after, sctlr_after, fwinit, hfi_status, fsr, fsynr0, ao_irq, cm3_cfg;
+	uint64_t far, ttbr0;
+	char why[72];
+} ruan_gpu_s2c_result;
+
+#define CB(reg) (gmu_cb_off + (reg))
+enum {CB_SCTLR = 0x0, CB_TCR2 = 0x10, CB_TTBR0_LO = 0x20, CB_TTBR0_HI = 0x24, CB_TCR = 0x30, CB_MAIR0 = 0x38, CB_MAIR1 = 0x3c,
+      CB_FSR = 0x58, CB_FAR_LO = 0x60, CB_FAR_HI = 0x64, CB_FSYNR0 = 0x68, CB_TLBIALL = 0x618, CB_TLBSYNC = 0x7f0, CB_TLBSTATUS = 0x7f4};
+
+static uint32_t smmu_bad_off, smmu_bad_want, smmu_bad_got;   // the first SMMU write that did not read back
+// superset: the readback must hold every written bit but may add hardware-set ones (CB TCR2: rbu6b wrote 0x2, read 0x62).
+static int smmu_wr_check_sup(uint32_t off, uint32_t v, uint32_t *readback, int superset)
+{
+	if (wr(NULL, W_SMMUF, off, v) || rd(NULL, W_SMMUF, off, readback)) return -1;
+	if (*readback == v || (superset && (*readback & v) == v)) return 0;
+	if (!smmu_bad_off) smmu_bad_off = off, smmu_bad_want = v, smmu_bad_got = *readback;
+	return 1;
+}
+static int smmu_wr_check(uint32_t off, uint32_t v, uint32_t *readback) {return smmu_wr_check_sup(off, v, readback, 0);}
+static void smmu_tlb_sync(void)
+{
+	uint32_t st = 0;
+	(void)wr(NULL, W_SMMUF, CB(CB_TLBIALL), 0);
+	(void)wr(NULL, W_SMMUF, CB(CB_TLBSYNC), 0);
+	(void)poll_bits(W_SMMUF, CB(CB_TLBSTATUS), 1u, 0u, 1000, &st);
+}
+// Turn the stream-5 context off again: SMR invalid, S2CR back to fault, the bank disabled. Used by `gpu off` and on refusal.
+static void smmu_ctx_off(void)
+{
+	if (need(W_SMMUF) || !gmu_cb_off) return;
+	(void)wr(NULL, W_SMMUF, GPB_SMMU_SMR(GMU_SMMU_SLOT), 0);
+	(void)wr(NULL, W_SMMUF, GPB_SMMU_S2CR(GMU_SMMU_SLOT), GPB_SMMU_S2CR_FAULT_RUAN);
+	(void)wr(NULL, W_SMMUF, CB(CB_SCTLR), 0);
+	smmu_tlb_sync();
+	// GR1 (CBAR/CBA2R) is left as it is: rbu6b froze on writing CBAR 0 here. With the SMR invalid the bank is unreachable.
+}
+
+
+// gpu 7 (read only) and gpu 6's bank choice: GR1 CBAR/CBA2R and each HLOS bank's SCTLR/TTBR0/TCR, plus SMR/S2CR 0..5.
+struct ruan_smmu_survey {
+	uint32_t id0, id1, cb_page, cbar[SMMU_HLOS_BANKS], cba2r[SMMU_HLOS_BANKS], sctlr[SMMU_HLOS_BANKS], ttbr_lo[SMMU_HLOS_BANKS],
+	    ttbr_hi[SMMU_HLOS_BANKS], tcr[SMMU_HLOS_BANKS], smr[SMMU_HLOS_SMRS], s2cr[SMMU_HLOS_SMRS];
+	unsigned free_bank, free_slot, read;
+} ruan_smmu_survey_result;
+static uint32_t cb_offset(uint32_t id1, unsigned bank)
+{
+	const uint32_t page = (id1 & (1u << 31)) ? 0x10000u : 0x1000u;
+	return page * ((2u << ((id1 >> 28) & 7u)) + bank);
+}
+static void smmu_survey(struct ruan_smmu_survey *v)
+{
+	__builtin_memset(v, 0, sizeof *v);
+	v->free_bank = v->free_slot = ~0u;
+	if (need(W_SMMUF) || rd(NULL, W_SMMUF, GPB_SMMU_ID0, &v->id0) || rd(NULL, W_SMMUF, GPB_SMMU_ID1, &v->id1)) return;
+	const unsigned banks = (v->id1 & 0xffu) < SMMU_HLOS_BANKS ? (v->id1 & 0xffu) : SMMU_HLOS_BANKS;
+	for (unsigned i = 0; i < SMMU_HLOS_SMRS; i++) {
+		if (rd(NULL, W_SMMUF, GPB_SMMU_SMR(i), &v->smr[i]) || rd(NULL, W_SMMUF, GPB_SMMU_S2CR(i), &v->s2cr[i])) return;
+	}
+	for (unsigned n = 0; n < banks; n++) {
+		const uint32_t cb = cb_offset(v->id1, n);
+		if (cb + 0x1000u > 0x40000u) break;
+		if (rd(NULL, W_SMMUF, 0x1000u + 4u * n, &v->cbar[n]) || rd(NULL, W_SMMUF, 0x1800u + 4u * n, &v->cba2r[n]) ||
+		    rd(NULL, W_SMMUF, cb + 0x0, &v->sctlr[n]) || rd(NULL, W_SMMUF, cb + 0x20, &v->ttbr_lo[n]) ||
+		    rd(NULL, W_SMMUF, cb + 0x24, &v->ttbr_hi[n]) || rd(NULL, W_SMMUF, cb + 0x30, &v->tcr[n])) return;
+	}
+	v->read = 1;
+	for (unsigned n = 1; n < banks && v->free_bank == ~0u; n++) {
+		// rbu6c gpu 7: every HLOS bank read CBAR 0 with power-on garbage in TTBR0/TCR/SCTLR (M off); only M and routing count
+		int used = v->sctlr[n] & 1u;
+		for (unsigned i = 0; i < SMMU_HLOS_SMRS; i++)
+			if ((v->smr[i] & GPB_SMMU_SMR_VALID) && ((v->s2cr[i] >> 16) & 3u) == 0 && (v->s2cr[i] & 0xffu) == n) used = 1;
+		if (!used) v->free_bank = n;
+	}
+	for (unsigned i = 0; i < SMMU_HLOS_SMRS && v->free_slot == ~0u; i++)
+		if (!(v->smr[i] & GPB_SMMU_SMR_VALID) && v->s2cr[i] == GPB_SMMU_S2CR_FAULT_RUAN) v->free_slot = i;
+}
+static void smmu_survey_lines(const struct ruan_smmu_survey *v)
+{
+	char line[200];
+	snprintf(line, sizeof line, "gpu smmu id0 %08x id1 %08x read %u free bank %d slot %d", v->id0, v->id1, v->read,
+	    (int)v->free_bank, (int)v->free_slot);
+	result_line(line);
+	for (unsigned n = 0; n < SMMU_HLOS_BANKS; n++) {
+		snprintf(line, sizeof line, "gpu smmu cb%u @%05x cbar %08x cba2r %08x sctlr %08x ttbr0 %08x%08x tcr %08x | smr%u %08x s2cr %08x", n,
+		    cb_offset(v->id1, n), v->cbar[n], v->cba2r[n], v->sctlr[n], v->ttbr_hi[n], v->ttbr_lo[n], v->tcr[n], n, v->smr[n], v->s2cr[n]);
+		result_line(line);
+	}
+}
+
+static void s2c(struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
+{
+	__builtin_memset(c, 0, sizeof *c);
+	struct ruan_pt pt;
+	struct ruan_gmu_region reg[RUAN_GMU_MAX_REGIONS];
+	if (!b->fw_ok || b->tcm_bad || b->sysreset != 1) {strlcpy(c->why, "gpu 5 part did not pass (fw/TCM/reset)", sizeof c->why); return;}
+	const int pr = gpu_pool();
+	if (pr) {strlcpy(c->why, pr == -1 ? "GPU pool not reserved (board.toml / kept list)" : "GPU pool map failed", sizeof c->why); return;}
+	if (ruan_pt_init(&pt, pool_cpu, pool_pa, RUAN_GMU_POOL_BYTES)) {strlcpy(c->why, "no usable GMU pool", sizeof c->why); return;}
+	c->stage = 1;
+	result_line("gpu s2c: page tables and GMU regions on the pool");
+	const int n = ruan_gmu_layout(&pt, fw_data, fw_size, reg);
+	if (n < 0) {strlcpy(c->why, "layout did not fit the pool", sizeof c->why); return;}
+	c->regions = (unsigned)n;
+	// the firmware's DDR blocks (the code at GMU VA 0x4000) into their regions
+	for (size_t o = 0; o + 16 <= fw_size;) {
+		uint32_t h[4];
+		memcpy(h, fw_data + o, 16);
+		o += 16;
+		if (h[1] && !ruan_gmu_va_in_tcm(h[0])) {
+			uint8_t *dst = ruan_gmu_cpu(&pt, reg, c->regions, h[0], h[1]);
+			if (!dst) {snprintf(c->why, sizeof c->why, "no region for fw block %08x+%x", h[0], h[1]); return;}
+			memcpy(dst, fw_data + o, h[1]);
+		}
+		o += h[1];
+	}
+	uint8_t *hfi = ruan_gmu_cpu(&pt, reg, c->regions, RUAN_GMU_HFI_VA, RUAN_GMU_HFI_BYTES);
+	if (!hfi || AdrenoHfiInitializeStopped(&gmu_hfi, (volatile uint32_t *)(void *)hfi, RUAN_GMU_HFI_BYTES, RUAN_GMU_HFI_VA, NULL,
+	    hfi_notify_unused) != AdrenoHfiSuccess) {strlcpy(c->why, "HFI queue table init failed", sizeof c->why); return;}
+	c->pt_used = pt.used;
+	clean_pool();
+
+	c->stage = 2;
+	result_line("gpu s2c: stream-5 context bank on the GPU SMMU");
+	if (need(W_SMMUF)) {strlcpy(c->why, "SMMU map failed", sizeof c->why); return;}
+	struct ruan_smmu_survey *v = &ruan_smmu_survey_result;
+	smmu_survey(v);
+	smmu_survey_lines(v);
+	c->id1 = v->id1;
+	if (!v->read || v->free_bank == ~0u || v->free_slot == ~0u) {strlcpy(c->why, "no free HLOS bank/slot (gpu 7 lines)", sizeof c->why); return;}
+	gmu_bank = v->free_bank, gmu_slot = v->free_slot;
+	c->cb_off = cb_offset(v->id1, gmu_bank);
+	gmu_cb_off = c->cb_off;
+	(void)rd(NULL, W_SMMUF, GPB_SMMU_SMR(GMU_SMMU_SLOT), &c->smr_before);
+	(void)rd(NULL, W_SMMUF, GPB_SMMU_S2CR(GMU_SMMU_SLOT), &c->s2cr_before);
+	(void)rd(NULL, W_SMMUF, 0x1000u + 4u * GMU_SMMU_BANK, &c->cbar_before);
+	(void)rd(NULL, W_SMMUF, CB(CB_SCTLR), &c->sctlr_before);
+	if ((c->smr_before & GPB_SMMU_SMR_VALID) || c->s2cr_before != GPB_SMMU_S2CR_FAULT_RUAN || (c->sctlr_before & 1u)) {
+		strlcpy(c->why, "slot 2 / bank 1 already in use, not touched", sizeof c->why);
+		return;
+	}
+	c->ttbr0 = pt.pa | (1ull << 48);   // ASID 1
+	smmu_bad_off = 0;
+	int bad = 0;
+	uint32_t rb = 0;
+	// arm-smmu order: CBA2R, CBAR, TCR2, TTBR0, TCR, MAIR, then SCTLR; every write read back (a hypervisor that owns the SMMU
+	// would drop them: reported as refused, nothing forced)
+	bad |= smmu_wr_check(0x1800u + 4u * GMU_SMMU_BANK, 1u, &rb);                                  // CBA2R.VA64
+	bad |= smmu_wr_check(0x1000u + 4u * GMU_SMMU_BANK, (1u << 16) | (3u << 8) | (0xfu << 12), &c->cbar_after);   // S1, NSH, WB
+	bad |= smmu_wr_check_sup(CB(CB_TCR2), RUAN_SMMU_TCR2, &rb, 1);
+	bad |= smmu_wr_check(CB(CB_TTBR0_LO), (uint32_t)c->ttbr0, &rb);
+	bad |= smmu_wr_check(CB(CB_TTBR0_HI), (uint32_t)(c->ttbr0 >> 32), &rb);
+	bad |= smmu_wr_check(CB(CB_TCR), RUAN_SMMU_TCR, &rb);
+	bad |= smmu_wr_check(CB(CB_MAIR0), RUAN_SMMU_MAIR0, &rb);
+	bad |= smmu_wr_check(CB(CB_MAIR1), 0u, &rb);
+	(void)wr(NULL, W_SMMUF, CB(CB_FSR), 0xffffffffu);                                             // clear stale faults
+	bad |= smmu_wr_check(CB(CB_SCTLR), (1u << 0) | (1u << 1) | (1u << 2) | (1u << 5), &c->sctlr_after);   // M TRE AFE CFRE, no CFIE
+	smmu_tlb_sync();
+	bad |= smmu_wr_check(GPB_SMMU_S2CR(GMU_SMMU_SLOT), GMU_SMMU_BANK, &c->s2cr_after);            // translate via bank 1
+	bad |= smmu_wr_check(GPB_SMMU_SMR(GMU_SMMU_SLOT), GPB_SMMU_SMR_VALID | (RUAN_SMMU_SID_GMU_MASK << 16) | RUAN_SMMU_SID_GMU,
+	    &c->smr_after);
+	owned.gmu_ctx = 1;
+	if (bad) {
+		c->smmu_refused = 1;
+		if (bad < 0) strlcpy(c->why, "SMMU write failed", sizeof c->why);
+		else snprintf(c->why, sizeof c->why, "SMMU +%x wrote %08x read %08x: refused?", smmu_bad_off, smmu_bad_want, smmu_bad_got);
+		smmu_ctx_off();
+		owned.gmu_ctx = 0;
+		return;
+	}
+
+	c->stage = 3;
+	result_line("gpu s2c: GMU register config (KGSL gen7_gmu_register_config / device_start)");
+	if (need(W_CXMISC) || need(W_PDC) || need(W_RSCC)) {strlcpy(c->why, "CX_MISC/PDC/RSCC map failed", sizeof c->why); return;}
+	const struct {unsigned w; uint32_t off, v;} cfg[] = {
+	    {W_GMU, GMU_REG(0x1f8f1), 1}, {W_GMU, GMU_REG(0x1f8f0), 1},            // FALNEXT_INTF, FAL_INTF: vote veto for FAL10
+	    {W_CXMISC, 0x39u * 4u, 1},                                            // TCM retention
+	    {W_GMU, GMU_REG(0x1f81c), 0}, {W_GMU, GMU_REG(0x1f801), 2},           // FW_INIT_RESULT 0, BOOT_CONFIG 2
+	    {W_GMU, GMU_REG(0x1f985), RUAN_GMU_HFI_VA}, {W_GMU, GMU_REG(0x1f984), 1},   // HFI_QTBL_ADDR, HFI_QTBL_INFO
+	    {W_GMU, GMU_REG(0x23b11), (1u << 31) | (0x32u << 18) | 0x8a0u},       // AHB_FENCE_RANGE_0
+	    {W_GMU, GMU_REG(0x1f82d), 0x4052},                                    // CM3_CFG at its reset value (no NMI)
+	    {GPB_WIN_GPU, 0x3c45u * 4u, 0},                                       // GBIF_HALT clear
+	    {W_GMU, GMU_REG(0x1f9ce), 0}, {W_GMU, GMU_REG(0x1f9cf), RUAN_A710_CHIPID_GMU},   // GENERAL_9 log wptr, GENERAL_10 chip id
+	    {W_GMU, GMU_REG(0x1f9cd), (RUAN_GMU_LOG_VA & 0xfffff000u) | (RUAN_GMU_LOG_BYTES / 4096u - 1u)},   // GENERAL_8 log
+	    {W_GMU, GMU_REG(0x1f40f), 1}, {W_GMU, GMU_REG(0x1f400), 1}, {W_GMU, GMU_REG(0x1f401), 1}};     // SYS_BUS/ICACHE/DCACHE
+	for (unsigned i = 0; i < sizeof cfg / sizeof *cfg; i++)
+		if (wr(NULL, cfg[i].w, cfg[i].off, cfg[i].v)) {snprintf(c->why, sizeof c->why, "config write %u refused", i); return;}
+
+	c->stage = 4;
+	result_line("gpu s2c: CM3_SYSRESET 0 (the GMU starts), poll FW_INIT_RESULT bit 8");
+	if (wr(NULL, W_GMU, GMU_REG(0x1f800), 0)) {strlcpy(c->why, "SYSRESET write refused", sizeof c->why); return;}
+	owned.gmu_started = 1;
+	for (c->fw_polls = 0; c->fw_polls < 1000; c->fw_polls++) {   // KGSL: 100 ms
+		if (rd(NULL, W_GMU, GMU_REG(0x1f81c), &c->fwinit)) break;
+		if ((c->fwinit & 0x1ffu) == 0x100u) {c->booted = 1; break;}
+		delay(100);
+	}
+	if (!c->booted) strlcpy(c->why, "GMU did not report FW_INIT bit 8", sizeof c->why);
+	else {
+		c->stage = 5;
+		result_line("gpu s2c: PDC and RSC microcode (gen7_load_pdc_ucode / gen7_load_rsc_ucode)");
+		const struct {unsigned w; uint32_t dw, v;} rsc[] = {
+		    {W_PDC, 0x1148, 0}, {W_PDC, 0x1140, 0x80000001u},
+		    {W_RSCC, 0x4, 1u << 24}, {W_RSCC, 0xb, 1}, {W_RSCC, 0xe, 0}, {W_RSCC, 0xd, 0}, {W_RSCC, 0x10, 0}, {W_RSCC, 0xf, 0},
+		    {W_RSCC, 0x12, 0x80000000u}, {W_RSCC, 0x11, 0}, {W_RSCC, 0x100, 0}, {W_RSCC, 0x8, 0x4520}, {W_RSCC, 0x9, 0x4510},
+		    {W_RSCC, 0xa, 0x4514}, {W_RSCC, 0x180, 0xeaaae5a0u}, {W_RSCC, 0x181, 0xe1a1ebabu}, {W_RSCC, 0x182, 0xa2e0a581u},
+		    {W_RSCC, 0x183, 0xecac82e2u}, {W_RSCC, 0x184, 0x0020edadu}};
+		for (unsigned i = 0; i < sizeof rsc / sizeof *rsc; i++)
+			if (wr(NULL, rsc[i].w, rsc[i].dw * 4u, rsc[i].v)) {snprintf(c->why, sizeof c->why, "PDC/RSC write %u refused", i); break;}
+		if (!c->why[0]) {
+			c->stage = 6;
+			result_line("gpu s2c: HFI_CTRL_INIT 1, poll HFI_CTRL_STATUS bit 0");
+			if (!wr(NULL, W_GMU, GMU_REG(0x1f986), 1)) {
+				for (c->hfi_polls = 0; c->hfi_polls < 1000; c->hfi_polls++) {
+					if (rd(NULL, W_GMU, GMU_REG(0x1f980), &c->hfi_status)) break;
+					if (c->hfi_status & 1u) {c->hfi_ready = 1; break;}
+					delay(100);
+				}
+			}
+			if (!c->hfi_ready) strlcpy(c->why, "HFI_CTRL_STATUS bit 0 never set", sizeof c->why);
+		}
+	}
+	// what the GMU and the SMMU say afterwards, pass or fail
+	(void)rd(NULL, W_SMMUF, CB(CB_FSR), &c->fsr);
+	(void)rd(NULL, W_SMMUF, CB(CB_FSYNR0), &c->fsynr0);
+	uint32_t lo = 0, hi = 0;
+	(void)rd(NULL, W_SMMUF, CB(CB_FAR_LO), &lo);
+	(void)rd(NULL, W_SMMUF, CB(CB_FAR_HI), &hi);
+	c->far = (uint64_t)hi << 32 | lo;
+	(void)rd(NULL, W_GMU, GMU_REG(0x23b05), &c->ao_irq);
+	(void)rd(NULL, W_GMU, GMU_REG(0x1f82d), &c->cm3_cfg);
+}
+
+
 int
 ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 {
 	trace_fn = trace, trace_ctx = ctx;
-	if (!mode || (mode > 5 && mode != RUAN_GPU_OFF)) {
+	if (!mode || (mode > 7 && mode != RUAN_GPU_OFF)) {
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m%u?", mode);
-		result_line("gpu: mode is 1..5 or off, nothing done");
+		result_line("gpu: mode is 1..7 or off, nothing done");
 		trace_fn = NULL;
 		return -1;
 	}
@@ -400,12 +735,24 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 	}
 	result_line("gpu: windows mapped, starting the gated sequence");
 	gpb_run(&io, mode > GPB_MAX_MODE ? GPB_MAX_MODE : mode, have, r);
+	if (mode == 7) {   // read-only SMMU survey: needs only what gpu 3 brings up (CX, the SMMU clocks)
+		if (r->smmu == GPB_DONE) {smmu_survey(&ruan_smmu_survey_result); smmu_survey_lines(&ruan_smmu_survey_result);}
+		else result_line("gpu 7: the SMMU gate did not pass (gpu 3 first), nothing read");
+		for (unsigned w = 0; w < NWIN; w++) {if (va[w]) ml_io_unmap(va[w], (vm_size_t)len[w]); va[w] = 0;}
+		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m7 bank %d slot %d", (int)ruan_smmu_survey_result.free_bank,
+		    (int)ruan_smmu_survey_result.free_slot);
+		result_line(ruan_gpu_short);
+		trace_fn = NULL;
+		return ruan_smmu_survey_result.read ? 0 : -2;
+	}
 	if (r->powered_cx) owned.cx = 1;
 	if (r->powered_clocks) owned.smmu_clock = 1;
 	struct ruan_gpu_s2a *k = &ruan_gpu_s2a_result;
 	struct ruan_gpu_s2b *b = &ruan_gpu_s2b_result;
 	if (mode >= 4) s2a(r, k);
-	if (mode == 5 && k->gmu_read && !k->io_error) s2b_tcm(b);
+	struct ruan_gpu_s2c *c = &ruan_gpu_s2c_result;
+	if (mode >= 5 && k->gmu_read && !k->io_error) s2b_tcm(b);
+	if (mode == 6 && !b->why[0]) s2c(c, b);
 	for (unsigned w = 0; w < NWIN; w++) {
 		if (va[w]) ml_io_unmap(va[w], (vm_size_t)len[w]);
 		va[w] = 0;
@@ -449,19 +796,35 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		}
 	}
 	const int cx = gpb_gdsc_on(r->cx_gdscr) || gpb_gdsc_on(r->cx_hwctrl);
-	if (mode == 5) {
+	if (mode >= 5) {
 		snprintf(line, sizeof(line), "gpu s2b fw %s blocks %u prealloc %u tcm %u (%u words, %u bad) ddr %u (%u bytes, first %08x) sysreset %08x %s",
 		    b->fw_ok ? "ok" : "BAD", b->blocks, b->prealloc, b->tcm_blocks, b->tcm_words, b->tcm_bad, b->ddr_blocks, b->ddr_bytes,
 		    b->ddr_first, b->sysreset, b->why[0] ? b->why : "TCM loaded, GMU still in reset; DDR blocks need the SID-5 context (next stage)");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
+	if (mode == 6) {
+		snprintf(line, sizeof(line), "gpu s2c stage %u regions %u pt %u id1 %08x cb %x smr %08x>%08x s2cr %08x>%08x cbar %08x>%08x sctlr %08x>%08x refused %u",
+		    c->stage, c->regions, c->pt_used, c->id1, c->cb_off, c->smr_before, c->smr_after, c->s2cr_before, c->s2cr_after,
+		    c->cbar_before, c->cbar_after, c->sctlr_before, c->sctlr_after, c->smmu_refused);
+		result_line(line);
+		snprintf(line, sizeof(line), "gpu s2c booted %u fwinit %08x (%u polls) hfi %u status %08x (%u polls) fsr %08x far %llx fsynr0 %08x aoirq %08x cm3cfg %08x %s",
+		    c->booted, c->fwinit, c->fw_polls, c->hfi_ready, c->hfi_status, c->hfi_polls, c->fsr, (unsigned long long)c->far, c->fsynr0,
+		    c->ao_irq, c->cm3_cfg, c->why[0] ? c->why : "GMU up, HFI ready");
+		result_line(line);
+		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
+	}
+	if (mode == 6) {
+		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m6 %s s%u fw%u hfi%u", c->smmu_refused ? "REF" : "ok", c->stage, c->booted,
+		    c->hfi_ready);
+	} else
 	snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m%u cx%s gx%s smmu%s%s%s", mode, cx ? "on" : "off",
 	    gpb_gdsc_on(r->gx_gdscr) ? "on" : "off", r->smmu == GPB_DONE ? "ok" : "-", mode == 4 ? (k->gmu_read ? " gmuR" : " gmu-") : "",   /* 31 chars max: m5 drops gmuR (tcm implies it) */
 	    mode == 5 ? (b->tcm_words && !b->tcm_bad && !b->why[0] ? " tcm" : " tcm-") : "");
 	result_line(ruan_gpu_short);
 	trace_fn = NULL;
-	return (r->io_error || (mode >= 4 && (k->io_error || k->rcg_fail || !k->gmu_read)) || (mode == 5 && b->why[0])) ? -2 : 0;
+	return (r->io_error || (mode >= 4 && (k->io_error || k->rcg_fail || !k->gmu_read)) || (mode >= 5 && b->why[0]) ||
+	    (mode == 6 && (c->why[0] || !c->hfi_ready))) ? -2 : 0;
 }
 
 void
