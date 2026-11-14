@@ -1,0 +1,22 @@
+Stage S0 hook (not applied): call the read-only GPU survey once boot-progress is up, and build it with the probe archive.
+Apply from /root/unixnu-work/UniXNU-ruan after copying staged/package/RuanGpuSurvey.c to package/.
+
+--- a/package/BootProgress.c
++++ b/package/BootProgress.c
+@@ -819,6 +819,8 @@
+ boot_progress_start(void)
+ {
+ 	thread_t thread;
++	extern void ruan_gpu_survey(void);
++	ruan_gpu_survey();   /* ruan-gpu-survey=1 only: gpu-prep/adreno stage S0, read only */
+ 	if (enabled) {
+ 		zone_map();
+ 		char line[MAXCOLS];
+--- a/scripts/build-ram-root-probe.py
++++ b/scripts/build-ram-root-probe.py
+@@ -165,2 +165,4 @@
+            # EL0 fault records and the SIGABRT reason scan for the crash banner (package/BootFaultProbe.c, from UniXNU-fuxi)
+-           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/BootFaultProbe.c', OUT / 'BootFaultProbe.o')]
++           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/BootFaultProbe.c', OUT / 'BootFaultProbe.o'),
++           # read-only Adreno 710 power-domain survey (gpu-prep/adreno stage S0)
++           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanGpuSurvey.c', OUT / 'RuanGpuSurvey.o')]

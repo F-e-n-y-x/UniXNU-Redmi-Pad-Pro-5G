@@ -1,0 +1,27 @@
+# Board patch paths, one per line in application order.
+ruan-gunyah-no-cntp.patch
+# RAM-root diagnostic hooks (ram-root-probe=1|2, ram-restore-trust=1; no-ops without the boot-args), ported from
+# UniXNU-fuxi; the probe code is package/RamRootProbe.c + RamRestoreTrust.c, built by scripts/build-ram-root-probe.py.
+ruan-ram-root-probe.patch
+# Boot-progress page (package/BootProgress.c, boot-progress=1): turns on the OS profile's zzz-boot-progress.patch hooks
+# without XNU_BOOT_PROGRESS (whose build-script gate wants UFS + owner root); and -v selects the text console, which
+# DarwinBoot's v_display = 1 never did.
+ruan-boot-progress.patch
+# PID 1 / dyld: the dyld_flags boot-arg seeds the commpage before launchd (bit 3 = no libignition), and PID 1's failed
+# syscalls plus its shared-region and F_ADDFILESIGS calls go to the boot-progress events panel (package/BootProgress.c).
+ruan-pid1-dyld.patch
+# DRAM outside DarwinBoot's window becomes VM memory (UniXNU 8f5a4e9 via UniXNU-gts7xlwifi's xnu-10063 port; the
+# macOS-only upstream patch is not in the iPadOS profile). Opt-in: memory-outside=1 (2 below / 3 above the window only).
+ruan-memory-outside.patch
+# launchd-normal-boot=1: userland's kern.bootargs shows rootdev=md0 instead of rd=md0, so launchd does not start as a
+# restore environment (see the patch header). Off by default; with it launchd runs every boot task.
+ruan-launchd-normal-boot.patch
+# ram-data=1: mount the root container's Data volume (make-ramroot.py --data) read-write on /private/var before launchd.
+ruan-ram-data-mount.patch
+# ram-data-split=<bytes>: md0 = the root container, md1 = the Data container after it (make-ramroot.py --data-container);
+# with ram-data=1 ram-data-dev=md1 the Data container is mounted on /private/var like the reference ports do.
+ruan-ram-data-split.patch
+# NativeRamBlock (linked by scripts/build-ram-root-probe.py) serves that Data container as a real IOMedia: its personality.
+ruan-ram-block-personality.patch
+# aks=1 offline-key-events=1: the AppleKeyStore stand-in (package/KeyStoreProbe.cpp) before launchd.
+ruan-keystore-probe.patch

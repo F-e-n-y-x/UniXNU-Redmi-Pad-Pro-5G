@@ -1,0 +1,13 @@
+--- a/osfmk/arm64/machine_routines.c	2026-11-13 22:56:48.984084186 +0530
++++ b/osfmk/arm64/machine_routines.c	2026-11-13 22:56:48.992962513 +0530
+@@ -2393,8 +2393,8 @@
+ 	uint64_t cntvctl = CNTV_CTL_EL0_ENABLE; /* One wants to use 32 bits, but "mrs" prefers it this way */
+ 
+ 	__builtin_arm_wsr64("CNTV_CTL_EL0", cntvctl);
+-	/* disable the physical timer as a precaution, as its registers reset to architecturally unknown values */
+-	__builtin_arm_wsr64("CNTP_CTL_EL0", CNTP_CTL_EL0_IMASKED);
++	/* ruan (SM7435): Gunyah owns EL2 and traps EL1 access to the physical timer (undefined instruction at
++	 * fiq_context_init); XNU runs on the virtual timer here, so the physical one is left alone. */
+ }
+ 
+ void

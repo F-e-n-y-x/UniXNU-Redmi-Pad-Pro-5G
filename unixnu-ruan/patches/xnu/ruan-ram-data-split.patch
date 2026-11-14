@@ -1,0 +1,27 @@
+ruan: ram-data-split=<bytes> splits the RAM disk into md0 (root container) and md1 (a separate Data container)
+
+PROPOSALS.md P2: every 17.x port that reached SpringBoard mounts Data as its own APFS container on its own block device,
+with a plain mount on /private/var (UniXNU native_owner_data_prepare). DarwinBoot hands one RAMDisk; with
+ram-data-split=<offset> (scripts/make-ramroot.py --data-container writes the offset, build-ramroot.sh adds the arg)
+the part from the offset on becomes md1, and ram-data=1 ram-data-dev=md1 (ruan-ram-data-mount.patch) mounts it.
+mdevadd panics on overlapping memory devices, so the two ranges are disjoint. Without the boot-arg nothing changes.
+
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -836,6 +836,16 @@
+ 					panic("ramdisk params");
+ 				}
+ #endif /* __LP64__ */
++				/* ruan: ram-data-split=<bytes> cuts the RAM disk in two, md0 = [0, split) (root container) and md1 = [split, end)
++				 * (the Data container, ruan-ram-data-split.patch). mdevadd panics on overlapping devices, so the two are
++				 * disjoint page ranges. Without the boot-arg, or with a split that is not page aligned inside the disk, one md0. */
++				uint64_t ram_split = 0;
++				if (PE_parse_boot_argn("ram-data-split", &ram_split, sizeof(ram_split)) && ram_split &&
++				    !(ram_split & 0xFFF) && ram_split < ramdParms[1]) {
++					(void)mdevadd(-1, ml_static_ptovirt(ramdParms[0]) >> 12, (unsigned int) (ram_split >> 12), 0);
++					(void)mdevadd(-1, ml_static_ptovirt(ramdParms[0] + ram_split) >> 12,
++					    (unsigned int) ((ramdParms[1] - ram_split) >> 12), 0);
++				} else
+ 				(void)mdevadd(-1, ml_static_ptovirt(ramdParms[0]) >> 12, (unsigned int) (ramdParms[1] >> 12), 0);        /* Initialize it and pass back the device number */
+ 			}
+ 			regEntry->release();                                                            /* Toss the entry */

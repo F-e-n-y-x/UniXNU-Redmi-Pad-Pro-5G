@@ -1,0 +1,8 @@
+*.ipsw
+*.img
+*.apfs
+*.fd
+*.macho
+*.bin
+build/
+out*/
