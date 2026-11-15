@@ -21,7 +21,7 @@ int main(int argc, char **argv) {
     assert(ruan_pt_map(&p, 0x7004, d, 0x1000) == -1 && ruan_pt_map(&p, 0xfffff000u, d, 0x2000) == -1);
     {   // the leaf descriptor's attributes: page, AttrIndx 0, AP 01, SH outer, AF, executable (no XN bits)
         const uint64_t *l1 = ruan_pt_tbl(&p, p.pa), *l2 = ruan_pt_tbl(&p, l1[0] & RUAN_PT_ADDR_MASK), *l3 = ruan_pt_tbl(&p, l2[0] & RUAN_PT_ADDR_MASK);
-        assert((l3[4] & ~RUAN_PT_ADDR_MASK) == RUAN_PT_PAGE_ATTRS && RUAN_PT_PAGE_ATTRS == 0x643ull && !(l3[4] >> 52));
+        assert((l3[4] & ~RUAN_PT_ADDR_MASK) == RUAN_PT_PAGE_ATTRS && RUAN_PT_PAGE_ATTRS == 0x603ull && !(l3[4] >> 52));
     }
     // exhaustion returns 0 and leaves the pool usable
     assert(ruan_pt_alloc(&p, p.pages) == 0);

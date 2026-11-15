@@ -13,10 +13,10 @@
 #define RUAN_PT_TABLE 3ull                     /* level 1/2 table descriptor */
 #define RUAN_PT_PAGE_DESC 3ull                 /* level 3 page descriptor */
 #define RUAN_PT_ATTR_NC (0ull << 2)            /* AttrIndx 0 -> MAIR0 byte 0 = 0x44 (Normal NC) */
-#define RUAN_PT_AP_RW_ALL (1ull << 6)          /* AP[2:1] = 01: RW, EL0 and EL1 */
+#define RUAN_PT_AP_RW_PRIV (0ull << 6)         /* AP[2:1] = 00: RW, EL1 privileged only (EL0 denied so GMU can fetch) */
 #define RUAN_PT_SH_OUTER (2ull << 8)
 #define RUAN_PT_AF (1ull << 10)
-#define RUAN_PT_PAGE_ATTRS (RUAN_PT_PAGE_DESC | RUAN_PT_ATTR_NC | RUAN_PT_AP_RW_ALL | RUAN_PT_SH_OUTER | RUAN_PT_AF)
+#define RUAN_PT_PAGE_ATTRS (RUAN_PT_PAGE_DESC | RUAN_PT_ATTR_NC | RUAN_PT_AP_RW_PRIV | RUAN_PT_SH_OUTER | RUAN_PT_AF)
 #define RUAN_PT_ADDR_MASK 0x0000fffffffff000ull
 #define RUAN_SMMU_MAIR0 0x44u
 #define RUAN_SMMU_TCR 0x00800020u              /* T0SZ 32, walks NC/non-shareable, TG0 4K, EPD1 (no TTBR1) */

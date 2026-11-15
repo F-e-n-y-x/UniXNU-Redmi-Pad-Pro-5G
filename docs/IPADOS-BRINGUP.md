@@ -203,7 +203,7 @@ TAG=<tag> bash zima-ramroot.sh usb <dir>     # tablet in stock fastboot
   - **Next fix:** map the GMU regions privileged-only (descriptor 0x603, like KGSL's IOMMU_PRIV). The code region may also be read-only (AP[2]=1).
 
 ### Resume here (next session)
-1. `RuanGpuPower.c` / `gmu_mmu_host.c`: GMU page descriptor 0x643 → 0x603 (AP[1]=0). Update the host test. Rebuild the kernel only (rbu5 root via hard links). Run `gpu 6`; expect `booted 1 fwinit 00000100 … hfi 1`.
+1. `RuanGpuPower.c` / `gmu_mmu_host.c`: GMU page descriptor 0x643 → 0x603 (AP[1]=0). ✅ **Applied and verified in host test.** Next: Rebuild the kernel only (rbu5 root via hard links). Run `gpu 6`; expect `booted 1 fwinit 00000100 … hfi 1`.
 2. If it still does not boot: compare with KGSL's gen7 GMU start (the DDR bandwidth vote, the AOP ACD message, GMU IRQs).
 3. Then S3: SQE microcode, zap via SCM PAS 13, a first ringbuffer and fence (the 15.5 MiB left in the GPU pool).
 4. Open issue: about 1 in 5 boots freezes early (bsd_autoconf) or resets into Android before USB comes up. On retry the same image boots.
