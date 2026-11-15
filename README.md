@@ -190,6 +190,20 @@ Derived from the garnet (POCO X6 5G, same SoC) platform in [JosephMontfort/hakio
   - **S1 (passed):** CX GDSC powered (0x0022f001→0xf8228800), clocks on, SMMU readable (24 SMRs).
   - **S2a (passed):** GMU clocks (200 MHz GMU, 150 MHz hub from GPLL0_DIV), GMU registers readable.
   - **S2b-1 (passed):** `gmu_gen70000.bin` (57272 B) verified and loaded into TCM.
-  - **S2b-2 (passed & verified on live hardware in rbu7):** 16 MiB reserved pool at phys 0x8B8B00000. SMMU stream 5 context bank accepted, GMU released from reset. Fixed instruction fetch permission fault by changing page descriptor attributes to privileged-only `0x603` (AP[2:1]=00). Verified on real hardware via `gpu 6`: `booted 1 fwinit 00000100 hfi 1 status 00000001 ... GMU up, HFI ready` (`rc=0`). Stage S2 complete; next is Stage S3 (SQE microcode, zap via SCM PAS 13, ringbuffer).
+  - **S2b-2 (passed & verified on live hardware in rbu7):** 16 MiB reserved pool at phys 0x8B8B00000. SMMU stream 5 context bank accepted, GMU released from reset. Fixed instruction fetch permission fault by changing page descriptor attributes to privileged-only `0x603` (AP[2:1]=00). Verified on real hardware via `gpu 6`: `booted 1 fwinit 00000100 hfi 1 status 00000001 ... GMU up, HFI ready` (`rc=0`). Stage S2 complete.
+
+## 2026-11-15 & 16: Adreno 710 Stage S3 Achieved & Stage S4 GOP Framebuffer Blitter (rbu10 → rbu17)
+- **Stage S3 Fully Achieved & Live-Verified on Hardware:**
+  - **`gpu 8` (GX Core Power-On)**: Handshake with GMU via HFI and OOB GPU SET succeeded (`gx 0022f001>f8222800`, `rbbm 00000001` readable).
+  - **`gpu 9` (A710 Hardware Init & SMMU Stream 0)**: Configured GBIF (5 regs), CP_PROTECT (45 ranges), HWCG (49 regs), and programmed Stream-0 SMMU context (Bank 2, Slot 1, TTBR0 `0xb8b80000`).
+  - **`gpu 10` (SQE Microcode & Ringbuffer)**: Loaded `a710_sqe.fw` into GPU VA `0x40090000`, programmed BV shadow RPTR (`CP_BV_RB_RPTR_ADDR_LO/HI`), asserted `CP_SQE_CNTL = 1`, and submitted `CP_THREAD_CONTROL` + `CP_ME_INIT`. Micro-engine executed in hardware: `rptr 10 wptr 10 rbbm 00000001 int0 0 fault 0 polls 0` (GPU idle, zero faults).
+  - **`gpu 11` (PM4 Packet Dispatch Smoke Test)**: Emitted `CP_MEM_WRITE` packet targeting `SCRATCH_VA` (`0x400b0000`) with magic `0xC0FFEE01`. The GPU translated VA through SMMU Stream-0, wrote directly to physical DRAM, and CPU verified: `magic c0ffee01 (wrote c0ffee01) rptr 14/14 polls 0 rbbm 00000001 GPU executed CP_MEM_WRITE verified by CPU! magicMATCH`.
+  - **`gpu 12` (Non-Secure Execution Mode)**: Removed stalling `CP_SET_SECURE_MODE 0` instruction. Confirmed non-secure execution mode is active and functional without TrustZone zap shader.
+  - **`gpu 13` (2D Solid Fill Blitter Test)**: GPU ringbuffer emits block fills to user buffer (`0x40100000`), verifying multi-word writes.
+- **Stage S4: GOP Framebuffer Hardware Blitter (`rbu17`):**
+  - Mapped GOP physical display framebuffer (`0xb8000000`, 16 MiB) into Stream-0 page tables at GPU VA `0x50000000`.
+  - Implemented `s4_fb_blit` (`gpu 14`): GPU Command Processor executes PM4 `CP_MEM_WRITE` block fills directly into the live display framebuffer at `0x50000000`, drawing a 100x40 test rectangle in DRAM without CPU rasterization.
+- **Next: Stage S5 (Mesa Turnip / Metal Compositing Pipeline):**
+  - Connect Mesa Turnip / `IOAccelerator` shim for full 3D hardware acceleration on WindowServer and SpringBoard.
 
 > Full iPadOS bring-up log (blockers, errors, causes, fixes): [docs/IPADOS-BRINGUP.md](docs/IPADOS-BRINGUP.md). Port sources: [unixnu-ruan/](unixnu-ruan/). Research plans: [docs/research/](docs/research/). Host tools: [tools/ruan-usbdbg.py](tools/ruan-usbdbg.py).
