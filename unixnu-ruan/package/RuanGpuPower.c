@@ -1231,7 +1231,7 @@ static void s3_hw_init(struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, stru
 	if (wr(NULL, W_SMMUF, GPB_SMMU_S2CR(GPU_STREAM0_SLOT), GPU_STREAM0_BANK)) {
 		strlcpy(h->why, "S2CR1 write refused", sizeof h->why); return;
 	}
-	if (wr(NULL, W_SMMUF, GPB_SMMU_SMR(GPU_STREAM0_SLOT), GPB_SMMU_SMR_VALID | RUAN_SMMU_SID_GPU)) {
+	if (wr(NULL, W_SMMUF, GPB_SMMU_SMR(GPU_STREAM0_SLOT), GPB_SMMU_SMR_VALID | (0x400u << 16) | RUAN_SMMU_SID_GPU)) {
 		strlcpy(h->why, "SMR1 write refused", sizeof h->why); return;
 	}
 	(void)rd(NULL, W_SMMUF, GPB_SMMU_SMR(GPU_STREAM0_SLOT), &h->smr_after);
@@ -1275,35 +1275,18 @@ static void s3_cp_start(struct ruan_gpu_s3_cp *cp, struct ruan_gpu_s3_hw *h, str
 	cp->sqe_bytes = (uint32_t)copy_bytes;
 
 	result_line("gpu s3_cp: initialize ringbuffer, memptrs, pwrup reglist");
-	memset(pool_cpu + RUAN_S3_POOL_RB_OFF, 0xaa, 0x8000);
+	memset(pool_cpu + RUAN_S3_POOL_RB_OFF, 0, 0x8000);
 	memset(pool_cpu + RUAN_S3_POOL_MEMPTRS_OFF, 0, 0x1000);
 	memset(pool_cpu + RUAN_S3_POOL_SCRATCH_OFF, 0, 0x1000);
 	uint32_t *pwrup = (uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_PWRUP_OFF);
 	memset(pwrup, 0, 0x1000);
-	pwrup[0] = 0; /* lock */
-	pwrup[1] = 0; /* ifpc_list_len */
-	pwrup[2] = 0; /* preemption_list_len */
-	pwrup[3] = 1; /* dynamic_list_len */
+	pwrup[0] = 0; /* gpu_req */
+	pwrup[1] = 0; /* cpu_req */
+	pwrup[2] = 0; /* turn */
+	pwrup[3] = (1u << 16); /* dynamic_list_len = 1, preemption_len = 0, ifpc_len = 0 */
 	pwrup[4] = 0; /* aperture/pipe = PIPE_NONE */
 	pwrup[5] = RUAN_RBBM_PERFCTR_CNTL; /* 0x00500 */
 	pwrup[6] = 1; /* val = 1 */
-	clean_pool();
-
-	result_line("gpu s3_cp: program CP_RB and CP_SQE base registers");
-	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_RPTR_ADDR_LO * 4u, RUAN_S3_GPU_VA_MEMPTRS);
-	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_RPTR_ADDR_HI * 4u, 0);
-	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_CNTL * 4u, RUAN_CP_RB_CNTL_DEFAULT);
-	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_BASE * 4u, RUAN_S3_GPU_VA_RB);
-	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_BASE_HI * 4u, 0);
-	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_SQE_INSTR_BASE_LO * 4u, RUAN_S3_GPU_VA_SQE);
-	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_SQE_INSTR_BASE_HI * 4u, 0);
-	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, 0);
-
-	result_line("gpu s3_cp: set CP_SQE_CNTL=1 (micro-engine starts!)");
-	if (wr(NULL, GPB_WIN_GPU, RUAN_CP_SQE_CNTL * 4u, 1u)) {
-		strlcpy(cp->why, "CP_SQE_CNTL write refused", sizeof cp->why);
-		return;
-	}
 
 	result_line("gpu s3_cp: emit CP_THREAD_CONTROL and CP_ME_INIT packets");
 	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
@@ -1320,6 +1303,16 @@ static void s3_cp_start(struct ruan_gpu_s3_cp *cp, struct ruan_gpu_s3_hw *h, str
 	rb[w++] = 0x00000000u;
 	rb[w++] = (1u << 31);
 	clean_pool();
+
+	result_line("gpu s3_cp: program CP_RB and CP_SQE base registers");
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_RPTR_ADDR_LO * 4u, RUAN_S3_GPU_VA_MEMPTRS);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_RPTR_ADDR_HI * 4u, 0);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_CNTL * 4u, RUAN_CP_RB_CNTL_DEFAULT);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_BASE * 4u, RUAN_S3_GPU_VA_RB);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_BASE_HI * 4u, 0);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_SQE_INSTR_BASE_LO * 4u, RUAN_S3_GPU_VA_SQE);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_SQE_INSTR_BASE_HI * 4u, 0);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, 0);
 
 	result_line("gpu s3_cp: advance CP_RB_WPTR and poll for RPTR == WPTR");
 	s3_current_wptr = w;

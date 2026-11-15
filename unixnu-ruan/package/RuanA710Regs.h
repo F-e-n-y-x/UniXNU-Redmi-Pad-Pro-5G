@@ -58,6 +58,6 @@
 
 /* Defaults */
 #define RUAN_CP_RB_CNTL_DEFAULT             ((2u << 8) | 12u)  /* 32 KiB ring */
-#define RUAN_BR_APRIV_DEFAULT               0x00000001u
+#define RUAN_BR_APRIV_DEFAULT               0x0000007fu        /* ICACHE, RBFETCH, RBPRIVLEVEL, RBRPWB, CDREAD, CDWRITE */
 
 #endif
