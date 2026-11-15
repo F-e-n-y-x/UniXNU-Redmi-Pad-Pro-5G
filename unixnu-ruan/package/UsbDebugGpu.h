@@ -17,6 +17,7 @@ extern int ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void 
 extern char ruan_gpu_row[128] __attribute__((weak_import));
 extern char ruan_gpu_short[32] __attribute__((weak_import));
 extern void ruan_gpu_set_firmware(const void *data, size_t size) __attribute__((weak_import));
+extern void ruan_gpu_set_sqe_firmware(const void *data, size_t size) __attribute__((weak_import));
 }
 
 // `gpu 5`: the GMU firmware from the root (make-ramroot.py GPU_FIRMWARE), read once on this thread and kept for later runs.
@@ -53,6 +54,43 @@ static int usbLoadGmuFirmware(char *buf, size_t cap, TerminalSession &s) {
     }
     gGmuFw = mem, gGmuFwBytes = static_cast<uint32_t>(size);
     snprintf(buf, cap, "GPU: %s: %u bytes read\r\n", kGmuFirmwarePath, gGmuFwBytes);
+    s.reply.writeStr(buf);
+    return 0;
+}
+
+// `gpu 10`: the SQE firmware from the root (a710_sqe.fw), read once on this thread and kept for later runs.
+static const char kSqeFirmwarePath[] = "/usr/standalone/firmware/ruan/a710_sqe.fw";
+static uint8_t *gSqeFw;
+static uint32_t gSqeFwBytes;
+static int usbLoadSqeFirmware(char *buf, size_t cap, TerminalSession &s) {
+    if (gSqeFw) return 0;
+    vnode_t vp = nullptr;
+    int err = vnode_open(kSqeFirmwarePath, FREAD, 0, 0, &vp, usbVfsContext());
+    uint64_t size = 0;
+    if (!err) err = usbVnodeSize(vp, &size);
+    if (!err && (size == 0 || size > (1u << 20))) err = EFBIG;
+    uint8_t *mem = err ? nullptr : static_cast<uint8_t *>(IOMalloc(static_cast<vm_size_t>(size)));
+    if (!err && !mem) err = ENOMEM;
+    for (uint64_t off = 0; !err && off < size;) {
+        const uint32_t want = (size - off) < kFileChunk ? static_cast<uint32_t>(size - off) : kFileChunk;
+        uio_t uio = uio_create(1, static_cast<off_t>(off), UIO_SYSSPACE, UIO_READ);
+        if (!uio) { err = ENOMEM; break; }
+        uio_addiov(uio, CAST_USER_ADDR_T(mem + off), want);
+        err = VNOP_READ(vp, uio, 0, usbVfsContext());
+        const uint32_t got = want - static_cast<uint32_t>(uio_resid(uio));
+        uio_free(uio);
+        if (!err && !got) err = EIO;
+        off += got;
+    }
+    if (vp) vnode_close(vp, FREAD, usbVfsContext());
+    if (err) {
+        if (mem) IOFree(mem, static_cast<vm_size_t>(size));
+        snprintf(buf, cap, "GPU: %s: error %d\r\n", kSqeFirmwarePath, err);
+        s.reply.writeStr(buf);
+        return err;
+    }
+    gSqeFw = mem, gSqeFwBytes = static_cast<uint32_t>(size);
+    snprintf(buf, cap, "GPU: %s: %u bytes read\r\n", kSqeFirmwarePath, gSqeFwBytes);
     s.reply.writeStr(buf);
     return 0;
 }
@@ -99,11 +137,14 @@ static bool usbGpuCommand(TerminalSession &s, const char *raw, char *buf, size_t
     } else if (!ok) {
         snprintf(buf, cap, "GPU: last %s | %s\r\n", &ruan_gpu_short ? ruan_gpu_short : "", &ruan_gpu_row ? ruan_gpu_row : "");
         s.reply.writeStr(buf);
-    } else if ((mode < 1u || mode > 7u) && mode != 99u) {
-        s.reply.writeStr("GPU: gpu 1 (read), 2 (+cfg_ahb), 3 (+CX power-up, clocks, SMMU), 4 (+GMU clocks, GMU state), "
-                         "5 (+GMU firmware check, ITCM/DTCM load, GMU stays in reset), "
-                         "6 (+stream-5 SMMU context, DDR regions, GMU start to FW_INIT and HFI init), "
-                         "7 (read-only GPU SMMU bank/SMR survey after gpu 3), off\r\n");
+    } else if ((mode < 1u || mode > 13u) && mode != 99u) {
+        s.reply.writeStr("GPU: gpu 1..7 (S1/S2 GMU/clocks/SMMU), "
+                         "8 (+GX on via OOB GPU_SET), "
+                         "9 (+A710 HW init & stream-0 SMMU), "
+                         "10 (+SQE fw & CP start to ME_INIT), "
+                         "11 (+CP_MEM_WRITE smoke test), "
+                         "12 (+secure mode exit), "
+                         "13 (+2D blitter fill), off\r\n");
     } else if (gGpuPending) {
         s.reply.writeStr("GPU: a run is already queued\r\n");
     } else {
@@ -122,6 +163,9 @@ static void usbGpuPump(TerminalSession *s) {
     char line[160];
     if (mode == 5u || mode == 6u) {   // the file read happens here, on the USB thread, outside pollUsbEvents
         if (usbLoadGmuFirmware(line, sizeof(line), *s) == 0 && &ruan_gpu_set_firmware) ruan_gpu_set_firmware(gGmuFw, gGmuFwBytes);
+    }
+    if (mode >= 10u && mode <= 13u) {
+        if (usbLoadSqeFirmware(line, sizeof(line), *s) == 0 && &ruan_gpu_set_sqe_firmware) ruan_gpu_set_sqe_firmware(gSqeFw, gSqeFwBytes);
     }
     if (usbFlush(*s, 2000)) {
         const int rc = ruan_gpu_run(mode, gpuTrace, s);

@@ -22,6 +22,9 @@
 #include "RuanGmuMmu.h"
 #include "AdrenoHfi.h"   // UniXNU kits/AdrenoFirmware: the modern 16 KiB HFI queue table
 #include "RuanSha256.h"   // self-contained: libkern SHA256_* gave rbu5 a wrong digest for correct bytes
+#include "RuanA710Regs.h"
+#include "RuanA710HwInit.h"
+#include "RuanA710Pm4.h"
 
 extern void boot_progress_stage(const char *s);
 extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, uint32_t flags);
@@ -39,7 +42,7 @@ struct gpb_result ruan_gpu_result;
 enum {W_GMU = GPB_WINDOWS, W_RSCC, W_SMMUF, W_CXMISC, W_PDC, NWIN};
 static const uint64_t phys[NWIN] = {GPB_GCC_GPU_PAGE, GPB_GCC_VOTE_PAGE, GPB_GPUCC_BASE, GPB_SMMU_BASE, GPB_GPU_BASE, RUAN_GMU_BASE,
                                     RUAN_GMU_RSCC_BASE, GPB_SMMU_BASE, RUAN_GPU_CX_MISC_BASE, RUAN_GMU_PDC_BASE};
-static const uint64_t len[NWIN] = {0x1000, 0x1000, GPB_GPUCC_SIZE, GPB_SMMU_GR0_SIZE, 0x10000, RUAN_GMU_SIZE, RUAN_GMU_RSCC_SIZE, 0x40000,
+static const uint64_t len[NWIN] = {0x1000, 0x1000, GPB_GPUCC_SIZE, GPB_SMMU_GR0_SIZE, RUAN_GPU_SIZE, RUAN_GMU_SIZE, RUAN_GMU_RSCC_SIZE, 0x40000,
                                    RUAN_GPU_CX_MISC_SIZE, RUAN_GMU_PDC_SIZE};
 static const char *const name[NWIN] = {"GCC GPU page 0x181000", "GCC vote page 0x162000", "GPUCC 0x3d90000",
                                        "GPU SMMU GR0 0x3da0000", "GPU 0x3d00000", "GMU 0x3d68000", "GMU RSCC 0x3d50000",
@@ -64,10 +67,16 @@ static vm_offset_t va[NWIN];
 #define GMU_VA_NONCACHED 0x60000000u        // GMU_NONCACHED_KERNEL: 512 MiB window, DDR behind the SMMU
 static const uint8_t *fw_data;
 static size_t fw_size;
+static const uint8_t *sqe_fw_data;
+static size_t sqe_fw_size;
 // UsbDebugGpu.h hands over the bytes of /usr/standalone/firmware/ruan/gmu_gen70000.bin before `gpu 5` (it keeps the buffer).
 void ruan_gpu_set_firmware(const void *data, size_t size)
 {
 	fw_data = (const uint8_t *)data, fw_size = size;
+}
+void ruan_gpu_set_sqe_firmware(const void *data, size_t size)
+{
+	sqe_fw_data = (const uint8_t *)data, sqe_fw_size = size;
 }
 static const uint32_t s2a_branch[4] = {RUAN_CC_CX_GMU_CLK, RUAN_CC_CXO_CLK, RUAN_CC_HUB_CX_INT_CLK, RUAN_CC_HUB_AON_CLK};
 
@@ -75,7 +84,8 @@ static const uint32_t s2a_branch[4] = {RUAN_CC_CX_GMU_CLK, RUAN_CC_CXO_CLK, RUAN
 // (gen7_load_rsc_ucode / gen7_load_pdc_ucode, dwords from their own bases), and the SMMU registers of one context bank.
 #define GMU_REG(dw) ((uint32_t)((dw) * 4u - (uint32_t)(RUAN_GMU_BASE - RUAN_GPU_BASE)))
 static const uint32_t gmu_writable[] = {0x1f800, 0x1f801, 0x1f81c, 0x1f82d, 0x1f400, 0x1f401, 0x1f40f, 0x1f984, 0x1f985, 0x1f986,
-                                        0x1f9cd, 0x1f9ce, 0x1f9cf, 0x1f8f0, 0x1f8f1, 0x23b11};
+                                        0x1f9cd, 0x1f9ce, 0x1f9cf, 0x1f8f0, 0x1f8f1, 0x23b11,
+                                        RUAN_GMU_GMU2HOST_INTR_CLR, RUAN_GMU_GMU2HOST_INTR_MASK, RUAN_GMU_HOST2GMU_INTR_SET};
 static const uint32_t rscc_writable[] = {0x4, 0x8, 0x9, 0xa, 0xb, 0xd, 0xe, 0xf, 0x10, 0x11, 0x12, 0x100, 0x180, 0x181, 0x182, 0x183, 0x184};
 // The DT limits HLOS to the first 6 context banks and 6 SMRs (kgsl-smmu qcom,num-context-banks-override / num-smr-override); the
 // others belong to the secure world or the hypervisor and are never touched. Bank 0 stays for the GPU, as adreno-smmu assigns
@@ -87,9 +97,31 @@ static unsigned gmu_bank = ~0u, gmu_slot = ~0u;
 #define GPB_SMMU_S2CR_FAULT_RUAN 0x00020000u   // S2CR TYPE fault: what every unused slot read on ruan (g3)
 #define GMU_SMMU_SLOT gmu_slot
 static uint32_t gmu_cb_off;              // the bank's page in the SMMU window, from ID1 (0 until computed)
+
+/* Stream-0 (GPU user context) on SMMU Bank 2, Slot 1 */
+#define GPU_STREAM0_BANK 2u
+#define GPU_STREAM0_SLOT 1u
+static uint32_t gpu_stream0_cb_off = 0x22000u;
+
+static int gpu_s3_writable(uint32_t off)
+{
+	if (off == RUAN_GBIF_HALT * 4u || off == RUAN_RBBM_GBIF_HALT * 4u) return 1;
+	if (off == RUAN_CP_PROTECT_CNTL * 4u || off == RUAN_CP_APRIV_CNTL * 4u || off == RUAN_CP_AHB_CNTL * 4u) return 1;
+	if (off >= RUAN_CP_RB_BASE * 4u && off <= RUAN_CP_SQE_CNTL * 4u) return 1;
+	if (off == RUAN_CP_SQE_INSTR_BASE_LO * 4u || off == RUAN_CP_SQE_INSTR_BASE_HI * 4u) return 1;
+	if (off == RUAN_RBBM_PERFCTR_CNTL * 4u || off == RUAN_RBBM_PERFCTR_GPU_BUSY_MASKED * 4u || off == RUAN_RBBM_INTERFACE_HANG_INT_CNTL * 4u) return 1;
+	if (off == RUAN_RBBM_SECVID_TRUST_CNTL * 4u) return 1;
+	if (off >= 0x00e80u * 4u && off <= 0x00e88u * 4u) return 1;   /* UCHE */
+	if (off == 0x00e3au * 4u) return 1;   /* UCHE_GBIF_GX_CONFIG */
+	for (unsigned i = 0; i < RUAN_A710_HWCG_COUNT; i++) if (off == ruan_a710_hwcg[i].reg * 4u) return 1;
+	for (unsigned i = 0; i < RUAN_A710_GBIF_COUNT; i++) if (off == ruan_a710_gbif[i].reg * 4u) return 1;
+	for (unsigned i = 0; i < RUAN_A710_PROTECT_COUNT; i++) if (off == ruan_a710_protect[i].reg * 4u) return 1;
+	return 0;
+}
+
 static int allowed(unsigned w, uint32_t off)
 {
-	if (w == GPB_WIN_GPU) return off == 0x3c45u * 4u;            // GBIF_HALT
+	if (w == GPB_WIN_GPU) return gpu_s3_writable(off);
 	if (w == W_CXMISC) return off == 0x39u * 4u;                 // GPU_CX_MISC_TCM_RET_CNTL
 	if (w == W_PDC) return off == 0x1140u * 4u || off == 0x1148u * 4u;
 	if (w == W_RSCC) {
@@ -97,10 +129,17 @@ static int allowed(unsigned w, uint32_t off)
 		return 0;
 	}
 	if (w == W_SMMUF) {
-		if (gmu_bank >= SMMU_HLOS_BANKS || gmu_bank == 0 || gmu_slot >= SMMU_HLOS_SMRS) return 0;
-		if (off == GPB_SMMU_SMR(GMU_SMMU_SLOT) || off == GPB_SMMU_S2CR(GMU_SMMU_SLOT)) return 1;
-		if (off == 0x1000u + 4u * GMU_SMMU_BANK || off == 0x1800u + 4u * GMU_SMMU_BANK) return 1;   // GR1 CBAR, CBA2R
-		return gmu_cb_off && off >= gmu_cb_off && off < gmu_cb_off + 0x1000u;
+		if (gmu_bank < SMMU_HLOS_BANKS && gmu_slot < SMMU_HLOS_SMRS) {
+			if (off == GPB_SMMU_SMR(GMU_SMMU_SLOT) || off == GPB_SMMU_S2CR(GMU_SMMU_SLOT)) return 1;
+			if (off == 0x1000u + 4u * GMU_SMMU_BANK || off == 0x1800u + 4u * GMU_SMMU_BANK) return 1;   // GR1 CBAR, CBA2R
+			if (gmu_cb_off && off >= gmu_cb_off && off < gmu_cb_off + 0x1000u) return 1;
+		}
+		if (GPU_STREAM0_BANK < SMMU_HLOS_BANKS && GPU_STREAM0_SLOT < SMMU_HLOS_SMRS) {
+			if (off == GPB_SMMU_SMR(GPU_STREAM0_SLOT) || off == GPB_SMMU_S2CR(GPU_STREAM0_SLOT)) return 1;
+			if (off == 0x1000u + 4u * GPU_STREAM0_BANK || off == 0x1800u + 4u * GPU_STREAM0_BANK) return 1;
+			if (gpu_stream0_cb_off && off >= gpu_stream0_cb_off && off < gpu_stream0_cb_off + 0x1000u) return 1;
+		}
+		return 0;
 	}
 	if (w == W_GMU) {
 		for (unsigned i = 0; i < sizeof gmu_writable / sizeof *gmu_writable; i++) if (off == GMU_REG(gmu_writable[i])) return 1;
@@ -705,14 +744,483 @@ static void s2c(struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
 	(void)rd(NULL, W_GMU, GMU_REG(0x1f82d), &c->cm3_cfg);
 }
 
+/* =========================================================================
+ * Stage S3: Adreno 710 GX Power-Up, HW Init, Stream-0 SMMU, SQE Load, CP, Ring
+ * ========================================================================= */
+
+#define RUAN_S3_POOL_STREAM0_PT_OFF   0x080000u  /* 64 KiB */
+#define RUAN_S3_POOL_SQE_OFF          0x090000u  /* 64 KiB */
+#define RUAN_S3_POOL_RB_OFF           0x0A0000u  /* 32 KiB */
+#define RUAN_S3_POOL_MEMPTRS_OFF      0x0A8000u  /* 4 KiB */
+#define RUAN_S3_POOL_SCRATCH_OFF      0x0A9000u  /* 4 KiB */
+#define RUAN_S3_POOL_PWRUP_OFF        0x0AA000u  /* 4 KiB */
+#define RUAN_S3_POOL_SCM_META_OFF     0x0B0000u  /* 64 KiB (CPU only) */
+#define RUAN_S3_POOL_USER_OFF         0x100000u  /* 15 MiB */
+
+#define RUAN_S3_GPU_VA_BASE           0x40000000u
+#define RUAN_S3_GPU_VA_SQE            (RUAN_S3_GPU_VA_BASE + RUAN_S3_POOL_SQE_OFF)      /* 0x40090000 */
+#define RUAN_S3_GPU_VA_RB             (RUAN_S3_GPU_VA_BASE + RUAN_S3_POOL_RB_OFF)       /* 0x400A0000 */
+#define RUAN_S3_GPU_VA_MEMPTRS        (RUAN_S3_GPU_VA_BASE + RUAN_S3_POOL_MEMPTRS_OFF)  /* 0x400A8000 */
+#define RUAN_S3_GPU_VA_SCRATCH        (RUAN_S3_GPU_VA_BASE + RUAN_S3_POOL_SCRATCH_OFF)  /* 0x400A9000 */
+#define RUAN_S3_GPU_VA_PWRUP          (RUAN_S3_GPU_VA_BASE + RUAN_S3_POOL_PWRUP_OFF)    /* 0x400AA000 */
+#define RUAN_S3_GPU_VA_USER           (RUAN_S3_GPU_VA_BASE + RUAN_S3_POOL_USER_OFF)     /* 0x40100000 */
+
+struct ruan_gpu_s3_gx {
+	uint32_t gx_before, gx_after;
+	uint32_t oob_info, oob_polls;
+	uint32_t rbbm_status, rbbm_int_0, rbbm_gbif_halt;
+	int gx_on;
+	char why[64];
+};
+static struct ruan_gpu_s3_gx ruan_gpu_s3_gx_result;
+
+static void s3_gx_on(struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
+{
+	__builtin_memset(gx, 0, sizeof *gx);
+	if (need(W_GMU) || need(GPB_WIN_GPU)) {
+		strlcpy(gx->why, "GMU/GPU window map failed", sizeof gx->why);
+		return;
+	}
+	uint32_t hfi_stat = 0;
+	(void)rd(NULL, W_GMU, GMU_REG(RUAN_GMU_HFI_CTRL_STATUS), &hfi_stat);
+	if (hfi_stat & 1u) c->hfi_ready = 1;
+	if (!c->hfi_ready) {
+		s2c(c, b);
+		if (!c->hfi_ready) {
+			snprintf(gx->why, sizeof gx->why, "GMU/HFI not ready: %s", c->why[0] ? c->why : "failed");
+			return;
+		}
+	}
+	result_line("gpu s3_gx: clear/unmask GMU interrupts, read PWR_CLK_STATUS");
+	if (wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_CLR), ~0u)) {
+		strlcpy(gx->why, "GMU2HOST_INTR_CLR write refused", sizeof gx->why);
+		return;
+	}
+	if (wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_MASK), ~0x800000u)) {
+		strlcpy(gx->why, "GMU2HOST_INTR_MASK write refused", sizeof gx->why);
+		return;
+	}
+	if (rd(NULL, W_GMU, GMU_REG(RUAN_GMU_PWR_CLK_STATUS), &gx->gx_before)) {
+		strlcpy(gx->why, "PWR_CLK_STATUS read failed", sizeof gx->why);
+		return;
+	}
+	result_line("gpu s3_gx: send OOB GPU SET (1<<30), poll GMU2HOST_INTR_INFO bit 31");
+	if (wr(NULL, W_GMU, GMU_REG(RUAN_GMU_HOST2GMU_INTR_SET), RUAN_OOB_GPU_SET_REQUEST)) {
+		strlcpy(gx->why, "HOST2GMU_INTR_SET write refused", sizeof gx->why);
+		return;
+	}
+	for (gx->oob_polls = 0; gx->oob_polls < 1000; gx->oob_polls++) {
+		if (rd(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_INFO), &gx->oob_info)) break;
+		if (gx->oob_info & RUAN_OOB_GPU_SET_ACK) break;
+		delay(100);
+	}
+	if (!(gx->oob_info & RUAN_OOB_GPU_SET_ACK)) {
+		snprintf(gx->why, sizeof gx->why, "OOB GPU SET timed out (polls %u, info %08x)", gx->oob_polls, gx->oob_info);
+		return;
+	}
+	(void)wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_CLR), RUAN_OOB_GPU_SET_ACK);
+
+	if (rd(NULL, W_GMU, GMU_REG(RUAN_GMU_PWR_CLK_STATUS), &gx->gx_after)) {
+		strlcpy(gx->why, "PWR_CLK_STATUS after read failed", sizeof gx->why);
+		return;
+	}
+	if (gx->gx_after & RUAN_GX_OFF_BITS) {
+		snprintf(gx->why, sizeof gx->why, "GX rail still off (PWR_CLK_STATUS %08x)", gx->gx_after);
+		return;
+	}
+	gx->gx_on = 1;
+	result_line("gpu s3_gx: GX powered on! Reading RBBM_STATUS from GPU block");
+	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_STATUS * 4u, &gx->rbbm_status);
+	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_INT_0_STATUS * 4u, &gx->rbbm_int_0);
+	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_GBIF_HALT * 4u, &gx->rbbm_gbif_halt);
+}
+
+struct ruan_gpu_s3_hw {
+	unsigned gbif_writes, protect_writes, hwcg_writes;
+	uint32_t smr_after, s2cr_after, cbar_after, sctlr_after, ttbr0_lo;
+	uint32_t rbbm_status;
+	int ok;
+	char why[64];
+};
+static struct ruan_gpu_s3_hw ruan_gpu_s3_hw_result;
+static struct ruan_pt stream0_pt;
+
+static void s3_hw_init(struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
+{
+	__builtin_memset(h, 0, sizeof *h);
+	if (!gx->gx_on) {
+		s3_gx_on(gx, c, b);
+		if (!gx->gx_on) {
+			snprintf(h->why, sizeof h->why, "GX not on: %s", gx->why[0] ? gx->why : "failed");
+			return;
+		}
+	}
+	if (need(W_SMMUF)) {
+		strlcpy(h->why, "SMMUF map failed", sizeof h->why);
+		return;
+	}
+	result_line("gpu s3_hw: GBIF register configuration");
+	for (unsigned i = 0; i < RUAN_A710_GBIF_COUNT; i++) {
+		if (wr(NULL, GPB_WIN_GPU, ruan_a710_gbif[i].reg * 4u, ruan_a710_gbif[i].val)) {
+			snprintf(h->why, sizeof h->why, "GBIF write %u (0x%05x) refused", i, ruan_a710_gbif[i].reg);
+			return;
+		}
+		h->gbif_writes++;
+	}
+	(void)wr(NULL, GPB_WIN_GPU, 0x00e3au * 4u, 0x10240e0u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_PERFCTR_GPU_BUSY_MASKED * 4u, 0xffffffffu);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_TRAP_BASE_LO * 4u, 0xfffff000u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_TRAP_BASE_HI * 4u, 0x0001ffffu);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_WRITE_THRU_BASE_LO * 4u, 0xfffff000u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_WRITE_THRU_BASE_HI * 4u, 0x0001ffffu);
+	(void)wr(NULL, GPB_WIN_GPU, 0x00e85u * 4u, 0x800000u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_AHB_CNTL * 4u, 0x1u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_PERFCTR_CNTL * 4u, 0x1u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_INTERFACE_HANG_INT_CNTL * 4u, (1u << 30) | (RUAN_A710_HANG_DETECT_CYCLES & 0x0fffffffu));
+
+	result_line("gpu s3_hw: CP_PROTECT configuration (45 ranges)");
+	if (wr(NULL, GPB_WIN_GPU, RUAN_CP_PROTECT_CNTL * 4u, RUAN_A710_CP_PROTECT_CNTL_VAL)) {
+		strlcpy(h->why, "CP_PROTECT_CNTL write refused", sizeof h->why);
+		return;
+	}
+	for (unsigned i = 0; i < RUAN_A710_PROTECT_COUNT; i++) {
+		if (wr(NULL, GPB_WIN_GPU, ruan_a710_protect[i].reg * 4u, ruan_a710_protect[i].val)) {
+			snprintf(h->why, sizeof h->why, "PROTECT write %u refused", i);
+			return;
+		}
+		h->protect_writes++;
+	}
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_APRIV_CNTL * 4u, RUAN_BR_APRIV_DEFAULT);
+
+	result_line("gpu s3_hw: HWCG configuration (49 registers)");
+	for (unsigned i = 0; i < RUAN_A710_HWCG_COUNT; i++) {
+		if (wr(NULL, GPB_WIN_GPU, ruan_a710_hwcg[i].reg * 4u, ruan_a710_hwcg[i].val)) {
+			snprintf(h->why, sizeof h->why, "HWCG write %u refused", i);
+			return;
+		}
+		h->hwcg_writes++;
+	}
+
+	result_line("gpu s3_hw: Stream-0 page tables on GPU pool (+0x80000)");
+	uint8_t *s0_cpu = pool_cpu + RUAN_S3_POOL_STREAM0_PT_OFF;
+	uint64_t s0_pa = pool_pa + RUAN_S3_POOL_STREAM0_PT_OFF;
+	if (ruan_pt_init(&stream0_pt, s0_cpu, s0_pa, 0x10000)) {
+		strlcpy(h->why, "stream0 pt_init failed", sizeof h->why);
+		return;
+	}
+	if (ruan_pt_map_attr(&stream0_pt, RUAN_S3_GPU_VA_SQE, pool_pa + RUAN_S3_POOL_SQE_OFF, 0x10000, RUAN_PT_ATTRS_PRIV_RO)) {
+		strlcpy(h->why, "map SQE failed", sizeof h->why); return;
+	}
+	if (ruan_pt_map_attr(&stream0_pt, RUAN_S3_GPU_VA_RB, pool_pa + RUAN_S3_POOL_RB_OFF, 0x8000, RUAN_PT_ATTRS_PRIV_RW)) {
+		strlcpy(h->why, "map RB failed", sizeof h->why); return;
+	}
+	if (ruan_pt_map_attr(&stream0_pt, RUAN_S3_GPU_VA_MEMPTRS, pool_pa + RUAN_S3_POOL_MEMPTRS_OFF, 0x1000, RUAN_PT_ATTRS_PRIV_RW)) {
+		strlcpy(h->why, "map MEMPTRS failed", sizeof h->why); return;
+	}
+	if (ruan_pt_map_attr(&stream0_pt, RUAN_S3_GPU_VA_SCRATCH, pool_pa + RUAN_S3_POOL_SCRATCH_OFF, 0x1000, RUAN_PT_ATTRS_PRIV_RW)) {
+		strlcpy(h->why, "map SCRATCH failed", sizeof h->why); return;
+	}
+	if (ruan_pt_map_attr(&stream0_pt, RUAN_S3_GPU_VA_PWRUP, pool_pa + RUAN_S3_POOL_PWRUP_OFF, 0x1000, RUAN_PT_ATTRS_PRIV_RW)) {
+		strlcpy(h->why, "map PWRUP failed", sizeof h->why); return;
+	}
+	if (ruan_pt_map_attr(&stream0_pt, RUAN_S3_GPU_VA_USER, pool_pa + RUAN_S3_POOL_USER_OFF, 0x100000, RUAN_PT_ATTRS_USER_RW)) {
+		strlcpy(h->why, "map USER failed", sizeof h->why); return;
+	}
+	clean_pool();
+
+	result_line("gpu s3_hw: Stream-0 SMMU context (Bank 2, Slot 1)");
+	struct ruan_smmu_survey *v = &ruan_smmu_survey_result;
+	if (v->id1) gpu_stream0_cb_off = cb_offset(v->id1, GPU_STREAM0_BANK);
+	else gpu_stream0_cb_off = 0x22000u;
+
+	if (wr(NULL, W_SMMUF, GPB_SMMU_SMR(GPU_STREAM0_SLOT), GPB_SMMU_SMR_VALID | RUAN_SMMU_SID_GPU)) {
+		strlcpy(h->why, "SMR1 write refused", sizeof h->why); return;
+	}
+	if (wr(NULL, W_SMMUF, GPB_SMMU_S2CR(GPU_STREAM0_SLOT), GPU_STREAM0_BANK)) {
+		strlcpy(h->why, "S2CR1 write refused", sizeof h->why); return;
+	}
+	if (wr(NULL, W_SMMUF, 0x1000u + 4u * GPU_STREAM0_BANK, 0x0001f300u)) {
+		strlcpy(h->why, "CBAR write refused", sizeof h->why); return;
+	}
+	if (wr(NULL, W_SMMUF, 0x1800u + 4u * GPU_STREAM0_BANK, 0x00000001u)) {
+		strlcpy(h->why, "CBA2R write refused", sizeof h->why); return;
+	}
+	(void)wr(NULL, W_SMMUF, gpu_stream0_cb_off + CB_TTBR0_LO, (uint32_t)s0_pa);
+	(void)wr(NULL, W_SMMUF, gpu_stream0_cb_off + CB_TTBR0_HI, (uint32_t)(s0_pa >> 32));
+	(void)wr(NULL, W_SMMUF, gpu_stream0_cb_off + CB_TCR, RUAN_SMMU_TCR);
+	(void)wr(NULL, W_SMMUF, gpu_stream0_cb_off + CB_TCR2, RUAN_SMMU_TCR2);
+	(void)wr(NULL, W_SMMUF, gpu_stream0_cb_off + CB_MAIR0, RUAN_SMMU_MAIR0);
+	if (wr(NULL, W_SMMUF, gpu_stream0_cb_off + CB_SCTLR, 0x00000027u)) {
+		strlcpy(h->why, "SCTLR write refused", sizeof h->why); return;
+	}
+	(void)rd(NULL, W_SMMUF, GPB_SMMU_SMR(GPU_STREAM0_SLOT), &h->smr_after);
+	(void)rd(NULL, W_SMMUF, GPB_SMMU_S2CR(GPU_STREAM0_SLOT), &h->s2cr_after);
+	(void)rd(NULL, W_SMMUF, 0x1000u + 4u * GPU_STREAM0_BANK, &h->cbar_after);
+	(void)rd(NULL, W_SMMUF, gpu_stream0_cb_off + CB_SCTLR, &h->sctlr_after);
+	h->ttbr0_lo = (uint32_t)s0_pa;
+	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_STATUS * 4u, &h->rbbm_status);
+	h->ok = 1;
+}
+
+struct ruan_gpu_s3_cp {
+	uint32_t sqe_bytes;
+	uint32_t rptr, wptr, rbbm_status, rbbm_int_0, cp_hw_fault;
+	uint32_t polls;
+	int ok;
+	char why[64];
+};
+static struct ruan_gpu_s3_cp ruan_gpu_s3_cp_result;
+static uint32_t s3_current_wptr;
+
+static void s3_cp_start(struct ruan_gpu_s3_cp *cp, struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
+{
+	__builtin_memset(cp, 0, sizeof *cp);
+	if (!h->ok) {
+		s3_hw_init(h, gx, c, b);
+		if (!h->ok) {
+			snprintf(cp->why, sizeof cp->why, "hw_init not ok: %s", h->why[0] ? h->why : "failed");
+			return;
+		}
+	}
+	if (!sqe_fw_data || sqe_fw_size < 36304) {
+		strlcpy(cp->why, "SQE firmware not loaded (a710_sqe.fw)", sizeof cp->why);
+		return;
+	}
+	result_line("gpu s3_cp: copy SQE microcode (skipping dword 0) into +0x90000");
+	const size_t copy_bytes = sqe_fw_size - 4;
+	uint8_t *sqe_dst = pool_cpu + RUAN_S3_POOL_SQE_OFF;
+	memcpy(sqe_dst, sqe_fw_data + 4, copy_bytes);
+	cp->sqe_bytes = (uint32_t)copy_bytes;
+
+	result_line("gpu s3_cp: initialize ringbuffer, memptrs, pwrup reglist");
+	memset(pool_cpu + RUAN_S3_POOL_RB_OFF, 0xaa, 0x8000);
+	memset(pool_cpu + RUAN_S3_POOL_MEMPTRS_OFF, 0, 0x1000);
+	memset(pool_cpu + RUAN_S3_POOL_SCRATCH_OFF, 0, 0x1000);
+	memset(pool_cpu + RUAN_S3_POOL_PWRUP_OFF, 0, 0x1000);
+	clean_pool();
+
+	result_line("gpu s3_cp: program CP_RB and CP_SQE base registers");
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_RPTR_ADDR_LO * 4u, RUAN_S3_GPU_VA_MEMPTRS);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_RPTR_ADDR_HI * 4u, 0);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_CNTL * 4u, RUAN_CP_RB_CNTL_DEFAULT);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_BASE * 4u, RUAN_S3_GPU_VA_RB);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_BASE_HI * 4u, 0);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_SQE_INSTR_BASE_LO * 4u, RUAN_S3_GPU_VA_SQE);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_SQE_INSTR_BASE_HI * 4u, 0);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, 0);
+
+	result_line("gpu s3_cp: set CP_SQE_CNTL=1 (micro-engine starts!)");
+	if (wr(NULL, GPB_WIN_GPU, RUAN_CP_SQE_CNTL * 4u, 1u)) {
+		strlcpy(cp->why, "CP_SQE_CNTL write refused", sizeof cp->why);
+		return;
+	}
+
+	result_line("gpu s3_cp: emit CP_THREAD_CONTROL and CP_ME_INIT packets");
+	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
+	unsigned w = 0;
+	rb[w++] = cp_type7_packet(CP_THREAD_CONTROL, 1);
+	rb[w++] = (1u << 27);
+
+	rb[w++] = cp_type7_packet(CP_ME_INIT, 7);
+	rb[w++] = 0x14bu;
+	rb[w++] = 0x00000003u;
+	rb[w++] = 0x20000000u;
+	rb[w++] = 0x00000002u;
+	rb[w++] = RUAN_S3_GPU_VA_PWRUP;
+	rb[w++] = 0x00000000u;
+	rb[w++] = (1u << 31);
+	clean_pool();
+
+	result_line("gpu s3_cp: advance CP_RB_WPTR and poll for RPTR == WPTR");
+	s3_current_wptr = w;
+	cp->wptr = w;
+	if (wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, w)) {
+		strlcpy(cp->why, "CP_RB_WPTR write refused", sizeof cp->why);
+		return;
+	}
+
+	for (cp->polls = 0; cp->polls < 2000; cp->polls++) {
+		if (rd(NULL, GPB_WIN_GPU, RUAN_CP_RB_RPTR * 4u, &cp->rptr)) break;
+		if (rd(NULL, GPB_WIN_GPU, RUAN_RBBM_STATUS * 4u, &cp->rbbm_status)) break;
+		if (cp->rptr == w && !(cp->rbbm_status & (1u << 31))) break;
+		delay(100);
+	}
+	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_INT_0_STATUS * 4u, &cp->rbbm_int_0);
+	(void)rd(NULL, GPB_WIN_GPU, RUAN_CP_HW_FAULT * 4u, &cp->cp_hw_fault);
+
+	if (cp->rptr != w) {
+		snprintf(cp->why, sizeof cp->why, "CP did not reach WPTR %u (RPTR %u, RBBM %08x, int0 %08x, fault %08x)",
+			w, cp->rptr, cp->rbbm_status, cp->rbbm_int_0, cp->cp_hw_fault);
+		return;
+	}
+	cp->ok = 1;
+}
+
+struct ruan_gpu_s3_smoke {
+	uint32_t magic_written, magic_read;
+	uint32_t wptr_before, wptr_after, rptr_after;
+	uint32_t polls, rbbm_status, rbbm_int_0;
+	int ok;
+	char why[64];
+};
+static struct ruan_gpu_s3_smoke ruan_gpu_s3_smoke_result;
+
+static void s3_smoke_test(struct ruan_gpu_s3_smoke *sm, struct ruan_gpu_s3_cp *cp, struct ruan_gpu_s3_hw *h,
+	struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
+{
+	__builtin_memset(sm, 0, sizeof *sm);
+	if (!cp->ok) {
+		s3_cp_start(cp, h, gx, c, b);
+		if (!cp->ok) {
+			snprintf(sm->why, sizeof sm->why, "cp_start not ok: %s", cp->why[0] ? cp->why : "failed");
+			return;
+		}
+	}
+	sm->wptr_before = s3_current_wptr;
+	sm->magic_written = 0xC0FFEE01u;
+
+	result_line("gpu s3_smoke: emit CP_MEM_WRITE 0xC0FFEE01 to SCRATCH_VA");
+	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
+	unsigned w = s3_current_wptr;
+	rb[w++] = cp_type7_packet(CP_MEM_WRITE, 3);
+	rb[w++] = RUAN_S3_GPU_VA_SCRATCH;
+	rb[w++] = 0;
+	rb[w++] = sm->magic_written;
+	clean_pool();
+
+	sm->wptr_after = w;
+	s3_current_wptr = w;
+	if (wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, w)) {
+		strlcpy(sm->why, "CP_RB_WPTR write refused", sizeof sm->why);
+		return;
+	}
+
+	result_line("gpu s3_smoke: advance WPTR and poll for completion");
+	for (sm->polls = 0; sm->polls < 2000; sm->polls++) {
+		if (rd(NULL, GPB_WIN_GPU, RUAN_CP_RB_RPTR * 4u, &sm->rptr_after)) break;
+		if (rd(NULL, GPB_WIN_GPU, RUAN_RBBM_STATUS * 4u, &sm->rbbm_status)) break;
+		if (sm->rptr_after == w && !(sm->rbbm_status & (1u << 31))) break;
+		delay(100);
+	}
+	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_INT_0_STATUS * 4u, &sm->rbbm_int_0);
+
+	clean_pool();
+	volatile uint32_t *scratch = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_SCRATCH_OFF);
+	sm->magic_read = scratch[0];
+
+	if (sm->magic_read != sm->magic_written) {
+		snprintf(sm->why, sizeof sm->why, "magic readback mismatch: expected %08x got %08x (RPTR %u/%u)",
+			sm->magic_written, sm->magic_read, sm->rptr_after, sm->wptr_after);
+		return;
+	}
+	sm->ok = 1;
+}
+
+struct ruan_gpu_s3_zap {
+	uint32_t trust_cntl_before, trust_cntl_after;
+	int secure_cleared;
+	char why[64];
+};
+static struct ruan_gpu_s3_zap ruan_gpu_s3_zap_result;
+
+static void s3_zap(struct ruan_gpu_s3_zap *z, struct ruan_gpu_s3_smoke *sm, struct ruan_gpu_s3_cp *cp,
+	struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
+{
+	__builtin_memset(z, 0, sizeof *z);
+	if (!sm->ok) {
+		s3_smoke_test(sm, cp, h, gx, c, b);
+		if (!sm->ok) {
+			snprintf(z->why, sizeof z->why, "smoke_test not ok: %s", sm->why[0] ? sm->why : "failed");
+			return;
+		}
+	}
+	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_SECVID_TRUST_CNTL * 4u, &z->trust_cntl_before);
+
+	result_line("gpu s3_zap: writing RBBM_SECVID_TRUST_CNTL=0 (freedreno no-zap check)");
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_SECVID_TRUST_CNTL * 4u, 0);
+	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_SECVID_TRUST_CNTL * 4u, &z->trust_cntl_after);
+	if (z->trust_cntl_after == 0) {
+		z->secure_cleared = 1;
+		result_line("gpu s3_zap: RBBM_SECVID_TRUST_CNTL is 0! Direct unlock succeeded");
+		return;
+	}
+
+	result_line("gpu s3_zap: emit CP_SET_SECURE_MODE 0 into ring");
+	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
+	unsigned w = s3_current_wptr;
+	rb[w++] = cp_type7_packet(CP_SET_SECURE_MODE, 1);
+	rb[w++] = 0;
+	clean_pool();
+	s3_current_wptr = w;
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, w);
+
+	for (unsigned p = 0; p < 2000; p++) {
+		uint32_t rptr = 0, status = 0;
+		(void)rd(NULL, GPB_WIN_GPU, RUAN_CP_RB_RPTR * 4u, &rptr);
+		(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_STATUS * 4u, &status);
+		if (rptr == w && !(status & (1u << 31))) break;
+		delay(100);
+	}
+	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_SECVID_TRUST_CNTL * 4u, &z->trust_cntl_after);
+	if (z->trust_cntl_after == 0) z->secure_cleared = 1;
+	else snprintf(z->why, sizeof z->why, "SECVID_TRUST_CNTL still %08x (needs SCM PAS 13)", z->trust_cntl_after);
+}
+
+struct ruan_gpu_s3_blitter {
+	uint32_t pixels_filled;
+	int ok;
+	char why[64];
+};
+static struct ruan_gpu_s3_blitter ruan_gpu_s3_blitter_result;
+
+static void s3_blitter(struct ruan_gpu_s3_blitter *bl, struct ruan_gpu_s3_smoke *sm, struct ruan_gpu_s3_cp *cp,
+	struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
+{
+	__builtin_memset(bl, 0, sizeof *bl);
+	if (!sm->ok) {
+		s3_smoke_test(sm, cp, h, gx, c, b);
+		if (!sm->ok) {
+			snprintf(bl->why, sizeof bl->why, "smoke_test not ok: %s", sm->why[0] ? sm->why : "failed");
+			return;
+		}
+	}
+	result_line("gpu s3_blitter: fill user test buffer (0x40100000) with 16 colored words");
+	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
+	unsigned w = s3_current_wptr;
+	for (unsigned p = 0; p < 16; p++) {
+		rb[w++] = cp_type7_packet(CP_MEM_WRITE, 3);
+		rb[w++] = RUAN_S3_GPU_VA_USER + p * 4u;
+		rb[w++] = 0;
+		rb[w++] = 0x00FF00FFu;
+	}
+	clean_pool();
+	s3_current_wptr = w;
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, w);
+
+	for (unsigned p = 0; p < 2000; p++) {
+		uint32_t rptr = 0, status = 0;
+		(void)rd(NULL, GPB_WIN_GPU, RUAN_CP_RB_RPTR * 4u, &rptr);
+		(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_STATUS * 4u, &status);
+		if (rptr == w && !(status & (1u << 31))) break;
+		delay(100);
+	}
+	clean_pool();
+	volatile uint32_t *ubuf = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_USER_OFF);
+	unsigned matches = 0;
+	for (unsigned p = 0; p < 16; p++) if (ubuf[p] == 0x00FF00FFu) matches++;
+	bl->pixels_filled = matches;
+	if (matches == 16) bl->ok = 1;
+	else snprintf(bl->why, sizeof bl->why, "only %u/16 test words matched", matches);
+}
+
 
 int
 ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 {
 	trace_fn = trace, trace_ctx = ctx;
-	if (!mode || (mode > 7 && mode != RUAN_GPU_OFF)) {
+	if (!mode || (mode > 13 && mode != RUAN_GPU_OFF)) {
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m%u?", mode);
-		result_line("gpu: mode is 1..7 or off, nothing done");
+		result_line("gpu: mode is 1..13 or off, nothing done");
 		trace_fn = NULL;
 		return -1;
 	}
@@ -753,6 +1261,20 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 	struct ruan_gpu_s2c *c = &ruan_gpu_s2c_result;
 	if (mode >= 5 && k->gmu_read && !k->io_error) s2b_tcm(b);
 	if (mode == 6 && !b->why[0]) s2c(c, b);
+	struct ruan_gpu_s3_gx *gx = &ruan_gpu_s3_gx_result;
+	struct ruan_gpu_s3_hw *hw = &ruan_gpu_s3_hw_result;
+	struct ruan_gpu_s3_cp *cp = &ruan_gpu_s3_cp_result;
+	struct ruan_gpu_s3_smoke *sm = &ruan_gpu_s3_smoke_result;
+	struct ruan_gpu_s3_zap *zp = &ruan_gpu_s3_zap_result;
+	struct ruan_gpu_s3_blitter *bl = &ruan_gpu_s3_blitter_result;
+	if (mode >= 8 && mode <= 13) {
+		s3_gx_on(gx, c, b);
+		if (mode >= 9 && gx->gx_on) s3_hw_init(hw, gx, c, b);
+		if (mode >= 10 && hw->ok) s3_cp_start(cp, hw, gx, c, b);
+		if (mode >= 11 && cp->ok) s3_smoke_test(sm, cp, hw, gx, c, b);
+		if (mode >= 12 && sm->ok) s3_zap(zp, sm, cp, hw, gx, c, b);
+		if (mode == 13 && sm->ok) s3_blitter(bl, sm, cp, hw, gx, c, b);
+	}
 	for (unsigned w = 0; w < NWIN; w++) {
 		if (va[w]) ml_io_unmap(va[w], (vm_size_t)len[w]);
 		va[w] = 0;
@@ -814,17 +1336,77 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
+	if (mode == 8) {
+		snprintf(line, sizeof(line), "gpu s3_gx %s polls %u info %08x gx %08x>%08x rbbm %08x int0 %08x %s",
+		    gx->gx_on ? "ON" : "OFF", gx->oob_polls, gx->oob_info, gx->gx_before, gx->gx_after,
+		    gx->rbbm_status, gx->rbbm_int_0, gx->why[0] ? gx->why : "GX on, RBBM readable");
+		result_line(line);
+		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
+	}
+	if (mode == 9) {
+		snprintf(line, sizeof(line), "gpu s3_hw %s gbif %u protect %u hwcg %u smr %08x s2cr %08x cbar %08x sctlr %08x ttbr0 %08x rbbm %08x %s",
+		    hw->ok ? "ok" : "FAIL", hw->gbif_writes, hw->protect_writes, hw->hwcg_writes,
+		    hw->smr_after, hw->s2cr_after, hw->cbar_after, hw->sctlr_after, hw->ttbr0_lo, hw->rbbm_status,
+		    hw->why[0] ? hw->why : "A710 hw_init & Stream 0 ready");
+		result_line(line);
+		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
+	}
+	if (mode == 10) {
+		snprintf(line, sizeof(line), "gpu s3_cp %s sqe %u rptr %u wptr %u rbbm %08x int0 %08x fault %08x polls %u %s",
+		    cp->ok ? "ok" : "FAIL", cp->sqe_bytes, cp->rptr, cp->wptr, cp->rbbm_status, cp->rbbm_int_0, cp->cp_hw_fault, cp->polls,
+		    cp->why[0] ? cp->why : "CP ME_INIT idle");
+		result_line(line);
+		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
+	}
+	if (mode == 11) {
+		snprintf(line, sizeof(line), "gpu s3_smoke %s magic %08x (wrote %08x) rptr %u/%u polls %u rbbm %08x %s",
+		    sm->ok ? "ok" : "FAIL", sm->magic_read, sm->magic_written, sm->rptr_after, sm->wptr_after, sm->polls, sm->rbbm_status,
+		    sm->why[0] ? sm->why : "GPU executed CP_MEM_WRITE verified by CPU!");
+		result_line(line);
+		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
+	}
+	if (mode == 12) {
+		snprintf(line, sizeof(line), "gpu s3_zap trust %08x>%08x secure %s %s",
+		    zp->trust_cntl_before, zp->trust_cntl_after, zp->secure_cleared ? "CLEARED" : "LOCKED",
+		    zp->why[0] ? zp->why : "trust control unlocked");
+		result_line(line);
+		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
+	}
+	if (mode == 13) {
+		snprintf(line, sizeof(line), "gpu s3_blitter %s pixels %u/16 %s",
+		    bl->ok ? "ok" : "FAIL", bl->pixels_filled, bl->why[0] ? bl->why : "16 words filled into user buffer");
+		result_line(line);
+		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
+	}
 	if (mode == 6) {
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m6 %s s%u fw%u hfi%u", c->smmu_refused ? "REF" : "ok", c->stage, c->booted,
 		    c->hfi_ready);
+	} else if (mode == 8) {
+		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m8 %s gx%s rbbm%08x", gx->gx_on ? "ok" : "FAIL", gx->gx_on ? "on" : "off", gx->rbbm_status);
+	} else if (mode == 9) {
+		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m9 %s gbif%u prt%u", hw->ok ? "ok" : "FAIL", hw->gbif_writes, hw->protect_writes);
+	} else if (mode == 10) {
+		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m10 %s r%u/w%u", cp->ok ? "ok" : "FAIL", cp->rptr, cp->wptr);
+	} else if (mode == 11) {
+		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m11 %s magic%s", sm->ok ? "ok" : "FAIL", sm->magic_read == 0xC0FFEE01u ? "MATCH" : "MISMATCH");
+	} else if (mode == 12) {
+		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m12 %s trust%08x", zp->secure_cleared ? "ok" : "FAIL", zp->trust_cntl_after);
+	} else if (mode == 13) {
+		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m13 %s fill%u", bl->ok ? "ok" : "FAIL", bl->pixels_filled);
 	} else
 	snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m%u cx%s gx%s smmu%s%s%s", mode, cx ? "on" : "off",
-	    gpb_gdsc_on(r->gx_gdscr) ? "on" : "off", r->smmu == GPB_DONE ? "ok" : "-", mode == 4 ? (k->gmu_read ? " gmuR" : " gmu-") : "",   /* 31 chars max: m5 drops gmuR (tcm implies it) */
+	    gpb_gdsc_on(r->gx_gdscr) ? "on" : "off", r->smmu == GPB_DONE ? "ok" : "-", mode == 4 ? (k->gmu_read ? " gmuR" : " gmu-") : "",
 	    mode == 5 ? (b->tcm_words && !b->tcm_bad && !b->why[0] ? " tcm" : " tcm-") : "");
 	result_line(ruan_gpu_short);
 	trace_fn = NULL;
 	return (r->io_error || (mode >= 4 && (k->io_error || k->rcg_fail || !k->gmu_read)) || (mode >= 5 && b->why[0]) ||
-	    (mode == 6 && (c->why[0] || !c->hfi_ready))) ? -2 : 0;
+	    (mode == 6 && (c->why[0] || !c->hfi_ready)) ||
+	    (mode == 8 && !gx->gx_on) ||
+	    (mode == 9 && !hw->ok) ||
+	    (mode == 10 && !cp->ok) ||
+	    (mode == 11 && !sm->ok) ||
+	    (mode == 12 && !zp->secure_cleared) ||
+	    (mode == 13 && !bl->ok)) ? -2 : 0;
 }
 
 void
