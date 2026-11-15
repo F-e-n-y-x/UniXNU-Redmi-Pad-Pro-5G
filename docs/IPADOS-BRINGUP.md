@@ -202,12 +202,28 @@ TAG=<tag> bash zima-ramroot.sh usb <dir>     # tablet in stock fastboot
   - **Cause:** the GMU page descriptors use AP[1]=1 (EL0-accessible, 0x643). Privileged execution of EL0-writable memory is not permitted, and the GMU fetches privileged.
   - **Next fix:** map the GMU regions privileged-only (descriptor 0x603, like KGSL's IOMMU_PRIV). The code region may also be read-only (AP[2]=1).
 
-### Resume here (next session)
-1. `RuanGpuPower.c` / `gmu_mmu_host.c`: GMU page descriptor 0x643 → 0x603 (AP[1]=0). ✅ **Applied and verified in host test.** Next: Rebuild the kernel only (rbu5 root via hard links). Run `gpu 6`; expect `booted 1 fwinit 00000100 … hfi 1`.
-2. If it still does not boot: compare with KGSL's gen7 GMU start (the DDR bandwidth vote, the AOP ACD message, GMU IRQs).
-3. Then S3: SQE microcode, zap via SCM PAS 13, a first ringbuffer and fence (the 15.5 MiB left in the GPU pool).
-4. Open issue: about 1 in 5 boots freezes early (bsd_autoconf) or resets into Android before USB comes up. On retry the same image boots.
-5. Lab procedure:
-   - zima `~/usbdbg/ruan-usbdbg.py`: `shot | log | dmesg | ls | get | gpu N | reboot-fastboot`. Use one tty client at a time.
-   - If the receiver replies get out of step ("size differs"), use `fastboot -s unixnu-ramdisk reboot`, then `adb reboot bootloader`, for a fresh connection.
-   - Never `pkill -f` a pattern contained in your own ssh command.
+### 20. GPU S2b-2: GMU boot and HFI ready on live hardware (rbu7, 2026-11-15 evening)
+- **Page table fix verified:** In `RuanGmuMmu.h` line 19, descriptor attributes changed from `0x643` (EL0 user) to privileged-only `0x603` (`AP[2:1] = 00`). Updated host test `gmu_mmu_host.c` to assert `0x603ull`.
+- **Live run on tablet via Pi 5 (`192.168.11.5`):**
+  - Staged `rbu7` via 100% RAM-only `fastboot boot` + `fastboot stage root-usb.apfs`.
+  - Tablet booted cleanly: SpringBoard (PID 27) and backboardd (PID 53) up and executing in userland.
+  - Screen snapshot captured via USB CDC (`ruan-usbdbg.py shot`).
+  - Executed `gpu 6`:
+    - SMMU context bank 1 configured (`cb 21000`, `smr 84000005`, `s2cr 1`, `cbar 0001f300`, `sctlr 00000027`, `refused 0`).
+    - GMU released from reset (`CM3_SYSRESET 0`).
+    - PDC and RSC microcode loaded into GMU.
+    - Verified register output:
+      `booted 1 fwinit 00000100 (5 polls) hfi 1 status 00000001 (0 polls) fsr 00000400 far d644bf087712 fsynr0 00100114 aoirq 00000000 cm3cfg 00004012 GMU up, HFI ready`
+    - Status: `gpu m6 ok s6 fw1 hfi1`, return code `rc=0`.
+  - **Stage S2 is complete!** The GMU is running firmware from DDR, responding over SMMU stream 5, and the Host-Firmware Interface (HFI) is active.
+
+### Resume here (next session / Stage S3)
+1. **Stage S3 (SQE microcode & CP / zap):**
+   - SQE microcode (`a710_sqe.fw`, 36308 bytes, sha256 `c5588585...`) shipped in rootfs or staged.
+   - Zap shader authentication via Qualcomm SCM PAS ID 13 into reserved carveout `gpu_microcode_region` (`0x89e1a000` + `0x2000`).
+   - Allocate ringbuffer and fence from the remaining 15.5 MiB in the reserved GPU pool (`0x8B8B80000`).
+2. **UI Rendering:**
+   - Investigate Metal / Turnip binding to accelerate SpringBoard/WindowServer beyond the linear CPU GOP framebuffer.
+3. Lab procedure:
+   - Pi 5 (`192.168.11.5`) `~/ramroot/ruan-usbdbg.py`: `shot | log | dmesg | ls | get | gpu N | reboot-fastboot`.
+   - Never flash storage partitions; test RAM-only via `zima-ramroot.sh usb out-rbu7`.
