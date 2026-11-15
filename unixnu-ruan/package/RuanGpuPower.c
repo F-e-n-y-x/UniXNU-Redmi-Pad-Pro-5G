@@ -1553,14 +1553,85 @@ static void s4_fb_blit(struct ruan_gpu_s4_fb *fb, struct ruan_gpu_s3_blitter *bl
 	}
 }
 
+struct ruan_gpu_s5_m2m {
+	uint32_t dwords_copied;
+	int ok;
+	char why[64];
+};
+static struct ruan_gpu_s5_m2m ruan_gpu_s5_m2m_result;
+
+static void s5_mem_to_mem(struct ruan_gpu_s5_m2m *m2m, struct ruan_gpu_s4_fb *fb, struct ruan_gpu_s3_blitter *bl,
+	struct ruan_gpu_s3_smoke *sm, struct ruan_gpu_s3_cp *cp, struct ruan_gpu_s3_hw *h,
+	struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
+{
+	if (m2m->ok) return;
+	__builtin_memset(m2m, 0, sizeof *m2m);
+	if (!fb->ok) {
+		s4_fb_blit(fb, bl, sm, cp, h, gx, c, b);
+		if (!fb->ok) {
+			snprintf(m2m->why, sizeof m2m->why, "s4_fb not ok: %s", fb->why[0] ? fb->why : "failed");
+			return;
+		}
+	}
+	result_line("gpu s5_m2m: test CP_MEMCPY (0x75) hardware DMA copy between GPU buffers");
+
+	/* Source buffer: RUAN_S3_POOL_USER_OFF (GPU VA RUAN_S3_GPU_VA_USER) */
+	/* Dest buffer:   RUAN_S3_POOL_USER_OFF + 0x10000 (GPU VA RUAN_S3_GPU_VA_USER + 0x10000) */
+	volatile uint32_t *src_cpu = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_USER_OFF);
+	volatile uint32_t *dst_cpu = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_USER_OFF + 0x10000);
+	const unsigned dword_count = 256; /* 1024 bytes */
+
+	for (unsigned i = 0; i < dword_count; i++) {
+		src_cpu[i] = 0xCAFE0000u | (i & 0xFFFFu);
+		dst_cpu[i] = 0;
+	}
+	clean_pool();
+
+	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
+	unsigned w = s3_current_wptr;
+
+	/* Emit CP_MEMCPY (opcode 0x75, 5 dwords payload) */
+	rb[w++] = cp_type7_packet(CP_MEMCPY, 5);
+	rb[w++] = dword_count;                       /* DWORDS */
+	rb[w++] = RUAN_S3_GPU_VA_USER;               /* SRC_LO */
+	rb[w++] = 0;                                 /* SRC_HI */
+	rb[w++] = RUAN_S3_GPU_VA_USER + 0x10000u;    /* DST_LO */
+	rb[w++] = 0;                                 /* DST_HI */
+
+	clean_pool();
+	s3_current_wptr = w;
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, w);
+
+	for (unsigned p = 0; p < 2000; p++) {
+		uint32_t rptr = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_CP_RB_RPTR * 4u);
+		uint32_t status = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_RBBM_STATUS * 4u);
+		if (rptr == w && !(status & (1u << 31))) break;
+		delay(100);
+	}
+	clean_pool();
+
+	/* Verify CPU readback */
+	unsigned matches = 0;
+	for (unsigned i = 0; i < dword_count; i++) {
+		if (dst_cpu[i] == (0xCAFE0000u | (i & 0xFFFFu))) matches++;
+	}
+	m2m->dwords_copied = matches;
+	if (matches == dword_count) {
+		m2m->ok = 1;
+		result_line("gpu s5_m2m: CP_MEMCPY DMA transfer SUCCESS! 256 dwords verified!");
+	} else {
+		snprintf(m2m->why, sizeof m2m->why, "only %u/%u dwords matched in dst", matches, dword_count);
+	}
+}
+
 
 int
 ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 {
 	trace_fn = trace, trace_ctx = ctx;
-	if (!mode || (mode > 14 && mode != RUAN_GPU_OFF)) {
+	if (!mode || (mode > 15 && mode != RUAN_GPU_OFF)) {
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m%u?", mode);
-		result_line("gpu: mode is 1..14 or off, nothing done");
+		result_line("gpu: mode is 1..15 or off, nothing done");
 		trace_fn = NULL;
 		return -1;
 	}
@@ -1608,7 +1679,8 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 	struct ruan_gpu_s3_zap *zp = &ruan_gpu_s3_zap_result;
 	struct ruan_gpu_s3_blitter *bl = &ruan_gpu_s3_blitter_result;
 	struct ruan_gpu_s4_fb *fb = &ruan_gpu_s4_fb_result;
-	if (mode >= 8 && mode <= 14) {
+	struct ruan_gpu_s5_m2m *m2m = &ruan_gpu_s5_m2m_result;
+	if (mode >= 8 && mode <= 15) {
 		s3_gx_on(gx, c, b);
 		if (mode >= 9 && gx->gx_on) s3_hw_init(hw, gx, c, b);
 		if (mode >= 10 && hw->ok) s3_cp_start(cp, hw, gx, c, b);
@@ -1616,6 +1688,7 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		if (mode >= 12 && sm->ok) s3_zap(zp, sm, cp, hw, gx, c, b);
 		if (mode >= 13 && sm->ok) s3_blitter(bl, sm, cp, hw, gx, c, b);
 		if (mode >= 14 && bl->ok) s4_fb_blit(fb, bl, sm, cp, hw, gx, c, b);
+		if (mode >= 15 && fb->ok) s5_mem_to_mem(m2m, fb, bl, sm, cp, hw, gx, c, b);
 	}
 	for (unsigned w = 0; w < NWIN; w++) {
 		if (va[w]) ml_io_unmap(va[w], (vm_size_t)len[w]);
@@ -1727,6 +1800,12 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
+	if (mode >= 15) {
+		snprintf(line, sizeof(line), "gpu s5_m2m %s dwords %u/256 %s",
+		    m2m->ok ? "ok" : "FAIL", m2m->dwords_copied, m2m->why[0] ? m2m->why : "256 dwords copied via CP_MEMCPY");
+		result_line(line);
+		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
+	}
 	if (mode == 6) {
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m6 %s s%u fw%u hfi%u", c->smmu_refused ? "REF" : "ok", c->stage, c->booted,
 		    c->hfi_ready);
@@ -1744,6 +1823,8 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m13 %s fill%u", bl->ok ? "ok" : "FAIL", bl->pixels_filled);
 	} else if (mode == 14) {
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m14 %s fb%u", fb->ok ? "ok" : "FAIL", fb->pixels_drawn);
+	} else if (mode == 15) {
+		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m15 %s m2m%u", m2m->ok ? "ok" : "FAIL", m2m->dwords_copied);
 	} else
 	snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m%u cx%s gx%s smmu%s%s%s", mode, cx ? "on" : "off",
 	    gpb_gdsc_on(r->gx_gdscr) ? "on" : "off", r->smmu == GPB_DONE ? "ok" : "-", mode == 4 ? (k->gmu_read ? " gmuR" : " gmu-") : "",
@@ -1758,7 +1839,8 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 	    (mode == 11 && !sm->ok) ||
 	    (mode == 12 && !zp->secure_cleared) ||
 	    (mode == 13 && !bl->ok) ||
-	    (mode == 14 && !fb->ok)) ? -2 : 0;
+	    (mode == 14 && !fb->ok) ||
+	    (mode == 15 && !m2m->ok)) ? -2 : 0;
 }
 
 void

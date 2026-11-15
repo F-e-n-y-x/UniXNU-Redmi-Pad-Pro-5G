@@ -27,5 +27,7 @@ static inline uint32_t cp_type7_packet(uint32_t opcode, uint32_t cnt)
 #define CP_MEM_WRITE                        0x3du
 #define CP_ME_INIT                          0x48u
 #define CP_SET_SECURE_MODE                  0x66u
+#define CP_MEM_TO_MEM                       0x73u
+#define CP_MEMCPY                           0x75u
 
 #endif
