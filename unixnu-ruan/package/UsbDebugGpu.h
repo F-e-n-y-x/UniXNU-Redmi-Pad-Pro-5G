@@ -137,14 +137,15 @@ static bool usbGpuCommand(TerminalSession &s, const char *raw, char *buf, size_t
     } else if (!ok) {
         snprintf(buf, cap, "GPU: last %s | %s\r\n", &ruan_gpu_short ? ruan_gpu_short : "", &ruan_gpu_row ? ruan_gpu_row : "");
         s.reply.writeStr(buf);
-    } else if ((mode < 1u || mode > 13u) && mode != 99u) {
+    } else if ((mode < 1u || mode > 14u) && mode != 99u) {
         s.reply.writeStr("GPU: gpu 1..7 (S1/S2 GMU/clocks/SMMU), "
                          "8 (+GX on via OOB GPU_SET), "
                          "9 (+A710 HW init & stream-0 SMMU), "
                          "10 (+SQE fw & CP start to ME_INIT), "
                          "11 (+CP_MEM_WRITE smoke test), "
                          "12 (+secure mode exit), "
-                         "13 (+2D blitter fill), off\r\n");
+                         "13 (+2D blitter fill), "
+                         "14 (+GOP FB blit), off\r\n");
     } else if (gGpuPending) {
         s.reply.writeStr("GPU: a run is already queued\r\n");
     } else {
@@ -161,10 +162,10 @@ static void usbGpuPump(TerminalSession *s) {
     if (!gGpuPending || !&ruan_gpu_run || !s->hw.configured || !s->hw.hostReady || s->xfer.active || s->pendingFastboot) return;
     const unsigned mode = gGpuPending;
     char line[160];
-    if (mode >= 5u && mode <= 13u) {   // the file read happens here, on the USB thread, outside pollUsbEvents
+    if (mode >= 5u && mode <= 14u) {   // the file read happens here, on the USB thread, outside pollUsbEvents
         if (usbLoadGmuFirmware(line, sizeof(line), *s) == 0 && &ruan_gpu_set_firmware) ruan_gpu_set_firmware(gGmuFw, gGmuFwBytes);
     }
-    if (mode >= 10u && mode <= 13u) {
+    if (mode >= 10u && mode <= 14u) {
         if (usbLoadSqeFirmware(line, sizeof(line), *s) == 0 && &ruan_gpu_set_sqe_firmware) ruan_gpu_set_sqe_firmware(gSqeFw, gSqeFwBytes);
     }
     if (usbFlush(*s, 2000)) {
