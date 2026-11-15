@@ -85,7 +85,8 @@ static const uint32_t s2a_branch[4] = {RUAN_CC_CX_GMU_CLK, RUAN_CC_CXO_CLK, RUAN
 #define GMU_REG(dw) ((uint32_t)((dw) * 4u - (uint32_t)(RUAN_GMU_BASE - RUAN_GPU_BASE)))
 static const uint32_t gmu_writable[] = {0x1f800, 0x1f801, 0x1f81c, 0x1f82d, 0x1f400, 0x1f401, 0x1f40f, 0x1f984, 0x1f985, 0x1f986,
                                         0x1f9cd, 0x1f9ce, 0x1f9cf, 0x1f8f0, 0x1f8f1, 0x23b11,
-                                        RUAN_GMU_GMU2HOST_INTR_CLR, RUAN_GMU_GMU2HOST_INTR_MASK, RUAN_GMU_HOST2GMU_INTR_SET};
+                                        RUAN_GMU_GMU2HOST_INTR_CLR, RUAN_GMU_GMU2HOST_INTR_MASK, RUAN_GMU_HOST2GMU_INTR_SET,
+                                        0x1f8c3, 0x23b04};
 static const uint32_t rscc_writable[] = {0x4, 0x8, 0x9, 0xa, 0xb, 0xd, 0xe, 0xf, 0x10, 0x11, 0x12, 0x100, 0x180, 0x181, 0x182, 0x183, 0x184};
 // The DT limits HLOS to the first 6 context banks and 6 SMRs (kgsl-smmu qcom,num-context-banks-override / num-smr-override); the
 // others belong to the secure world or the hypervisor and are never touched. Bank 0 stays for the GPU, as adreno-smmu assigns
@@ -789,6 +790,158 @@ struct ruan_gpu_s3_gx {
 };
 static struct ruan_gpu_s3_gx ruan_gpu_s3_gx_result;
 
+/* Resource discovery via AOP command-db at 0x80860000 (128 KiB) */
+#define RUAN_CMD_DB_PHYS 0x80860000ULL
+#define RUAN_CMD_DB_SIZE 0x20000u
+#define RUAN_CMD_DB_MAGIC 0x0c0330dbu
+
+struct ruan_cmddb_res {
+	uint32_t address;
+	uint32_t length;
+	uint8_t aux[32];
+	int found;
+};
+
+static inline int ruan_res_match(uint32_t lo, uint32_t hi, const char *name)
+{
+	uint32_t elo = 0, ehi = 0;
+	for (unsigned i = 0; i < 8 && name[i]; i++) {
+		if (i < 4) elo |= (uint32_t)(uint8_t)name[i] << (8 * i);
+		else ehi |= (uint32_t)(uint8_t)name[i] << (8 * (i - 4));
+	}
+	return (lo == elo && hi == ehi);
+}
+
+static inline uint16_t ruan_le16(const uint8_t *p)
+{
+	return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static int ruan_arc_vote(const struct ruan_cmddb_res *pri, const struct ruan_cmddb_res *sec, uint32_t lvl, uint32_t *vote)
+{
+	if (!pri->found || !pri->length || (pri->length & 1)) return 0;
+	uint32_t p = 0, s = 0;
+	for (p = 0; p < pri->length / 2; p++) {
+		if (ruan_le16(pri->aux + 2 * p) >= lvl) break;
+	}
+	if (p >= pri->length / 2) p = pri->length / 2 - 1;
+	if (sec->found && sec->length >= 2) {
+		for (s = 0; s < sec->length / 2; s++) {
+			if (ruan_le16(sec->aux + 2 * s) >= lvl) break;
+		}
+		if (s >= sec->length / 2) s = sec->length / 2 - 1;
+	}
+	*vote = ((uint32_t)ruan_le16(pri->aux + 2 * p) << 16) | (s << 8) | p;
+	return 1;
+}
+
+static void ruan_build_hfi_tables(uint32_t *perf, uint32_t *bw)
+{
+	memset(perf, 0, 58 * sizeof(uint32_t));
+	memset(bw, 0, 159 * sizeof(uint32_t));
+
+	/* Default fallback votes if cmd-db is unmapped */
+	uint32_t gpu_vote = 0x00380101u;
+	uint32_t gmu_vote = 0x00380101u;
+	uint32_t cn0_addr = 0x50000u;
+	uint32_t sh0_addr = 0x50004u;
+	uint32_t mc0_addr = 0x50008u;
+	uint32_t acv_addr = 0x5000cu;
+
+	vm_offset_t cdb_va = ml_io_map_unmappable((vm_offset_t)RUAN_CMD_DB_PHYS, (vm_size_t)RUAN_CMD_DB_SIZE, 7);
+	if (cdb_va) {
+		uint32_t magic = *(volatile uint32_t *)(cdb_va + 4);
+		if (magic == RUAN_CMD_DB_MAGIC) {
+			result_line("gpu s3_gx: cmd-db magic 0x0c0330db OK at 0x80860000");
+			static const char *const res_names[10] = {
+				"gfx.lvl", "mx.lvl", "cx.lvl", "SH0", "MC0", "ACV", "SH2", "xo.lvl", "SN15", "SN3"
+			};
+			struct ruan_cmddb_res res[10];
+			memset(res, 0, sizeof(res));
+
+			for (unsigned slave = 0; slave < 8; slave++) {
+				uint32_t h0 = *(volatile uint32_t *)(cdb_va + 8 + 16 * slave);
+				uint32_t h1 = *(volatile uint32_t *)(cdb_va + 8 + 16 * slave + 4);
+				if (!(h0 & 0xffff)) break;
+				uint32_t rec_off = 144 + (h0 >> 16);
+				uint32_t aux_off = 144 + (h1 & 0xffff);
+				uint32_t cnt = h1 >> 16;
+				if (cnt > 4096 || rec_off > RUAN_CMD_DB_SIZE) break;
+
+				for (uint32_t i = 0; i < cnt; i++) {
+					uint32_t r0 = *(volatile uint32_t *)(cdb_va + rec_off + i * 24);
+					uint32_t r1 = *(volatile uint32_t *)(cdb_va + rec_off + i * 24 + 4);
+					uint32_t r_addr = *(volatile uint32_t *)(cdb_va + rec_off + i * 24 + 16);
+					uint32_t r_aux = *(volatile uint32_t *)(cdb_va + rec_off + i * 24 + 20);
+
+					for (unsigned n = 0; n < 10; n++) {
+						if (!res[n].found && ruan_res_match(r0, r1, res_names[n])) {
+							res[n].found = 1;
+							res[n].address = r_addr;
+							uint32_t len = r_aux & 0xffff;
+							uint32_t off = aux_off + (r_aux >> 16);
+							res[n].length = len > 32 ? 32 : len;
+							for (unsigned b = 0; b < res[n].length; b++) {
+								res[n].aux[b] = *(volatile uint8_t *)(cdb_va + off + b);
+							}
+						}
+					}
+				}
+			}
+
+			if (res[0].found && res[1].found) (void)ruan_arc_vote(&res[0], &res[1], 64, &gpu_vote);
+			if (res[2].found && res[1].found) (void)ruan_arc_vote(&res[2], &res[1], 48, &gmu_vote);
+			if (res[6].found) cn0_addr = res[6].address;
+			if (res[3].found) sh0_addr = res[3].address;
+			if (res[4].found) mc0_addr = res[4].address;
+			if (res[5].found) acv_addr = res[5].address;
+
+			char msg[96];
+			snprintf(msg, sizeof msg, "gpu s3_gx: cmd-db ARC gpu=%08x gmu=%08x sh0=%05x mc0=%05x acv=%05x",
+				gpu_vote, gmu_vote, sh0_addr, mc0_addr, acv_addr);
+			result_line(msg);
+		} else {
+			result_line("gpu s3_gx: cmd-db magic mismatch, using fallback tables");
+		}
+		ml_io_unmap(cdb_va, (vm_size_t)RUAN_CMD_DB_SIZE);
+	} else {
+		result_line("gpu s3_gx: cmd-db map failed, using fallback tables");
+	}
+
+	/* 1. Build DCVS / Performance Table (58 words) */
+	perf[0] = 2;              /* gpu_level_num */
+	perf[1] = 2;              /* gmu_level_num */
+	perf[2] = 0;              /* Level 0: vote off */
+	perf[3] = 0xffffffffu;    /* Level 0: cx_vote disabled */
+	perf[4] = 0;              /* Level 0: 0 kHz */
+	perf[5] = gpu_vote;       /* Level 1: active vote */
+	perf[6] = 0xffffffffu;    /* Level 1: cx_vote disabled */
+	perf[7] = 295000;         /* Level 1: 295 MHz (lowest active on A710) */
+	perf[50] = 0;             /* GMU Level 0: vote off */
+	perf[51] = 0;             /* GMU Level 0: 0 kHz */
+	perf[52] = gmu_vote;      /* GMU Level 1: active vote */
+	perf[53] = 200000;        /* GMU Level 1: 200 MHz */
+
+	/* 2. Build Bandwidth Table (159 words) */
+	bw[0] = 2;                /* bandwidth_count (off, active) */
+	bw[1] = 1;                /* cnoc_count */
+	bw[2] = 3;                /* ddr_count */
+	bw[3] = 1;                /* cnoc_wait_mask */
+	bw[4] = (1u << 2);        /* ddr_wait_mask (commit on ACV) */
+	bw[5] = cn0_addr;         /* cnoc_addresses[0] */
+	bw[11] = 0x40000000u;     /* cnoc_data[0][0] off */
+	bw[17] = 0x60000001u;     /* cnoc_data[1][0] active */
+	bw[23] = sh0_addr;        /* ddr_addresses[0] */
+	bw[24] = mc0_addr;        /* ddr_addresses[1] */
+	bw[25] = acv_addr;        /* ddr_addresses[2] */
+	/* Row 0: off */
+	bw[31] = 0; bw[32] = 0; bw[33] = 0x40000000u;
+	/* Row 1: active */
+	bw[39] = 0x60000001u;     /* SH0 active */
+	bw[40] = 0x60000001u;     /* MC0 active */
+	bw[41] = 0x60000008u;     /* ACV active (ACV_APPS = BIT(3)) */
+}
+
 static void s3_gx_on(struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
 {
 	__builtin_memset(gx, 0, sizeof *gx);
@@ -806,13 +959,54 @@ static void s3_gx_on(struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const st
 			return;
 		}
 	}
+
+	static int gmu_hfi_started = 0;
+	if (!gmu_hfi_started) {
+		uint32_t perf_table[58];
+		uint32_t bw_table[159];
+		ruan_build_hfi_tables(perf_table, bw_table);
+
+		result_line("gpu s3_gx: send HFI Msg 4 (H2F_MSG_PERF_TBL, 58 words)");
+		uint32_t out[16] = {0};
+		size_t count = 0;
+		uint32_t fw_err = 0;
+		AdrenoHfiStatus stat = AdrenoHfiExchange(&gmu_hfi, 4, perf_table, 58, 500, hfi_wait_once, out, 16, &count, &fw_err);
+		if (stat != AdrenoHfiSuccess) {
+			snprintf(gx->why, sizeof gx->why, "HFI Msg 4 PERF_TBL failed: stat %d err %u", stat, fw_err);
+			return;
+		}
+
+		result_line("gpu s3_gx: send HFI Msg 3 (H2F_MSG_BW_TBL, 159 words)");
+		stat = AdrenoHfiExchange(&gmu_hfi, 3, bw_table, 159, 500, hfi_wait_once, out, 16, &count, &fw_err);
+		if (stat != AdrenoHfiSuccess) {
+			snprintf(gx->why, sizeof gx->why, "HFI Msg 3 BW_TBL failed: stat %d err %u", stat, fw_err);
+			return;
+		}
+
+		result_line("gpu s3_gx: send HFI Msg 14 (H2F_MSG_CORE_FW_START, 1 word)");
+		const uint32_t core_start = 0;
+		stat = AdrenoHfiExchange(&gmu_hfi, 14, &core_start, 1, 500, hfi_wait_once, out, 16, &count, &fw_err);
+		if (stat != AdrenoHfiSuccess) {
+			snprintf(gx->why, sizeof gx->why, "HFI Msg 14 CORE_FW_START failed: stat %d err %u", stat, fw_err);
+			return;
+		}
+
+		result_line("gpu s3_gx: send HFI Msg 30 (H2F_MSG_GX_BW_PERF_VOTE, 3 words)");
+		const uint32_t vote[3] = {1, 1, 1};
+		stat = AdrenoHfiExchange(&gmu_hfi, 30, vote, 3, 500, hfi_wait_once, out, 16, &count, &fw_err);
+		if (stat != AdrenoHfiSuccess) {
+			snprintf(gx->why, sizeof gx->why, "HFI Msg 30 PERF_VOTE failed: stat %d err %u", stat, fw_err);
+			return;
+		}
+		gmu_hfi_started = 1;
+	}
+
 	result_line("gpu s3_gx: clear/unmask GMU interrupts");
 	if (wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_CLR), ~0u)) {
 		strlcpy(gx->why, "GMU2HOST_INTR_CLR write refused", sizeof gx->why);
 		return;
 	}
 	(void)wr(NULL, W_GMU, GMU_REG(0x23b04u), ~0u); /* GEN7_GMU_AO_HOST_INTERRUPT_CLR */
-	/* Unmask CM3_FAULT and interrupts: ~(1u << 23) */
 	if (wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_MASK), ~(1u << 23))) {
 		strlcpy(gx->why, "GMU2HOST_INTR_MASK write refused", sizeof gx->why);
 		return;
@@ -820,7 +1014,7 @@ static void s3_gx_on(struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const st
 	(void)rd(NULL, GPB_WIN_GPUCC, GPB_CC_GX_GDSCR, &gx->gx_before);
 	(void)rd(NULL, W_GMU, GMU_REG(0x1f8d0), &gx->gx_status_before);
 
-	/* Step 1: Assert OOB GPU SET (bit 30) - Gen7 powers GX core via OOB before general HFI */
+	/* Assert OOB GPU SET (bit 30) */
 	const uint32_t req = (1u << 30);
 	const uint32_t ack_mask = (1u << 31);
 	result_line("gpu s3_gx: send OOB GPU SET (bit 30), poll GMU2HOST_INTR_INFO bit 31");
@@ -829,27 +1023,55 @@ static void s3_gx_on(struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const st
 		return;
 	}
 	__asm__ volatile("dsb sy" ::: "memory");
-	for (gx->oob_polls = 1; gx->oob_polls <= 5000; gx->oob_polls++) {
-		if (rd(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_INFO), &gx->oob_info)) break;
+
+	/* Fast raw polling loop without CDC tracing overhead */
+	for (gx->oob_polls = 1; gx->oob_polls <= 50000; gx->oob_polls++) {
+		gx->oob_info = *(volatile uint32_t *)(va[W_GMU] + GMU_REG(RUAN_GMU_GMU2HOST_INTR_INFO));
 		if (gx->oob_info & ack_mask) break;
-		delay(100);
+		delay(10);
 	}
 	if (!(gx->oob_info & ack_mask)) {
 		snprintf(gx->why, sizeof gx->why, "OOB GPU SET timed out (polls %u, info %08x)", gx->oob_polls, gx->oob_info);
 		return;
 	}
-	/* Step 2: Clear ACK bit 31 on GMU2HOST (keep bit 30 held in HOST2GMU to keep GX on) */
-	(void)wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_CLR), ack_mask);
+
+	/* Clear ACK bit 31 on GMU2HOST (keep bit 30 held in HOST2GMU) */
+	*(volatile uint32_t *)(va[W_GMU] + GMU_REG(RUAN_GMU_GMU2HOST_INTR_CLR)) = ack_mask;
 	__asm__ volatile("dsb sy" ::: "memory");
 
-	/* Step 3: Optional HFI GX_BW_PERF_VOTE once GX is powered up */
-	const uint32_t vote[3] = {1, 1, 1};
+	result_line("gpu s3_gx: send HFI Msg 10 (H2F_MSG_START, 0 words)");
 	uint32_t out[16] = {0};
 	size_t count = 0;
-	gx->vote_status = (uint32_t)AdrenoHfiExchange(&gmu_hfi, 30, vote, 3, 200, hfi_wait_once, out, 16, &count, &gx->fw_error);
+	uint32_t fw_err = 0;
+	AdrenoHfiStatus stat = AdrenoHfiExchange(&gmu_hfi, 10, NULL, 0, 500, hfi_wait_once, out, 16, &count, &fw_err);
+	if (stat != AdrenoHfiSuccess) {
+		snprintf(gx->why, sizeof gx->why, "HFI Msg 10 START failed: stat %d err %u", stat, fw_err);
+		return;
+	}
+
+	result_line("gpu s3_gx: enable SPTPRAC (0x1f8c3 = 1)");
+	*(volatile uint32_t *)(va[W_GMU] + GMU_REG(0x1f8c3)) = 1;
+	__asm__ volatile("dsb sy" ::: "memory");
+
+	uint32_t pwr_status = 0;
+	for (unsigned p = 0; p < 50000; p++) {
+		pwr_status = *(volatile uint32_t *)(va[W_GMU] + GMU_REG(0x1f8d0));
+		if (!(pwr_status & 3u)) break;
+		delay(10);
+	}
+	gx->gx_status_after = pwr_status;
+	if (pwr_status & 3u) {
+		snprintf(gx->why, sizeof gx->why, "SPTPRAC power on timed out (status %08x)", pwr_status);
+		return;
+	}
+
+	/* Wait for AHB fence to drop */
+	for (unsigned p = 0; p < 50000; p++) {
+		if (*(volatile uint32_t *)(va[W_GMU] + GMU_REG(0x23b10)) == 0) break;
+		delay(10);
+	}
 
 	(void)rd(NULL, GPB_WIN_GPUCC, GPB_CC_GX_GDSCR, &gx->gx_after);
-	(void)rd(NULL, W_GMU, GMU_REG(0x1f8d0), &gx->gx_status_after);
 	gx->gx_on = 1;
 	result_line("gpu s3_gx: GX powered on! Reading RBBM_STATUS from GPU block");
 	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_STATUS * 4u, &gx->rbbm_status);
@@ -1282,7 +1504,7 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 	if (mode >= 4) s2a(r, k);
 	struct ruan_gpu_s2c *c = &ruan_gpu_s2c_result;
 	if (mode >= 5 && k->gmu_read && !k->io_error) s2b_tcm(b);
-	if (mode == 6 && !b->why[0]) s2c(c, b);
+	if (mode >= 6 && !b->why[0]) s2c(c, b);
 	struct ruan_gpu_s3_gx *gx = &ruan_gpu_s3_gx_result;
 	struct ruan_gpu_s3_hw *hw = &ruan_gpu_s3_hw_result;
 	struct ruan_gpu_s3_cp *cp = &ruan_gpu_s3_cp_result;
