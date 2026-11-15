@@ -502,15 +502,19 @@ static int need(unsigned w)
 	if (!va[w]) va[w] = ml_io_map_unmappable((vm_offset_t)phys[w], (vm_size_t)len[w], 7);
 	return va[w] ? 0 : -1;
 }
-static void clean_pool(void)   // dc civac over the pool: the SMMU walks and the GMU read it non-cacheable
+static void clean_pool_range(uintptr_t start, size_t size)
 {
 	uint64_t ctr = 0;
 	__asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
 	const uintptr_t line = (uintptr_t)4u << ((ctr >> 16) & 15u);
 	__asm__ volatile("dsb sy" ::: "memory");
-	for (uintptr_t a = (uintptr_t)pool_cpu & ~(line - 1); a < (uintptr_t)pool_cpu + RUAN_GMU_POOL_BYTES; a += line)
+	for (uintptr_t a = start & ~(line - 1); a < start + size; a += line)
 		__asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
 	__asm__ volatile("dsb sy" ::: "memory");
+}
+static void clean_pool(void)   // dc civac over the active pool (up to 2 MiB)
+{
+	if (pool_cpu) clean_pool_range((uintptr_t)pool_cpu, 0x200000u);
 }
 static int gmu_hfi_notify(void *c)
 {
@@ -1624,14 +1628,118 @@ static void s5_mem_to_mem(struct ruan_gpu_s5_m2m *m2m, struct ruan_gpu_s4_fb *fb
 	}
 }
 
+struct ruan_gpu_s5_fb {
+	uint32_t pixels_copied;
+	uint32_t rptr, wptr, polls, rbbm_status;
+	uint32_t fsr, fsynr0;
+	uint64_t far;
+	uint32_t first_read, want_color;
+	int ok;
+	char why[100];
+};
+static struct ruan_gpu_s5_fb ruan_gpu_s5_fb_result;
+
+static void s5_fb_dma_blit(struct ruan_gpu_s5_fb *sfb, struct ruan_gpu_s5_m2m *m2m,
+	struct ruan_gpu_s4_fb *fb, struct ruan_gpu_s3_blitter *bl, struct ruan_gpu_s3_smoke *sm,
+	struct ruan_gpu_s3_cp *cp, struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx,
+	struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
+{
+	if (sfb->ok) return;
+	__builtin_memset(sfb, 0, sizeof *sfb);
+	if (!m2m->ok) {
+		s5_mem_to_mem(m2m, fb, bl, sm, cp, h, gx, c, b);
+		if (!m2m->ok) {
+			snprintf(sfb->why, sizeof sfb->why, "s5_m2m not ok: %s", m2m->why[0] ? m2m->why : "failed");
+			return;
+		}
+	}
+	result_line("gpu s5_fb: CP_MEMCPY hardware DMA blit to GOP Framebuffer (0x50000000)");
+
+	/* Prepare a 200x200 (40000 pixels = 160000 bytes) vibrant spring-green box in user pool */
+	volatile uint32_t *src_cpu = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_USER_OFF);
+	const unsigned width = 200;
+	const unsigned height = 200;
+	const unsigned total_pixels = width * height;
+	const uint32_t pattern_color = 0xFF00FF7Fu; /* Spring Green */
+
+	for (unsigned i = 0; i < total_pixels; i++) {
+		src_cpu[i] = pattern_color;
+	}
+	clean_pool_range((uintptr_t)src_cpu, total_pixels * 4u);
+
+	/* Centered at (x=700, y=500) on portrait panel (1600x2560); stride is 1600 pixels = 6400 bytes */
+	const unsigned x_start = 700;
+	const unsigned y_start = 500;
+	const unsigned fb_stride_pixels = 1600;
+
+	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
+	unsigned w = s3_current_wptr;
+
+	for (unsigned y = 0; y < height; y++) {
+		uint32_t src_va = RUAN_S3_GPU_VA_USER + (y * width) * 4u;
+		uint32_t dst_va = RUAN_S3_GPU_VA_FB + ((y_start + y) * fb_stride_pixels + x_start) * 4u;
+
+		rb[w++] = cp_type7_packet(CP_MEMCPY, 5);
+		rb[w++] = width;             /* DWORDS */
+		rb[w++] = src_va;            /* SRC_LO */
+		rb[w++] = 0;                 /* SRC_HI */
+		rb[w++] = dst_va;            /* DST_LO */
+		rb[w++] = 0;                 /* DST_HI */
+	}
+
+	clean_pool_range((uintptr_t)rb, 0x8000u);
+	s3_current_wptr = w;
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, w);
+
+	for (unsigned p = 0; p < 2000; p++) {
+		sfb->rptr = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_CP_RB_RPTR * 4u);
+		sfb->rbbm_status = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_RBBM_STATUS * 4u);
+		sfb->polls = p;
+		if (sfb->rptr == w && !(sfb->rbbm_status & (1u << 31))) break;
+		delay(100);
+	}
+	sfb->wptr = w;
+
+	/* Query SMMU Stream-0 fault registers */
+	(void)rd(NULL, W_SMMUF, gpu_stream0_cb_off + CB_FSR, &sfb->fsr);
+	(void)rd(NULL, W_SMMUF, gpu_stream0_cb_off + CB_FSYNR0, &sfb->fsynr0);
+	uint32_t far_lo = 0, far_hi = 0;
+	(void)rd(NULL, W_SMMUF, gpu_stream0_cb_off + CB_FAR_LO, &far_lo);
+	(void)rd(NULL, W_SMMUF, gpu_stream0_cb_off + CB_FAR_HI, &far_hi);
+	sfb->far = ((uint64_t)far_hi << 32) | far_lo;
+
+	/* Verify CPU readback directly from physical GOP FB */
+	volatile uint32_t *fb_cpu = (volatile uint32_t *)(void *)ml_io_map_unmappable((vm_offset_t)RUAN_FB_PHYS, 0x1000000, 7);
+	unsigned matches = 0;
+	if (fb_cpu) {
+		sfb->first_read = fb_cpu[y_start * fb_stride_pixels + x_start];
+		sfb->want_color = pattern_color;
+		for (unsigned y = 0; y < height; y++) {
+			for (unsigned x = 0; x < width; x++) {
+				if (fb_cpu[(y_start + y) * fb_stride_pixels + (x_start + x)] == pattern_color) matches++;
+			}
+		}
+		ml_io_unmap((vm_offset_t)fb_cpu, 0x1000000);
+	}
+	sfb->pixels_copied = matches;
+	if (matches == total_pixels) {
+		sfb->ok = 1;
+		result_line("gpu s5_fb: CP_MEMCPY DMA GOP FB blit SUCCESS! 40000 pixels verified in DRAM!");
+	} else {
+		snprintf(sfb->why, sizeof sfb->why, "px %u/%u rptr %u/%u p%u rbbm %08x fsr %08x far %llx read %08x want %08x",
+			matches, total_pixels, sfb->rptr, sfb->wptr, sfb->polls, sfb->rbbm_status, sfb->fsr, (unsigned long long)sfb->far,
+			sfb->first_read, sfb->want_color);
+	}
+}
+
 
 int
 ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 {
 	trace_fn = trace, trace_ctx = ctx;
-	if (!mode || (mode > 15 && mode != RUAN_GPU_OFF)) {
+	if (!mode || (mode > 16 && mode != RUAN_GPU_OFF)) {
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m%u?", mode);
-		result_line("gpu: mode is 1..15 or off, nothing done");
+		result_line("gpu: mode is 1..16 or off, nothing done");
 		trace_fn = NULL;
 		return -1;
 	}
@@ -1680,7 +1788,8 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 	struct ruan_gpu_s3_blitter *bl = &ruan_gpu_s3_blitter_result;
 	struct ruan_gpu_s4_fb *fb = &ruan_gpu_s4_fb_result;
 	struct ruan_gpu_s5_m2m *m2m = &ruan_gpu_s5_m2m_result;
-	if (mode >= 8 && mode <= 15) {
+	struct ruan_gpu_s5_fb *sfb = &ruan_gpu_s5_fb_result;
+	if (mode >= 8 && mode <= 16) {
 		s3_gx_on(gx, c, b);
 		if (mode >= 9 && gx->gx_on) s3_hw_init(hw, gx, c, b);
 		if (mode >= 10 && hw->ok) s3_cp_start(cp, hw, gx, c, b);
@@ -1689,6 +1798,7 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		if (mode >= 13 && sm->ok) s3_blitter(bl, sm, cp, hw, gx, c, b);
 		if (mode >= 14 && bl->ok) s4_fb_blit(fb, bl, sm, cp, hw, gx, c, b);
 		if (mode >= 15 && fb->ok) s5_mem_to_mem(m2m, fb, bl, sm, cp, hw, gx, c, b);
+		if (mode >= 16 && m2m->ok) s5_fb_dma_blit(sfb, m2m, fb, bl, sm, cp, hw, gx, c, b);
 	}
 	for (unsigned w = 0; w < NWIN; w++) {
 		if (va[w]) ml_io_unmap(va[w], (vm_size_t)len[w]);
@@ -1806,6 +1916,12 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
+	if (mode >= 16) {
+		snprintf(line, sizeof(line), "gpu s5_fb %s pixels %u/40000 %s",
+		    sfb->ok ? "ok" : "FAIL", sfb->pixels_copied, sfb->why[0] ? sfb->why : "40000 pixels blitted to GOP FB via CP_MEMCPY DMA");
+		result_line(line);
+		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
+	}
 	if (mode == 6) {
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m6 %s s%u fw%u hfi%u", c->smmu_refused ? "REF" : "ok", c->stage, c->booted,
 		    c->hfi_ready);
@@ -1825,6 +1941,8 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m14 %s fb%u", fb->ok ? "ok" : "FAIL", fb->pixels_drawn);
 	} else if (mode == 15) {
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m15 %s m2m%u", m2m->ok ? "ok" : "FAIL", m2m->dwords_copied);
+	} else if (mode == 16) {
+		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m16 %s fb_dma%u", sfb->ok ? "ok" : "FAIL", sfb->pixels_copied);
 	} else
 	snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m%u cx%s gx%s smmu%s%s%s", mode, cx ? "on" : "off",
 	    gpb_gdsc_on(r->gx_gdscr) ? "on" : "off", r->smmu == GPB_DONE ? "ok" : "-", mode == 4 ? (k->gmu_read ? " gmuR" : " gmu-") : "",
@@ -1840,7 +1958,8 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 	    (mode == 12 && !zp->secure_cleared) ||
 	    (mode == 13 && !bl->ok) ||
 	    (mode == 14 && !fb->ok) ||
-	    (mode == 15 && !m2m->ok)) ? -2 : 0;
+	    (mode == 15 && !m2m->ok) ||
+	    (mode == 16 && !sfb->ok)) ? -2 : 0;
 }
 
 void
