@@ -83,6 +83,7 @@ Derived from the garnet (POCO X6 5G, same SoC) platform in [JosephMontfort/hakio
 
 <p align="center">
   <img src="docs/img/screen-rbu21.png" alt="rbu21 In-Kernel Hardware DMA Blitter Live on Silicon" width="45%">
+  <img src="docs/img/screen-rbu21-postblit.png" alt="rbu21 Post-Blit Framebuffer Live Capture" width="45%">
 </p>
 - **What will be next**:
   - **Multi-Frame Swap Queue Continuous Streaming**: Stream successive compositor swaps through the 4-slot SMMU cache without vsync pipeline bubbles.
