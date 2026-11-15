@@ -777,8 +777,8 @@ static struct ruan_gpu_s3_gx ruan_gpu_s3_gx_result;
 static void s3_gx_on(struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
 {
 	__builtin_memset(gx, 0, sizeof *gx);
-	if (need(W_GMU) || need(GPB_WIN_GPU)) {
-		strlcpy(gx->why, "GMU/GPU window map failed", sizeof gx->why);
+	if (need(W_GMU) || need(GPB_WIN_GPU) || need(GPB_WIN_GPUCC)) {
+		strlcpy(gx->why, "GMU/GPU/GPUCC window map failed", sizeof gx->why);
 		return;
 	}
 	uint32_t hfi_stat = 0;
@@ -791,43 +791,39 @@ static void s3_gx_on(struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const st
 			return;
 		}
 	}
-	result_line("gpu s3_gx: clear/unmask GMU interrupts, read PWR_CLK_STATUS");
+	result_line("gpu s3_gx: clear/unmask GMU interrupts");
 	if (wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_CLR), ~0u)) {
 		strlcpy(gx->why, "GMU2HOST_INTR_CLR write refused", sizeof gx->why);
 		return;
 	}
-	if (wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_MASK), ~0x800000u)) {
+	/* Unmask GMU-to-host interrupts (0 = unmasked) */
+	if (wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_MASK), 0u)) {
 		strlcpy(gx->why, "GMU2HOST_INTR_MASK write refused", sizeof gx->why);
 		return;
 	}
-	if (rd(NULL, W_GMU, GMU_REG(RUAN_GMU_PWR_CLK_STATUS), &gx->gx_before)) {
-		strlcpy(gx->why, "PWR_CLK_STATUS read failed", sizeof gx->why);
-		return;
-	}
-	result_line("gpu s3_gx: send OOB GPU SET (1<<30), poll GMU2HOST_INTR_INFO bit 31");
-	if (wr(NULL, W_GMU, GMU_REG(RUAN_GMU_HOST2GMU_INTR_SET), RUAN_OOB_GPU_SET_REQUEST)) {
+	(void)rd(NULL, GPB_WIN_GPUCC, GPB_CC_GX_GDSCR, &gx->gx_before);
+
+	const uint32_t req = (1u << 30) | (1u << 16);  /* non-legacy bit 30 and legacy bit 16 */
+	const uint32_t ack_mask = (1u << 31) | (1u << 24); /* non-legacy bit 31 and legacy bit 24 */
+	result_line("gpu s3_gx: send OOB GPU SET (bit 30 & 16), poll GMU2HOST_INTR_INFO");
+	if (wr(NULL, W_GMU, GMU_REG(RUAN_GMU_HOST2GMU_INTR_SET), req)) {
 		strlcpy(gx->why, "HOST2GMU_INTR_SET write refused", sizeof gx->why);
 		return;
 	}
 	for (gx->oob_polls = 0; gx->oob_polls < 1000; gx->oob_polls++) {
 		if (rd(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_INFO), &gx->oob_info)) break;
-		if (gx->oob_info & RUAN_OOB_GPU_SET_ACK) break;
+		if (gx->oob_info & ack_mask) break;
 		delay(100);
 	}
-	if (!(gx->oob_info & RUAN_OOB_GPU_SET_ACK)) {
+	if (!(gx->oob_info & ack_mask)) {
 		snprintf(gx->why, sizeof gx->why, "OOB GPU SET timed out (polls %u, info %08x)", gx->oob_polls, gx->oob_info);
 		return;
 	}
-	(void)wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_CLR), RUAN_OOB_GPU_SET_ACK);
+	/* Acknowledge and clear OOB interrupt on both sides */
+	(void)wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_CLR), gx->oob_info & ack_mask);
+	(void)wr(NULL, W_GMU, GMU_REG(RUAN_GMU_HOST2GMU_INTR_SET), gx->oob_info & ack_mask);
 
-	if (rd(NULL, W_GMU, GMU_REG(RUAN_GMU_PWR_CLK_STATUS), &gx->gx_after)) {
-		strlcpy(gx->why, "PWR_CLK_STATUS after read failed", sizeof gx->why);
-		return;
-	}
-	if (gx->gx_after & RUAN_GX_OFF_BITS) {
-		snprintf(gx->why, sizeof gx->why, "GX rail still off (PWR_CLK_STATUS %08x)", gx->gx_after);
-		return;
-	}
+	(void)rd(NULL, GPB_WIN_GPUCC, GPB_CC_GX_GDSCR, &gx->gx_after);
 	gx->gx_on = 1;
 	result_line("gpu s3_gx: GX powered on! Reading RBBM_STATUS from GPU block");
 	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_STATUS * 4u, &gx->rbbm_status);

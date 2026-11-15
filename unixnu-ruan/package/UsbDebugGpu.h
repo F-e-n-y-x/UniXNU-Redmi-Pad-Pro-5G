@@ -161,7 +161,7 @@ static void usbGpuPump(TerminalSession *s) {
     if (!gGpuPending || !&ruan_gpu_run || !s->hw.configured || !s->hw.hostReady || s->xfer.active || s->pendingFastboot) return;
     const unsigned mode = gGpuPending;
     char line[160];
-    if (mode == 5u || mode == 6u) {   // the file read happens here, on the USB thread, outside pollUsbEvents
+    if (mode >= 5u && mode <= 13u) {   // the file read happens here, on the USB thread, outside pollUsbEvents
         if (usbLoadGmuFirmware(line, sizeof(line), *s) == 0 && &ruan_gpu_set_firmware) ruan_gpu_set_firmware(gGmuFw, gGmuFwBytes);
     }
     if (mode >= 10u && mode <= 13u) {
