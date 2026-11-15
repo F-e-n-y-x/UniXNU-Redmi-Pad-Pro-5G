@@ -49,6 +49,32 @@ Derived from the garnet (POCO X6 5G, same SoC) platform in [JosephMontfort/hakio
 | Wi-Fi | WCN6750 | WCN6750 |
 | RAM | 8/12 GB | 8 GB |
 
+## Checkpoint: 2026-11-16: Adreno 710 In-Kernel Display Frame Blitter (`native_legacy_gpu_offer`) Live-Verified on Silicon (`rbu21`)
+- **What is in this build**:
+  - `ruan-ramroot-usb-rbu21.img` (SHA256: `d3dbdbbef162c5ccc4063c51fe9eb0820b5aac771fb88d0faf9c9174663e43ad`) Darwin 23.6.0 (iPadOS 17.7.11 / 21H461) RAM-boot payload.
+  - Native in-kernel GPU display blitter wired into `NativeLegacyDisplay` (`native_legacy_gpu_offer`), offloading userland compositor frames directly to Adreno 710 CP_MEMCPY hardware DMA.
+  - Zero CPU fallback copy (`copies=0`, `gpu_blits=1`, `gpu_ticks=874`).
+  - Full 8.2 GB physical DRAM adopted (`memory-outside=1`, `mem=5545M+2729M`).
+  - Live iPadOS 17.7.11 userland active (SpringBoard PID 27, backboardd PID 53, lock screen, wallpaper).
+  - Novatek NT36532 multi-touch, PMK8350 buttons, 8-core SMP cpufreq, live USB CDC terminal (`/dev/ttyACM0`).
+- **What was fixed / verified on silicon**:
+  - **Workloop Gate & Completion Invariant Resolution**:
+    - *Problem*: In initial attempts, calling `native_legacy_gpu_complete(display, 0)` synchronously inside `native_legacy_gpu_offer()` deadlocked against `IOWorkLoop` and executed before `gpuRequest = request` was assigned by `NativeLegacyDisplay.cpp`. Consequently, `finishGpuSwap()` dropped the completion, leaving `transferred = true` permanently and causing a display freeze / watchdog reboot into Android.
+    - *Fix*: Decoupled completion using XNU's kernel worker thread facility (`thread_call_allocate` + `thread_call_enter1` with `deferred_gpu_complete`). `native_legacy_gpu_offer` immediately returns `true`, allowing `NativeLegacyDisplay` to record `gpuRequest`, retire the swap, and release the workloop gate before asynchronous completion signals retirement.
+  - **Persistent GPU Register Window Mapping**:
+    - *Problem*: `ruan_gpu_run()` originally unmapped all registers upon return (`va[w] = 0;`), causing `ruan_gpu_is_s5_ready()` to return false and reject incoming swaps.
+    - *Fix*: Preserved register windows `va[GPB_WIN_GPU]`, SMMU CB, and GPUCC across display blits when `mode == 16`.
+  - **Virtual Timer (`cntvct_el0`) Under Hypervisor**:
+    - *Fix*: Replaced `cntpct_el0` with `cntvct_el0` for blitter latency timing to eliminate EL2 trap overhead under the Gunyah hypervisor.
+  - **Silicon Verification Proof (Live USB CDC Display Telemetry)**:
+    ```
+    [usb] FB: stage=10 1600x2560 phys=0xb8000000 virt=0xfffffff9bfd16000 bytes=0xfa0000 copies=0 gpu_blits=1 gpu_ticks=874
+    ```
+    Verified live: `gpu_blits=1`, `gpu_ticks=874` (~45 µs), CPU fallback `copies=0`. SpringBoard and backboardd remain responsive without crashing. Framebuffer snapshot captured: [docs/img/screen-rbu21.png](docs/img/screen-rbu21.png).
+- **What will be next**:
+  - **Multi-Frame Swap Queue Continuous Streaming**: Stream successive compositor swaps through the 4-slot SMMU cache without vsync pipeline bubbles.
+  - **Adreno 710 Userland Metal Compositing (Turnip / IOAccelerator)**: Initialize `IOGPUMetalDevice` / Turnip pipeline for 3D acceleration.
+
 ## Checkpoint: 2026-11-16: Adreno 710 Stage S5 Mode 16 GOP Framebuffer Hardware DMA Blit Verified on Silicon (`rbu20`)
 - **What is in this build**:
   - `ruan-ramroot-usb-rbu20.img` Darwin 23.6.0 (iPadOS 17.7.11 / 21H461) RAM-boot payload with Stage S5 Mode 16 Direct GOP Framebuffer DMA Blitter.

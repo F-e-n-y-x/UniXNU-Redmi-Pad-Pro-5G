@@ -88,6 +88,25 @@ static inline int ruan_pt_map_attr(struct ruan_pt *p, uint32_t va, uint64_t pa, 
 	return 0;
 }
 
+/* Map or remap [va, va+bytes) to [pa, ...). Overwrites existing L3 page entries. */
+static inline int ruan_pt_remap_attr(struct ruan_pt *p, uint32_t va, uint64_t pa, uint32_t bytes, uint64_t attrs)
+{
+	if ((va | (uint32_t)pa) & (RUAN_PT_PAGE - 1) || !bytes || (uint64_t)va + bytes > (1ull << 32) || (pa & ~RUAN_PT_ADDR_MASK))
+		return -1;
+	for (uint64_t off = 0; off < bytes; off += RUAN_PT_PAGE) {
+		const uint64_t v = (uint64_t)va + off;
+		uint64_t *l1 = ruan_pt_tbl(p, p->pa);
+		const uint64_t l2pa = ruan_pt_next(p, l1, (unsigned)((v >> 30) & 3));
+		if (!l2pa) return -1;
+		const uint64_t l3pa = ruan_pt_next(p, ruan_pt_tbl(p, l2pa), (unsigned)((v >> 21) & 511));
+		if (!l3pa) return -1;
+		uint64_t *l3 = ruan_pt_tbl(p, l3pa);
+		const unsigned e = (unsigned)((v >> 12) & 511);
+		l3[e] = ((pa + off) & RUAN_PT_ADDR_MASK) | attrs;
+	}
+	return 0;
+}
+
 /* Map [va, va+bytes) to [pa, ...). Page-aligned va and pa, va+bytes within 4 GiB. Refuses (-1) an already-mapped page, so
  * two regions can never overlap; nothing is changed for pages before the one that failed only in the overlap case. */
 static inline int ruan_pt_map(struct ruan_pt *p, uint32_t va, uint64_t pa, uint32_t bytes)

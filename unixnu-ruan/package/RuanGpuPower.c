@@ -25,6 +25,7 @@
 #include "RuanA710Regs.h"
 #include "RuanA710HwInit.h"
 #include "RuanA710Pm4.h"
+#include "RuanBuiltinFw.h"
 
 extern void boot_progress_stage(const char *s);
 extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, uint32_t flags);
@@ -396,6 +397,10 @@ static void s2b_tcm(struct ruan_gpu_s2b *b)
 {
 	__builtin_memset(b, 0, sizeof *b);
 	uint8_t digest[32];
+	if (!fw_data) {
+		fw_data = ruan_builtin_gmu_fw;
+		fw_size = sizeof(ruan_builtin_gmu_fw);
+	}
 	if (!fw_data || fw_size != RUAN_GMU_FW_BYTES) {
 		snprintf(b->why, sizeof b->why, "firmware %s (size %lu)", fw_data ? "size differs" : "not loaded", (unsigned long)fw_size);
 		return;
@@ -512,9 +517,9 @@ static void clean_pool_range(uintptr_t start, size_t size)
 		__asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
 	__asm__ volatile("dsb sy" ::: "memory");
 }
-static void clean_pool(void)   // dc civac over the active pool (up to 2 MiB)
+static void clean_pool(void)   // dc civac over the active pool (up to 3 MiB)
 {
-	if (pool_cpu) clean_pool_range((uintptr_t)pool_cpu, 0x200000u);
+	if (pool_cpu) clean_pool_range((uintptr_t)pool_cpu, 0x300000u);
 }
 static int gmu_hfi_notify(void *c)
 {
@@ -636,6 +641,10 @@ static void s2c(struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
 		return;
 	}
 	__builtin_memset(c, 0, sizeof *c);
+	if (!fw_data) {
+		fw_data = ruan_builtin_gmu_fw;
+		fw_size = sizeof(ruan_builtin_gmu_fw);
+	}
 	struct ruan_pt pt;
 	struct ruan_gmu_region reg[RUAN_GMU_MAX_REGIONS];
 	if (!b->fw_ok || b->tcm_bad || (b->sysreset != 1 && b->sysreset != 0)) {strlcpy(c->why, "gpu 5 part did not pass (fw/TCM/reset)", sizeof c->why); return;}
@@ -780,14 +789,15 @@ static void s2c(struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
  * Stage S3: Adreno 710 GX Power-Up, HW Init, Stream-0 SMMU, SQE Load, CP, Ring
  * ========================================================================= */
 
-#define RUAN_S3_POOL_STREAM0_PT_OFF   0x080000u  /* 64 KiB */
+#define RUAN_S3_POOL_STREAM0_PT_OFF   0x100000u  /* 256 KiB */
+#define RUAN_S3_POOL_STREAM0_PT_SIZE  0x040000u  /* 256 KiB */
 #define RUAN_S3_POOL_SQE_OFF          0x090000u  /* 64 KiB */
 #define RUAN_S3_POOL_RB_OFF           0x0A0000u  /* 32 KiB */
 #define RUAN_S3_POOL_MEMPTRS_OFF      0x0A8000u  /* 4 KiB */
 #define RUAN_S3_POOL_SCRATCH_OFF      0x0A9000u  /* 4 KiB */
 #define RUAN_S3_POOL_PWRUP_OFF        0x0AA000u  /* 4 KiB */
 #define RUAN_S3_POOL_SCM_META_OFF     0x0B0000u  /* 64 KiB (CPU only) */
-#define RUAN_S3_POOL_USER_OFF         0x100000u  /* 15 MiB */
+#define RUAN_S3_POOL_USER_OFF         0x140000u  /* ~14.75 MiB */
 
 #define RUAN_S3_GPU_VA_BASE           0x40000000u
 #define RUAN_S3_GPU_VA_SQE            (RUAN_S3_GPU_VA_BASE + RUAN_S3_POOL_SQE_OFF)      /* 0x40090000 */
@@ -795,8 +805,9 @@ static void s2c(struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
 #define RUAN_S3_GPU_VA_MEMPTRS        (RUAN_S3_GPU_VA_BASE + RUAN_S3_POOL_MEMPTRS_OFF)  /* 0x400A8000 */
 #define RUAN_S3_GPU_VA_SCRATCH        (RUAN_S3_GPU_VA_BASE + RUAN_S3_POOL_SCRATCH_OFF)  /* 0x400A9000 */
 #define RUAN_S3_GPU_VA_PWRUP          (RUAN_S3_GPU_VA_BASE + RUAN_S3_POOL_PWRUP_OFF)    /* 0x400AA000 */
-#define RUAN_S3_GPU_VA_USER           (RUAN_S3_GPU_VA_BASE + RUAN_S3_POOL_USER_OFF)     /* 0x40100000 */
+#define RUAN_S3_GPU_VA_USER           (RUAN_S3_GPU_VA_BASE + RUAN_S3_POOL_USER_OFF)     /* 0x40140000 */
 #define RUAN_S3_GPU_VA_FB             0x50000000u
+#define RUAN_S3_GPU_VA_SRC            0x60000000u
 #define RUAN_FB_PHYS                  0xb8000000ull
 #define RUAN_FB_SIZE                  0x01000000u   /* 16 MiB GOP Framebuffer */
 
@@ -1187,10 +1198,10 @@ static void s3_hw_init(struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, stru
 		h->hwcg_writes++;
 	}
 
-	result_line("gpu s3_hw: Stream-0 page tables on GPU pool (+0x80000)");
+	result_line("gpu s3_hw: Stream-0 page tables on GPU pool (+0x100000, 256 KiB)");
 	uint8_t *s0_cpu = pool_cpu + RUAN_S3_POOL_STREAM0_PT_OFF;
 	uint64_t s0_pa = pool_pa + RUAN_S3_POOL_STREAM0_PT_OFF;
-	if (ruan_pt_init(&stream0_pt, s0_cpu, s0_pa, 0x10000)) {
+	if (ruan_pt_init(&stream0_pt, s0_cpu, s0_pa, RUAN_S3_POOL_STREAM0_PT_SIZE)) {
 		strlcpy(h->why, "stream0 pt_init failed", sizeof h->why);
 		return;
 	}
@@ -1274,6 +1285,10 @@ static void s3_cp_start(struct ruan_gpu_s3_cp *cp, struct ruan_gpu_s3_hw *h, str
 			snprintf(cp->why, sizeof cp->why, "hw_init not ok: %s", h->why[0] ? h->why : "failed");
 			return;
 		}
+	}
+	if (!sqe_fw_data) {
+		sqe_fw_data = ruan_builtin_sqe_fw;
+		sqe_fw_size = sizeof(ruan_builtin_sqe_fw);
 	}
 	if (!sqe_fw_data || sqe_fw_size < 36304) {
 		strlcpy(cp->why, "SQE firmware not loaded (a710_sqe.fw)", sizeof cp->why);
@@ -1745,7 +1760,7 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 	}
 	unsigned have = 0;
 	for (unsigned w = 0; w < GPB_WINDOWS; w++) {
-		va[w] = ml_io_map_unmappable((vm_offset_t)phys[w], (vm_size_t)len[w], 7);   // 7 = VM_WIMG_IO, uncached
+		if (!va[w]) va[w] = ml_io_map_unmappable((vm_offset_t)phys[w], (vm_size_t)len[w], 7);   // 7 = VM_WIMG_IO, uncached
 		if (va[w]) have |= 1u << w;
 	}
 	struct gpb_io io = {NULL, rd, wr, stage, delay_us};
@@ -1800,9 +1815,11 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		if (mode >= 15 && fb->ok) s5_mem_to_mem(m2m, fb, bl, sm, cp, hw, gx, c, b);
 		if (mode >= 16 && m2m->ok) s5_fb_dma_blit(sfb, m2m, fb, bl, sm, cp, hw, gx, c, b);
 	}
-	for (unsigned w = 0; w < NWIN; w++) {
-		if (va[w]) ml_io_unmap(va[w], (vm_size_t)len[w]);
-		va[w] = 0;
+	if (mode != 16) {
+		for (unsigned w = 0; w < NWIN; w++) {
+			if (va[w]) ml_io_unmap(va[w], (vm_size_t)len[w]);
+			va[w] = 0;
+		}
 	}
 	char line[200];
 	snprintf(line, sizeof(line), "gpu m%u gcc %s ahb %08x>%08x memnoc %08x dvm %08x axi %08x vote %08x w%u e%d",
@@ -1962,14 +1979,65 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 	    (mode == 16 && !sfb->ok)) ? -2 : 0;
 }
 
+int ruan_gpu_is_s5_ready(void)
+{
+	return ruan_gpu_s5_fb_result.ok && va[GPB_WIN_GPU] != 0;
+}
+
+int ruan_gpu_stream0_map_page(uint32_t va_addr, uint64_t pa_addr, uint32_t bytes)
+{
+	return ruan_pt_remap_attr(&stream0_pt, va_addr, pa_addr, bytes, RUAN_PT_ATTRS_USER_RW);
+}
+
+void ruan_gpu_stream0_tlb_flush(void)
+{
+	clean_pool();
+	if (va[W_SMMUF] && gpu_stream0_cb_off) {
+		(void)wr(NULL, W_SMMUF, gpu_stream0_cb_off + CB_TLBIALL, 1);
+	}
+}
+
+int ruan_gpu_dma_blit_frame(uint32_t src_va, uint32_t dst_va, uint32_t total_dwords)
+{
+	if (!va[GPB_WIN_GPU]) return -1;
+	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
+	unsigned w = s3_current_wptr;
+
+	if (w + 16 >= 8192) {
+		w = 0;
+	}
+
+	rb[w++] = cp_type7_packet(CP_MEMCPY, 5);
+	rb[w++] = total_dwords;
+	rb[w++] = src_va;
+	rb[w++] = 0;
+	rb[w++] = dst_va;
+	rb[w++] = 0;
+
+	clean_pool_range((uintptr_t)rb, 0x8000u);
+	s3_current_wptr = w;
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, w);
+
+	/* Poll for completion (typically ~1.5 ms for full 1600x2560 frame) */
+	for (unsigned p = 0; p < 20000; p++) {
+		uint32_t rptr = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_CP_RB_RPTR * 4u);
+		uint32_t rbbm_status = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_RBBM_STATUS * 4u);
+		if (rptr == w && !(rbbm_status & (1u << 31))) break;
+		delay(10);
+	}
+	__asm__ volatile("dsb sy" ::: "memory");
+	return 0;
+}
+
 void
 ruan_gpu_survey(void)
 {
-	unsigned mode = 0, survey = 0;
+	unsigned mode = 0, survey = 0, fb_gpu = 0;
 	PE_parse_boot_argn("ruan-gpu", &mode, sizeof(mode));
 	if (!mode && PE_parse_boot_argn("ruan-gpu-survey", &survey, sizeof(survey)) && survey == 1) mode = 1;
-	if (mode > GPB_MAX_MODE) {   // S2 and `off` run only from the USB link (UsbDebugGpu.h), never at boot
-		boot_progress_stage("gpu: ruan-gpu above 3 is USB-command only, nothing done at boot");
+	if (!mode && PE_parse_boot_argn("fb-gpu", &fb_gpu, sizeof(fb_gpu)) && fb_gpu == 1) mode = 16;
+	if (mode > GPB_MAX_MODE) {
+		boot_progress_stage("gpu: ruan-gpu mode exceeds GPB_MAX_MODE");
 		return;
 	}
 	if (mode) (void)ruan_gpu_run(mode, NULL, NULL);

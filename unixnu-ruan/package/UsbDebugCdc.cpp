@@ -36,6 +36,8 @@ extern volatile uint32_t native_legacy_gop_width __attribute__((weak_import));
 extern volatile uint32_t native_legacy_gop_height __attribute__((weak_import));
 extern volatile uint32_t native_legacy_stage __attribute__((weak_import));
 extern volatile uint64_t native_legacy_copy_n __attribute__((weak_import));
+extern volatile uint64_t native_legacy_gpu_blits __attribute__((weak_import));
+extern volatile uint32_t native_legacy_gpu_last_ticks __attribute__((weak_import));
 
 // package/RuanInput.c (touch + buttons)
 extern volatile uint32_t ruan_touch_events __attribute__((weak_import));
@@ -506,14 +508,16 @@ static void handleCommand(TerminalSession &s, const char *raw) {
         s.reply.writeStr(buf);
     } else if (strEq(raw, "display")) {
         snprintf(buf, sizeof(buf),
-                 "[usb] FB: stage=%u %ux%u phys=0x%llx virt=0x%llx bytes=0x%llx copies=%llu\r\n",
+                 "[usb] FB: stage=%u %ux%u phys=0x%llx virt=0x%llx bytes=0x%llx copies=%llu gpu_blits=%llu gpu_ticks=%u\r\n",
                  &native_legacy_stage ? native_legacy_stage : 0u,
                  &native_legacy_gop_width ? native_legacy_gop_width : 0u,
                  &native_legacy_gop_height ? native_legacy_gop_height : 0u,
                  &native_legacy_gop_physical ? (unsigned long long)native_legacy_gop_physical : 0ULL,
                  &native_legacy_gop_virtual ? (unsigned long long)native_legacy_gop_virtual : 0ULL,
                  &native_legacy_gop_bytes ? (unsigned long long)native_legacy_gop_bytes : 0ULL,
-                 &native_legacy_copy_n ? (unsigned long long)native_legacy_copy_n : 0ULL);
+                 &native_legacy_copy_n ? (unsigned long long)native_legacy_copy_n : 0ULL,
+                 &native_legacy_gpu_blits ? (unsigned long long)native_legacy_gpu_blits : 0ULL,
+                 &native_legacy_gpu_last_ticks ? native_legacy_gpu_last_ticks : 0u);
         s.reply.writeStr(buf);
     } else if (strEq(raw, "touch") || strEq(raw, "touch.status") || strEq(raw, "input.status")) {
         snprintf(buf, sizeof(buf), "[usb] INPUT: touch=%u buttons=%u %s\r\n",

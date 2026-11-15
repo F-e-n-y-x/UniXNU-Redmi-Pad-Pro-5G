@@ -9,7 +9,7 @@
 #define RUAN_GPU_POWER_BOARD_H
 #include <stdint.h>
 
-#define GPB_MAX_MODE 3u
+#define GPB_MAX_MODE 16u
 
 // Live DT (macOS/hardware/private/ruan-live.dts): clock-controller@100000 "qcom,parrot-gcc" reg 0x100000+0x1f4200 (6623-6624),
 // clock-controller@3d90000 "qcom,parrot-gpucc" reg 0x3d90000+0xa000 (6663-6665), kgsl-smmu 0x3da0000 (16891-16905),

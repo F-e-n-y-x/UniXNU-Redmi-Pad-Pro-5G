@@ -20,6 +20,7 @@
 #include <libkern/c++/OSSerialize.h>
 #include <libkern/c++/OSData.h>
 #include <kern/task.h>
+#include <kern/thread_call.h>
 #include <sys/proc.h>
 #include <sys/proc_internal.h>
 #include <pexpert/pexpert.h>
@@ -176,8 +177,123 @@ void native_legacy_transfer_observed(IOReturn status, const void *, uint64_t byt
 	}
 }
 
-// No GPU on ruan (Adreno 710 has no driver): every frame takes the CPU copy.
-bool native_legacy_gpu_offer(void *, IOMemoryDescriptor *, uint64_t, uint32_t, uint32_t, uint32_t) { return false; }
+extern int ruan_gpu_is_s5_ready(void) __attribute__((weak_import));
+extern int ruan_gpu_stream0_map_page(uint32_t va_addr, uint64_t pa_addr, uint32_t bytes) __attribute__((weak_import));
+extern void ruan_gpu_stream0_tlb_flush(void) __attribute__((weak_import));
+extern int ruan_gpu_dma_blit_frame(uint32_t src_va, uint32_t dst_va, uint32_t total_dwords) __attribute__((weak_import));
+extern void native_legacy_gpu_complete(void *display, int status);
+
+volatile uint64_t native_legacy_gpu_blits = 0;
+volatile uint32_t native_legacy_gpu_last_ticks = 0;
+void native_legacy_gpu_fallback_observed(int status);
+
+static thread_call_t s_gpu_complete_call = NULL;
+
+static void deferred_gpu_complete(thread_call_param_t p0, thread_call_param_t p1)
+{
+	(void)p1;
+	native_legacy_gpu_complete((void *)p0, 0);
+}
+
+// Adreno 710 Stage S5 Mode 16 In-Kernel Display Frame Blitter Hook (fb-gpu=1)
+bool native_legacy_gpu_offer(void *display, IOMemoryDescriptor *memory, uint64_t sourceStride, uint32_t width, uint32_t height, uint32_t format)
+{
+	unsigned fb_gpu = 0;
+	if (!PE_parse_boot_argn("fb-gpu", &fb_gpu, sizeof(fb_gpu)) || fb_gpu != 1) return false;
+	if (!&ruan_gpu_is_s5_ready || !ruan_gpu_is_s5_ready()) return false;
+	if (!&ruan_gpu_dma_blit_frame || !&ruan_gpu_stream0_map_page || !&ruan_gpu_stream0_tlb_flush) return false;
+	if (!memory || !display || width != 1600 || height != 2560) return false;
+
+	// Track up to 4 compositor surfaces to avoid remapping if already mapped
+	static struct {
+		IOMemoryDescriptor *descriptor;
+		uint32_t gpu_va;
+		uint64_t last_cycle;
+	} slots[4] = {};
+	static uint64_t cycle = 0;
+	cycle++;
+
+	int slot_idx = -1;
+	for (int i = 0; i < 4; i++) {
+		if (slots[i].descriptor == memory) {
+			slot_idx = i;
+			break;
+		}
+	}
+
+	uint32_t src_gpu_va = 0;
+	if (slot_idx >= 0) {
+		src_gpu_va = slots[slot_idx].gpu_va;
+		slots[slot_idx].last_cycle = cycle;
+	} else {
+		// Pick LRU or empty slot
+		int pick = 0;
+		uint64_t oldest = slots[0].last_cycle;
+		for (int i = 0; i < 4; i++) {
+			if (!slots[i].descriptor) { pick = i; break; }
+			if (slots[i].last_cycle < oldest) { oldest = slots[i].last_cycle; pick = i; }
+		}
+		slot_idx = pick;
+		src_gpu_va = 0x60000000u + (uint32_t)slot_idx * 0x01000000u;
+
+		// Map physical pages of memory to src_gpu_va
+		bool ok = true;
+		if (memory->prepare() == kIOReturnSuccess) {
+			for (IOByteCount offset = 0; offset < memory->getLength() && ok;) {
+				IOByteCount segLen = 0;
+				addr64_t pa = memory->getPhysicalSegment(offset, &segLen, kIOMemoryMapperNone);
+				if (!pa || !segLen) { ok = false; break; }
+				if (ruan_gpu_stream0_map_page(src_gpu_va + (uint32_t)offset, pa, (uint32_t)segLen) != 0) {
+					ok = false;
+					break;
+				}
+				offset += segLen;
+			}
+			memory->complete();
+		} else {
+			ok = false;
+		}
+		if (!ok) {
+			native_legacy_gpu_fallback_observed(-3);
+			return false;
+		}
+		ruan_gpu_stream0_tlb_flush();
+		slots[slot_idx].descriptor = memory;
+		slots[slot_idx].gpu_va = src_gpu_va;
+		slots[slot_idx].last_cycle = cycle;
+	}
+
+	// Flush CPU cache of the source memory so physical DRAM has latest pixels
+	IOMemoryMap *map = memory->map(kIOMapAnywhere | kIOMapReadOnly | kIOMapCopybackCache);
+	if (map && map->getVirtualAddress()) {
+		flush_dcache64((addr64_t)map->getVirtualAddress(), (unsigned)map->getLength(), false);
+		OSSafeReleaseNULL(map);
+	}
+
+	// Execute GPU DMA blit to GOP Framebuffer (0x50000000 -> phys 0xb8000000)
+	uint64_t t0;
+	__asm__ volatile("isb\n\tmrs %0, cntvct_el0" : "=r"(t0));
+	int rc = ruan_gpu_dma_blit_frame(src_gpu_va, 0x50000000u, width * height);
+	uint64_t t1;
+	__asm__ volatile("isb\n\tmrs %0, cntvct_el0" : "=r"(t1));
+
+	if (rc != 0) {
+		native_legacy_gpu_fallback_observed(rc);
+		return false;
+	}
+
+	native_legacy_gpu_blits = native_legacy_gpu_blits + 1;
+	native_legacy_gpu_last_ticks = (uint32_t)(t1 - t0);
+
+	// Queue asynchronous completion to run after NativeLegacyDisplay unlocks its workloop gate
+	if (!s_gpu_complete_call) {
+		s_gpu_complete_call = thread_call_allocate(deferred_gpu_complete, NULL);
+	}
+	if (s_gpu_complete_call) {
+		thread_call_enter1(s_gpu_complete_call, (thread_call_param_t)display);
+	}
+	return true;
+}
 void native_legacy_gpu_fallback_observed(int) { native_legacy_gpu_fallbacks = native_legacy_gpu_fallbacks + 1; }
 void native_legacy_retirement_observed(IOService *) { native_legacy_retirement_calls = native_legacy_retirement_calls + 1; }
 
