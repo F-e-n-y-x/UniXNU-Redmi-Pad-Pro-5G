@@ -811,6 +811,7 @@ static void s3_gx_on(struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const st
 		strlcpy(gx->why, "GMU2HOST_INTR_CLR write refused", sizeof gx->why);
 		return;
 	}
+	(void)wr(NULL, W_GMU, GMU_REG(0x23b04u), ~0u); /* GEN7_GMU_AO_HOST_INTERRUPT_CLR */
 	/* Unmask CM3_FAULT and interrupts: ~(1u << 23) */
 	if (wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_MASK), ~(1u << 23))) {
 		strlcpy(gx->why, "GMU2HOST_INTR_MASK write refused", sizeof gx->why);
@@ -819,18 +820,7 @@ static void s3_gx_on(struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const st
 	(void)rd(NULL, GPB_WIN_GPUCC, GPB_CC_GX_GDSCR, &gx->gx_before);
 	(void)rd(NULL, W_GMU, GMU_REG(0x1f8d0), &gx->gx_status_before);
 
-	/* Step 1: Send HFI GX_BW_PERF_VOTE (msg 30, {1, 1, 1}) */
-	result_line("gpu s3_gx: send HFI GX_BW_PERF_VOTE (msg 30, {1, 1, 1})");
-	const uint32_t vote[3] = {1, 1, 1};
-	uint32_t out[16] = {0};
-	size_t count = 0;
-	gx->vote_status = (uint32_t)AdrenoHfiExchange(&gmu_hfi, 30, vote, 3, 1000, hfi_wait_once, out, 16, &count, &gx->fw_error);
-	if (gx->vote_status != (uint32_t)AdrenoHfiSuccess || gx->fw_error) {
-		snprintf(gx->why, sizeof gx->why, "GX_BW_PERF_VOTE failed (st %u, err %08x)", gx->vote_status, gx->fw_error);
-		return;
-	}
-
-	/* Step 2: Assert OOB GPU SET (bit 30) */
+	/* Step 1: Assert OOB GPU SET (bit 30) - Gen7 powers GX core via OOB before general HFI */
 	const uint32_t req = (1u << 30);
 	const uint32_t ack_mask = (1u << 31);
 	result_line("gpu s3_gx: send OOB GPU SET (bit 30), poll GMU2HOST_INTR_INFO bit 31");
@@ -838,7 +828,8 @@ static void s3_gx_on(struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const st
 		strlcpy(gx->why, "HOST2GMU_INTR_SET write refused", sizeof gx->why);
 		return;
 	}
-	for (gx->oob_polls = 1; gx->oob_polls <= 1000; gx->oob_polls++) {
+	__asm__ volatile("dsb sy" ::: "memory");
+	for (gx->oob_polls = 1; gx->oob_polls <= 5000; gx->oob_polls++) {
 		if (rd(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_INFO), &gx->oob_info)) break;
 		if (gx->oob_info & ack_mask) break;
 		delay(100);
@@ -847,8 +838,15 @@ static void s3_gx_on(struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const st
 		snprintf(gx->why, sizeof gx->why, "OOB GPU SET timed out (polls %u, info %08x)", gx->oob_polls, gx->oob_info);
 		return;
 	}
-	/* Step 3: Clear ACK bit 31 on GMU2HOST (keep bit 30 held in HOST2GMU to keep GX on) */
+	/* Step 2: Clear ACK bit 31 on GMU2HOST (keep bit 30 held in HOST2GMU to keep GX on) */
 	(void)wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_CLR), ack_mask);
+	__asm__ volatile("dsb sy" ::: "memory");
+
+	/* Step 3: Optional HFI GX_BW_PERF_VOTE once GX is powered up */
+	const uint32_t vote[3] = {1, 1, 1};
+	uint32_t out[16] = {0};
+	size_t count = 0;
+	gx->vote_status = (uint32_t)AdrenoHfiExchange(&gmu_hfi, 30, vote, 3, 200, hfi_wait_once, out, 16, &count, &gx->fw_error);
 
 	(void)rd(NULL, GPB_WIN_GPUCC, GPB_CC_GX_GDSCR, &gx->gx_after);
 	(void)rd(NULL, W_GMU, GMU_REG(0x1f8d0), &gx->gx_status_after);
