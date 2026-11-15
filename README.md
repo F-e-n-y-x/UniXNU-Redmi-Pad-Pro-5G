@@ -1,6 +1,8 @@
-# macOS on Redmi Pad Pro 5G (ruan): working folder
+# iPadOS & macOS on Redmi Pad Pro 5G (ruan)
 
-Goal: native macOS on ruan (SM7435, Cortex-A78/A55 ARMv8.2, **no PAC**, Adreno 710), flashed like a custom ROM.
+**Current Active Target**: Fully working **iPadOS 17.7.11 (21H461)** with native hardware GPU acceleration (Adreno 710 gen7_3_0), hardware display blitter, touch (NT36532), audio, and complete subsystem support.
+
+**Main / Ultimate Project Goal**: Native **macOS port** on ruan (Snapdragon SM7435, Cortex-A78/A55 ARMv8.2, **no PAC**, Adreno 710 Metal), flashable like a custom ROM.
 
 | File | What |
 |---|---|
@@ -13,12 +15,12 @@ Goal: native macOS on ruan (SM7435, Cortex-A78/A55 ARMv8.2, **no PAC**, Adreno 7
 | [tools/](tools) | `dt-inventory.py`, `make-binaries.py`, `port-patches.py` |
 | [probe/isaprobe.c](probe/isaprobe.c) | measures which ARMv8.3+ instructions trap on the tablet |
 
-## The path, as of 2026-11-13
+## The Path
 
-1. **UEFI on ruan** (this folder): ruanPkg is ready to build. It is needed by both UniXNU and HakiOS.
-2. **XNU from RAM, no flashing**: boot HakiOS's SM7435 loader (from the garnet port, iOS 16.5) with ruan's DTB, panel and touch. This proves kernel, display, touch and storage.
-3. **arm64e userland without PAC**: reuse [mateusseiboth/darwin-lisa](https://github.com/mateusseiboth/darwin-lisa) (MIT). It runs iOS 26 standalone on SM7325, which has the same A78/A55 CPUs: pacstrip, a page-in rewriter, trap emulation and a null-PAC kernel.
-4. **macOS**: the same rewrite applied to the macOS 26.5/27 shared cache (instruction counts are in SCENE.md), plus UniXNU's macOS profile and an Adreno 710 Metal path (HakiOS garnet already has Metal on Adreno 710).
+1. **UEFI on ruan** (this folder): ruanPkg Mu-Silicium UEFI platform.
+2. **iPadOS 17.7.11 on ruan via UniXNU (Active Milestone)**: Booting cleanly into RAM-only iPadOS userland (SpringBoard, Backboardd, Settings, Novatek NT36532 touch, PMIC buttons, 8-core SMP cpufreq, USB CDC terminal).
+3. **Adreno 710 Native GPU Acceleration (Active Subsystem)**: Hardware bring-up of gen7_3_0 through S1 (CX/clocks/SMMU), S2 (GMU/HFI firmware), S3 (GX power, CP micro-engine execution, Stream 0 translation, memory write dispatch), S4 (GOP Framebuffer blitter to offload CPU rasterization), and S5 (Mesa Turnip / Metal).
+4. **macOS Port (Main Ultimate Goal)**: Applying the no-PAC arm64e static rewrite (`pacstrip` + kernel trap handlers) to macOS dyld shared cache, enabling full desktop macOS with native Adreno 710 Metal acceleration.
 
 ## ruanPkg (Mu-Silicium UEFI) status
 
