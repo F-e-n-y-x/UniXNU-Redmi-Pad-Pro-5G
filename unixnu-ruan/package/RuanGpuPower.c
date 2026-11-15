@@ -506,7 +506,20 @@ static void clean_pool(void)   // dc civac over the pool: the SMMU walks and the
 		__asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
 	__asm__ volatile("dsb sy" ::: "memory");
 }
-static int hfi_notify_unused(void *c) {(void)c; return -1;}   // gpu 6 stops at HFI init; it sends no message
+static int gmu_hfi_notify(void *c)
+{
+	(void)c;
+	__asm__ volatile("dsb sy" ::: "memory");
+	int rc = wr(NULL, W_GMU, GMU_REG(RUAN_GMU_HOST2GMU_INTR_SET), 1u);
+	__asm__ volatile("dsb sy" ::: "memory");
+	return rc;
+}
+static int hfi_wait_once(void *c)
+{
+	(void)c;
+	delay(100);
+	return 0;
+}
 static AdrenoHfi gmu_hfi;
 
 struct ruan_gpu_s2c {
@@ -629,7 +642,7 @@ static void s2c(struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
 	}
 	uint8_t *hfi = ruan_gmu_cpu(&pt, reg, c->regions, RUAN_GMU_HFI_VA, RUAN_GMU_HFI_BYTES);
 	if (!hfi || AdrenoHfiInitializeStopped(&gmu_hfi, (volatile uint32_t *)(void *)hfi, RUAN_GMU_HFI_BYTES, RUAN_GMU_HFI_VA, NULL,
-	    hfi_notify_unused) != AdrenoHfiSuccess) {strlcpy(c->why, "HFI queue table init failed", sizeof c->why); return;}
+	    gmu_hfi_notify) != AdrenoHfiSuccess) {strlcpy(c->why, "HFI queue table init failed", sizeof c->why); return;}
 	c->pt_used = pt.used;
 	clean_pool();
 
@@ -768,6 +781,8 @@ static void s2c(struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
 struct ruan_gpu_s3_gx {
 	uint32_t gx_before, gx_after;
 	uint32_t oob_info, oob_polls;
+	uint32_t vote_status, fw_error;
+	uint32_t gx_status_before, gx_status_after;
 	uint32_t rbbm_status, rbbm_int_0, rbbm_gbif_halt;
 	int gx_on;
 	char why[64];
@@ -796,21 +811,34 @@ static void s3_gx_on(struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const st
 		strlcpy(gx->why, "GMU2HOST_INTR_CLR write refused", sizeof gx->why);
 		return;
 	}
-	/* Unmask GMU-to-host interrupts (0 = unmasked) */
-	if (wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_MASK), 0u)) {
+	/* Unmask CM3_FAULT and interrupts: ~(1u << 23) */
+	if (wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_MASK), ~(1u << 23))) {
 		strlcpy(gx->why, "GMU2HOST_INTR_MASK write refused", sizeof gx->why);
 		return;
 	}
 	(void)rd(NULL, GPB_WIN_GPUCC, GPB_CC_GX_GDSCR, &gx->gx_before);
+	(void)rd(NULL, W_GMU, GMU_REG(0x1f8d0), &gx->gx_status_before);
 
-	const uint32_t req = (1u << 30) | (1u << 16);  /* non-legacy bit 30 and legacy bit 16 */
-	const uint32_t ack_mask = (1u << 31) | (1u << 24); /* non-legacy bit 31 and legacy bit 24 */
-	result_line("gpu s3_gx: send OOB GPU SET (bit 30 & 16), poll GMU2HOST_INTR_INFO");
+	/* Step 1: Send HFI GX_BW_PERF_VOTE (msg 30, {1, 1, 1}) */
+	result_line("gpu s3_gx: send HFI GX_BW_PERF_VOTE (msg 30, {1, 1, 1})");
+	const uint32_t vote[3] = {1, 1, 1};
+	uint32_t out[16] = {0};
+	size_t count = 0;
+	gx->vote_status = (uint32_t)AdrenoHfiExchange(&gmu_hfi, 30, vote, 3, 1000, hfi_wait_once, out, 16, &count, &gx->fw_error);
+	if (gx->vote_status != (uint32_t)AdrenoHfiSuccess || gx->fw_error) {
+		snprintf(gx->why, sizeof gx->why, "GX_BW_PERF_VOTE failed (st %u, err %08x)", gx->vote_status, gx->fw_error);
+		return;
+	}
+
+	/* Step 2: Assert OOB GPU SET (bit 30) */
+	const uint32_t req = (1u << 30);
+	const uint32_t ack_mask = (1u << 31);
+	result_line("gpu s3_gx: send OOB GPU SET (bit 30), poll GMU2HOST_INTR_INFO bit 31");
 	if (wr(NULL, W_GMU, GMU_REG(RUAN_GMU_HOST2GMU_INTR_SET), req)) {
 		strlcpy(gx->why, "HOST2GMU_INTR_SET write refused", sizeof gx->why);
 		return;
 	}
-	for (gx->oob_polls = 0; gx->oob_polls < 1000; gx->oob_polls++) {
+	for (gx->oob_polls = 1; gx->oob_polls <= 1000; gx->oob_polls++) {
 		if (rd(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_INFO), &gx->oob_info)) break;
 		if (gx->oob_info & ack_mask) break;
 		delay(100);
@@ -819,11 +847,11 @@ static void s3_gx_on(struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const st
 		snprintf(gx->why, sizeof gx->why, "OOB GPU SET timed out (polls %u, info %08x)", gx->oob_polls, gx->oob_info);
 		return;
 	}
-	/* Acknowledge and clear OOB interrupt on both sides */
-	(void)wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_CLR), gx->oob_info & ack_mask);
-	(void)wr(NULL, W_GMU, GMU_REG(RUAN_GMU_HOST2GMU_INTR_SET), gx->oob_info & ack_mask);
+	/* Step 3: Clear ACK bit 31 on GMU2HOST (keep bit 30 held in HOST2GMU to keep GX on) */
+	(void)wr(NULL, W_GMU, GMU_REG(RUAN_GMU_GMU2HOST_INTR_CLR), ack_mask);
 
 	(void)rd(NULL, GPB_WIN_GPUCC, GPB_CC_GX_GDSCR, &gx->gx_after);
+	(void)rd(NULL, W_GMU, GMU_REG(0x1f8d0), &gx->gx_status_after);
 	gx->gx_on = 1;
 	result_line("gpu s3_gx: GX powered on! Reading RBBM_STATUS from GPU block");
 	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_STATUS * 4u, &gx->rbbm_status);
@@ -1333,8 +1361,9 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
 	if (mode == 8) {
-		snprintf(line, sizeof(line), "gpu s3_gx %s polls %u info %08x gx %08x>%08x rbbm %08x int0 %08x %s",
-		    gx->gx_on ? "ON" : "OFF", gx->oob_polls, gx->oob_info, gx->gx_before, gx->gx_after,
+		snprintf(line, sizeof(line), "gpu s3_gx %s v%u/%x o%u info %08x gx %08x>%08x st %08x rbbm %08x int0 %08x %s",
+		    gx->gx_on ? "ON" : "OFF", gx->vote_status, gx->fw_error, gx->oob_polls, gx->oob_info,
+		    gx->gx_before, gx->gx_after, gx->gx_status_after,
 		    gx->rbbm_status, gx->rbbm_int_0, gx->why[0] ? gx->why : "GX on, RBBM readable");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
