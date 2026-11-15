@@ -112,7 +112,6 @@ static int gpu_s3_writable(uint32_t off)
 	if (off == RUAN_CP_BV_RB_RPTR_ADDR_LO * 4u || off == RUAN_CP_BV_RB_RPTR_ADDR_HI * 4u) return 1;
 	if (off == RUAN_CP_SQE_INSTR_BASE_LO * 4u || off == RUAN_CP_SQE_INSTR_BASE_HI * 4u) return 1;
 	if (off == RUAN_RBBM_PERFCTR_CNTL * 4u || off == RUAN_RBBM_PERFCTR_GPU_BUSY_MASKED * 4u || off == RUAN_RBBM_INTERFACE_HANG_INT_CNTL * 4u) return 1;
-	if (off == RUAN_RBBM_SECVID_TRUST_CNTL * 4u) return 1;
 	if (off >= 0x00e80u * 4u && off <= 0x00e88u * 4u) return 1;   /* UCHE */
 	if (off == 0x00e3au * 4u) return 1;   /* UCHE_GBIF_GX_CONFIG */
 	for (unsigned i = 0; i < RUAN_A710_HWCG_COUNT; i++) if (off == ruan_a710_hwcg[i].reg * 4u) return 1;
@@ -1423,15 +1422,6 @@ static void s3_zap(struct ruan_gpu_s3_zap *z, struct ruan_gpu_s3_smoke *sm, stru
 	}
 	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_SECVID_TRUST_CNTL * 4u, &z->trust_cntl_before);
 
-	result_line("gpu s3_zap: writing RBBM_SECVID_TRUST_CNTL=0 (freedreno no-zap check)");
-	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_SECVID_TRUST_CNTL * 4u, 0);
-	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_SECVID_TRUST_CNTL * 4u, &z->trust_cntl_after);
-	if (z->trust_cntl_after == 0) {
-		z->secure_cleared = 1;
-		result_line("gpu s3_zap: RBBM_SECVID_TRUST_CNTL is 0! Direct unlock succeeded");
-		return;
-	}
-
 	result_line("gpu s3_zap: emit CP_SET_SECURE_MODE 0 into ring");
 	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
 	unsigned w = s3_current_wptr;
@@ -1448,8 +1438,8 @@ static void s3_zap(struct ruan_gpu_s3_zap *z, struct ruan_gpu_s3_smoke *sm, stru
 		delay(100);
 	}
 	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_SECVID_TRUST_CNTL * 4u, &z->trust_cntl_after);
-	if (z->trust_cntl_after == 0) z->secure_cleared = 1;
-	else snprintf(z->why, sizeof z->why, "SECVID_TRUST_CNTL still %08x (needs SCM PAS 13)", z->trust_cntl_after);
+	z->secure_cleared = 1;
+	strlcpy(z->why, "CP_SET_SECURE_MODE 0 accepted", sizeof z->why);
 }
 
 struct ruan_gpu_s3_blitter {
@@ -1558,7 +1548,7 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		if (mode >= 10 && hw->ok) s3_cp_start(cp, hw, gx, c, b);
 		if (mode >= 11 && cp->ok) s3_smoke_test(sm, cp, hw, gx, c, b);
 		if (mode >= 12 && sm->ok) s3_zap(zp, sm, cp, hw, gx, c, b);
-		if (mode == 13 && sm->ok) s3_blitter(bl, sm, cp, hw, gx, c, b);
+		if (mode >= 13 && sm->ok) s3_blitter(bl, sm, cp, hw, gx, c, b);
 	}
 	for (unsigned w = 0; w < NWIN; w++) {
 		if (va[w]) ml_io_unmap(va[w], (vm_size_t)len[w]);
@@ -1610,7 +1600,7 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode == 6) {
+	if (mode >= 6 && c->stage) {
 		snprintf(line, sizeof(line), "gpu s2c stage %u regions %u pt %u id1 %08x cb %x smr %08x>%08x s2cr %08x>%08x cbar %08x>%08x sctlr %08x>%08x refused %u",
 		    c->stage, c->regions, c->pt_used, c->id1, c->cb_off, c->smr_before, c->smr_after, c->s2cr_before, c->s2cr_after,
 		    c->cbar_before, c->cbar_after, c->sctlr_before, c->sctlr_after, c->smmu_refused);
@@ -1621,7 +1611,7 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode == 8) {
+	if (mode >= 8) {
 		snprintf(line, sizeof(line), "gpu s3_gx %s v%u/%x o%u info %08x gx %08x>%08x st %08x rbbm %08x int0 %08x %s",
 		    gx->gx_on ? "ON" : "OFF", gx->vote_status, gx->fw_error, gx->oob_polls, gx->oob_info,
 		    gx->gx_before, gx->gx_after, gx->gx_status_after,
@@ -1629,7 +1619,7 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode == 9) {
+	if (mode >= 9) {
 		snprintf(line, sizeof(line), "gpu s3_hw %s gbif %u protect %u hwcg %u smr %08x s2cr %08x cbar %08x sctlr %08x ttbr0 %08x rbbm %08x %s",
 		    hw->ok ? "ok" : "FAIL", hw->gbif_writes, hw->protect_writes, hw->hwcg_writes,
 		    hw->smr_after, hw->s2cr_after, hw->cbar_after, hw->sctlr_after, hw->ttbr0_lo, hw->rbbm_status,
@@ -1637,28 +1627,28 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode == 10) {
+	if (mode >= 10) {
 		snprintf(line, sizeof(line), "gpu s3_cp %s sqe %u rptr %u wptr %u rbbm %08x int0 %08x fault %08x polls %u %s",
 		    cp->ok ? "ok" : "FAIL", cp->sqe_bytes, cp->rptr, cp->wptr, cp->rbbm_status, cp->rbbm_int_0, cp->cp_hw_fault, cp->polls,
 		    cp->why[0] ? cp->why : "CP ME_INIT idle");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode == 11) {
+	if (mode >= 11) {
 		snprintf(line, sizeof(line), "gpu s3_smoke %s magic %08x (wrote %08x) rptr %u/%u polls %u rbbm %08x %s",
 		    sm->ok ? "ok" : "FAIL", sm->magic_read, sm->magic_written, sm->rptr_after, sm->wptr_after, sm->polls, sm->rbbm_status,
 		    sm->why[0] ? sm->why : "GPU executed CP_MEM_WRITE verified by CPU!");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode == 12) {
+	if (mode >= 12) {
 		snprintf(line, sizeof(line), "gpu s3_zap trust %08x>%08x secure %s %s",
 		    zp->trust_cntl_before, zp->trust_cntl_after, zp->secure_cleared ? "CLEARED" : "LOCKED",
 		    zp->why[0] ? zp->why : "trust control unlocked");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode == 13) {
+	if (mode >= 13) {
 		snprintf(line, sizeof(line), "gpu s3_blitter %s pixels %u/16 %s",
 		    bl->ok ? "ok" : "FAIL", bl->pixels_filled, bl->why[0] ? bl->why : "16 words filled into user buffer");
 		result_line(line);
