@@ -107,8 +107,9 @@ static uint32_t gpu_stream0_cb_off = 0x22000u;
 static int gpu_s3_writable(uint32_t off)
 {
 	if (off == RUAN_GBIF_HALT * 4u || off == RUAN_RBBM_GBIF_HALT * 4u) return 1;
-	if (off == RUAN_CP_PROTECT_CNTL * 4u || off == RUAN_CP_APRIV_CNTL * 4u || off == RUAN_CP_AHB_CNTL * 4u) return 1;
+	if (off == RUAN_CP_PROTECT_CNTL * 4u || off == RUAN_CP_APRIV_CNTL * 4u || off == RUAN_CP_BV_APRIV_CNTL * 4u || off == RUAN_CP_AHB_CNTL * 4u) return 1;
 	if (off >= RUAN_CP_RB_BASE * 4u && off <= RUAN_CP_SQE_CNTL * 4u) return 1;
+	if (off == RUAN_CP_BV_RB_RPTR_ADDR_LO * 4u || off == RUAN_CP_BV_RB_RPTR_ADDR_HI * 4u) return 1;
 	if (off == RUAN_CP_SQE_INSTR_BASE_LO * 4u || off == RUAN_CP_SQE_INSTR_BASE_HI * 4u) return 1;
 	if (off == RUAN_RBBM_PERFCTR_CNTL * 4u || off == RUAN_RBBM_PERFCTR_GPU_BUSY_MASKED * 4u || off == RUAN_RBBM_INTERFACE_HANG_INT_CNTL * 4u) return 1;
 	if (off == RUAN_RBBM_SECVID_TRUST_CNTL * 4u) return 1;
@@ -1169,6 +1170,7 @@ static void s3_hw_init(struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, stru
 		h->protect_writes++;
 	}
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_APRIV_CNTL * 4u, RUAN_BR_APRIV_DEFAULT);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_BV_APRIV_CNTL * 4u, RUAN_BV_APRIV_DEFAULT);
 
 	result_line("gpu s3_hw: HWCG configuration (49 registers)");
 	for (unsigned i = 0; i < RUAN_A710_HWCG_COUNT; i++) {
@@ -1283,10 +1285,7 @@ static void s3_cp_start(struct ruan_gpu_s3_cp *cp, struct ruan_gpu_s3_hw *h, str
 	pwrup[0] = 0; /* gpu_req */
 	pwrup[1] = 0; /* cpu_req */
 	pwrup[2] = 0; /* turn */
-	pwrup[3] = (1u << 16); /* dynamic_list_len = 1, preemption_len = 0, ifpc_len = 0 */
-	pwrup[4] = 0; /* aperture/pipe = PIPE_NONE */
-	pwrup[5] = RUAN_RBBM_PERFCTR_CNTL; /* 0x00500 */
-	pwrup[6] = 1; /* val = 1 */
+	pwrup[3] = 0; /* ifpc_list_len = 0, preemption_list_len = 0, dynamic_list_len = 0 */
 
 	result_line("gpu s3_cp: emit CP_THREAD_CONTROL and CP_ME_INIT packets");
 	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
@@ -1307,12 +1306,17 @@ static void s3_cp_start(struct ruan_gpu_s3_cp *cp, struct ruan_gpu_s3_hw *h, str
 	result_line("gpu s3_cp: program CP_RB and CP_SQE base registers");
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_RPTR_ADDR_LO * 4u, RUAN_S3_GPU_VA_MEMPTRS);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_RPTR_ADDR_HI * 4u, 0);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_BV_RB_RPTR_ADDR_LO * 4u, RUAN_S3_GPU_VA_MEMPTRS + 0x10u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_BV_RB_RPTR_ADDR_HI * 4u, 0);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_CNTL * 4u, RUAN_CP_RB_CNTL_DEFAULT);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_BASE * 4u, RUAN_S3_GPU_VA_RB);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_BASE_HI * 4u, 0);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_SQE_INSTR_BASE_LO * 4u, RUAN_S3_GPU_VA_SQE);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_SQE_INSTR_BASE_HI * 4u, 0);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, 0);
+
+	result_line("gpu s3_cp: enable SQE micro-engine (CP_SQE_CNTL = 1)");
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_SQE_CNTL * 4u, 1);
 
 	result_line("gpu s3_cp: advance CP_RB_WPTR and poll for RPTR == WPTR");
 	s3_current_wptr = w;

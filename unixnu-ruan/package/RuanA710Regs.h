@@ -48,6 +48,9 @@
 #define RUAN_CP_AHB_CNTL                    0x00840u
 #define RUAN_CP_APRIV_CNTL                  0x00844u
 #define RUAN_CP_PROTECT_CNTL                0x0084fu
+#define RUAN_CP_BV_RB_RPTR_ADDR_LO          0x00a98u
+#define RUAN_CP_BV_RB_RPTR_ADDR_HI          0x00a99u
+#define RUAN_CP_BV_APRIV_CNTL               0x00ad0u
 
 /* UCHE registers */
 #define RUAN_UCHE_WRITE_THRU_BASE_LO        0x00e87u
@@ -59,5 +62,6 @@
 /* Defaults */
 #define RUAN_CP_RB_CNTL_DEFAULT             ((2u << 8) | 12u)  /* 32 KiB ring */
 #define RUAN_BR_APRIV_DEFAULT               0x0000007fu        /* ICACHE, RBFETCH, RBPRIVLEVEL, RBRPWB, CDREAD, CDWRITE */
+#define RUAN_BV_APRIV_DEFAULT               0x0000000fu        /* ICACHE, RBFETCH, RBPRIVLEVEL, RBRPWB */
 
 #endif
