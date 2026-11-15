@@ -4,6 +4,15 @@
 
 **Main / Ultimate Project Goal**: Native **macOS port** on ruan (Snapdragon SM7435, Cortex-A78/A55 ARMv8.2, **no PAC**, Adreno 710 Metal), flashable like a custom ROM.
 
+<p align="center">
+  <img src="docs/img/screen-rbu21.png" alt="rbu21 In-Kernel Blitter" width="31%">
+  <img src="docs/img/screen-rbu20-m16.png" alt="rbu20 Stage S5 Mode 16 DMA Blit" width="31%">
+  <img src="docs/img/usb-homescreen-full.png" alt="iPadOS 17.7.11 Home Screen" width="31%">
+</p>
+<p align="center">
+  <sub>Left: rbu21 live framebuffer with Adreno 710 in-kernel DMA blitter active (copies=0, gpu_blits=1). Center: rbu20 direct Mode 16 DMA blit test pattern. Right: iPadOS 17.7.11 SpringBoard home screen on ruan panel.</sub>
+</p>
+
 | File | What |
 |---|---|
 | [RESEARCH.md](docs/research/RESEARCH.md) | Feasibility: why native macOS needs UniXNU, and why PAC is the blocker |
@@ -70,7 +79,11 @@ Derived from the garnet (POCO X6 5G, same SoC) platform in [JosephMontfort/hakio
     ```
     [usb] FB: stage=10 1600x2560 phys=0xb8000000 virt=0xfffffff9bfd16000 bytes=0xfa0000 copies=0 gpu_blits=1 gpu_ticks=874
     ```
-    Verified live: `gpu_blits=1`, `gpu_ticks=874` (~45 µs), CPU fallback `copies=0`. SpringBoard and backboardd remain responsive without crashing. Framebuffer snapshot captured: [docs/img/screen-rbu21.png](docs/img/screen-rbu21.png).
+    Verified live: `gpu_blits=1`, `gpu_ticks=874` (~45 µs), CPU fallback `copies=0`. SpringBoard and backboardd remain responsive without crashing.
+
+<p align="center">
+  <img src="docs/img/screen-rbu21.png" alt="rbu21 In-Kernel Hardware DMA Blitter Live on Silicon" width="45%">
+</p>
 - **What will be next**:
   - **Multi-Frame Swap Queue Continuous Streaming**: Stream successive compositor swaps through the 4-slot SMMU cache without vsync pipeline bubbles.
   - **Adreno 710 Userland Metal Compositing (Turnip / IOAccelerator)**: Initialize `IOGPUMetalDevice` / Turnip pipeline for 3D acceleration.
@@ -97,7 +110,11 @@ Derived from the garnet (POCO X6 5G, same SoC) platform in [JosephMontfort/hakio
     gpu m16 ok fb_dma40000
     GPU: mode 16 done rc=0
     ```
-    Direct CPU readback confirmed 40,000 / 40,000 pixels matched bit-for-bit in physical DRAM with 0% CPU copy overhead. Framebuffer snapshot captured: [docs/img/screen-rbu20-m16.png](docs/img/screen-rbu20-m16.png).
+    Direct CPU readback confirmed 40,000 / 40,000 pixels matched bit-for-bit in physical DRAM with 0% CPU copy overhead.
+
+<p align="center">
+  <img src="docs/img/screen-rbu20-m16.png" alt="rbu20 Stage S5 Mode 16 Direct GOP FB Hardware DMA Blit" width="45%">
+</p>
 - **What will be next**:
   - **In-Kernel Display Frame Blitter Hook (`native_legacy_gpu_offer`)**: Wire `s5_fb_dma_blit` into `NativeLegacyDisplay::draw_frame` / `native_legacy_gpu_offer` to eliminate CPU `memcpy` overhead (13–18 ms/frame) across all live userland compositor updates.
   - **Mesa Turnip / Metal Compositing**: Bring up userland Metal / IOAccelerator pipeline over Adreno 710.
@@ -121,7 +138,11 @@ Derived from the garnet (POCO X6 5G, same SoC) platform in [JosephMontfort/hakio
     gpu s5_m2m ok dwords 256/256 256 dwords copied via CP_MEMCPY
     gpu m15 ok m2m256 (rc=0)
     ```
-    Direct CPU readback confirmed 256/256 dwords matched bit-for-bit with 0% CPU overhead. Screenshot: [docs/img/screen-rbu18.png](docs/img/screen-rbu18.png).
+    Direct CPU readback confirmed 256/256 dwords matched bit-for-bit with 0% CPU overhead.
+
+<p align="center">
+  <img src="docs/img/screen-rbu18.png" alt="rbu18 Stage S5 CP_MEMCPY Memory-to-Memory DMA" width="45%">
+</p>
 - **What will be next**:
   - Direct GOP scanout framebuffer DMA blit (`gpu 16`) mapping the physical GOP display buffer (`0xb8000000`) into Stream-0 GPU VA space (`0x50000000`).
 
@@ -135,7 +156,11 @@ Derived from the garnet (POCO X6 5G, same SoC) platform in [JosephMontfort/hakio
   - **`CP_SET_SECURE_MODE` Stall Elimination**:
     - Removed `CP_SET_SECURE_MODE 0` packet which previously stalled the Command Processor without TrustZone zap shader authorization, enabling clean non-secure execution.
   - **Live Silicon Proof (`gpu 14` via USB CDC)**:
-    - GPU Command Processor executed PM4 `CP_MEM_WRITE` block fills directly into `0x50000000`, drawing a 100×40 neon magenta test rectangle in DRAM without CPU rasterization: `gpu s4_fb: GOP Framebuffer blit SUCCESS! 4000 pixels verified in DRAM!`, `gpu m14 ok fb4000`. Screenshot: [docs/img/screen-rbu17.png](docs/img/screen-rbu17.png).
+    - GPU Command Processor executed PM4 `CP_MEM_WRITE` block fills directly into `0x50000000`, drawing a 100×40 neon magenta test rectangle in DRAM without CPU rasterization: `gpu s4_fb: GOP Framebuffer blit SUCCESS! 4000 pixels verified in DRAM!`, `gpu m14 ok fb4000`.
+
+<p align="center">
+  <img src="docs/img/screen-rbu17.png" alt="rbu17 Stage S4 GOP Display Blitter Neon Rectangle" width="45%">
+</p>
   - **Stage S3 Engine Verification (`gpu 8` through `gpu 13`)**:
     - GX power-on via GMU HFI (`gpu 8`), GBIF/CP_PROTECT/HWCG configuration & Bank 2 Slot 1 SMMU (`gpu 9`), SQE microcode execution (`gpu 10`), PM4 `CP_MEM_WRITE` packet dispatch (`gpu 11`, magic `0xC0FFEE01` verified in DRAM), 2D solid fills (`gpu 13`).
 - **What will be next**:
