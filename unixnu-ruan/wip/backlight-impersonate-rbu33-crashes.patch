@@ -1,0 +1,65 @@
+diff --git a/macOS/unixnu-ruan/package/RuanBacklight.cpp b/macOS/unixnu-ruan/package/RuanBacklight.cpp
+index a4f76fc..364d317 100644
+--- a/macOS/unixnu-ruan/package/RuanBacklight.cpp
++++ b/macOS/unixnu-ruan/package/RuanBacklight.cpp
+@@ -63,6 +63,7 @@ constexpr uint32_t kMaxLevel = 4095, kStepMs = 16;
+ volatile uint64_t gRequest = 0;
+ } // namespace
+ 
++static bool impersonate(IOService *service);   /* below, from UniXNU-sheng */
+ static vm_offset_t s_se = 0;
+ static uint32_t s_hw_max = 1600;   /* chip level for iPadOS full brightness (boot-arg ruan-bl-max, 16..4095) */
+ static IOLock *s_lock = nullptr;
+@@ -320,8 +321,10 @@ bool RuanBacklight::start(IOService *provider) {
+     if (!m_loop || !m_fade || !m_request) return false;
+     if (m_loop->addEventSource(m_fade) || m_loop->addEventSource(m_request)) return false;
+ 
+-    setProperty("NativeSandboxGrantProcess", "backboardd");
+-    setProperty("backlight-control", kOSBooleanTrue);
++    if (impersonate(this)) {   /* backlight-control only with the AppleARMBacklight conformance (see impersonate) */
++        setProperty("NativeSandboxGrantProcess", "backboardd");
++        setProperty("backlight-control", kOSBooleanTrue);
++    }
+ 
+     publish(m_level);
+     return true;
+@@ -363,6 +366,31 @@ IOReturn RuanBacklight::setProperties(OSObject *properties) {
+ 
+ static RuanBacklight *s_backlight = nullptr;
+ 
++/* From UniXNU-sheng package/AppleARMBacklight.cpp (impersonate): AppleARMPlatform already defines AppleARMBacklight, so this
++ * service keeps its own class and answers that metaclass from getMetaClass (vtable slot 7) through a copied vtable. CoreBrightness
++ * takes the built-in backlight only when IOObjectConformsTo(service, "AppleARMBacklight") holds; publishing backlight-control
++ * without that conformance blocks QuartzCore's libEDR send and stops screen updates (sheng int-236). arm64 (non-ptrauth) only. */
++static const OSMetaClass *gAppleClass = nullptr;
++static const OSMetaClass *appleMetaClass(const OSMetaClassBase *) { return gAppleClass; }
++static bool impersonate(IOService *service) {
++    enum { kSlots = 320, kGetMetaClass = 7 };
++    const OSSymbol *name = OSSymbol::withCString("AppleARMBacklight");
++    gAppleClass = name ? OSMetaClass::getMetaClassWithName(name) : nullptr;
++    OSSafeReleaseNULL(name);
++    if (!gAppleClass) return false;
++#if __has_feature(ptrauth_calls)
++    return false;   /* signed vtables: needs sheng's getMetaClass override instead */
++#else
++    uintptr_t *copy = static_cast<uintptr_t *>(IOMalloc(kSlots * sizeof(uintptr_t)));
++    if (!copy) return false;
++    memcpy(copy, *reinterpret_cast<uintptr_t **>(service), kSlots * sizeof(uintptr_t));
++    copy[kGetMetaClass] = reinterpret_cast<uintptr_t>(&appleMetaClass);
++    __asm__ volatile("dmb ish" ::: "memory");
++    *reinterpret_cast<uintptr_t **>(service) = copy;
++    return true;
++#endif
++}
++
+ extern "C" bool ruan_backlight_start(void) {
+     if (s_backlight) return true;
+ 
+@@ -388,6 +416,6 @@ extern "C" bool ruan_backlight_start(void) {
+         return false;
+     }
+     s_backlight->registerService();
+-    IOLog("ruan-backlight: RuanBacklight registered under platform\n");
++    IOLog("ruan-backlight: registered as %s\n", s_backlight->getMetaClass()->getClassName());
+     return true;
+ }

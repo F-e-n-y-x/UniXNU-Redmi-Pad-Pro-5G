@@ -14,9 +14,16 @@
 #define RUAN_PT_PAGE_DESC 3ull                 /* level 3 page descriptor */
 #define RUAN_PT_ATTR_NC (0ull << 2)            /* AttrIndx 0 -> MAIR0 byte 0 = 0x44 (Normal NC) */
 #define RUAN_PT_AP_RW_PRIV (0ull << 6)         /* AP[2:1] = 00: RW, EL1 privileged only (EL0 denied so GMU can fetch) */
+#define RUAN_PT_AP_RW_USER (1ull << 6)         /* AP[2:1] = 01: RW, EL0 and EL1 */
+#define RUAN_PT_AP_RO_PRIV (2ull << 6)         /* AP[2:1] = 10: RO, EL1 privileged only */
+#define RUAN_PT_AP_RO_USER (3ull << 6)         /* AP[2:1] = 11: RO, EL0 and EL1 */
 #define RUAN_PT_SH_OUTER (2ull << 8)
 #define RUAN_PT_AF (1ull << 10)
 #define RUAN_PT_PAGE_ATTRS (RUAN_PT_PAGE_DESC | RUAN_PT_ATTR_NC | RUAN_PT_AP_RW_PRIV | RUAN_PT_SH_OUTER | RUAN_PT_AF)
+#define RUAN_PT_ATTRS_PRIV_RW RUAN_PT_PAGE_ATTRS /* 0x603 */
+#define RUAN_PT_ATTRS_PRIV_RO (RUAN_PT_PAGE_DESC | RUAN_PT_ATTR_NC | RUAN_PT_AP_RO_PRIV | RUAN_PT_SH_OUTER | RUAN_PT_AF) /* 0x683 */
+#define RUAN_PT_ATTRS_USER_RW (RUAN_PT_PAGE_DESC | RUAN_PT_ATTR_NC | RUAN_PT_AP_RW_USER | RUAN_PT_SH_OUTER | RUAN_PT_AF) /* 0x643 */
+#define RUAN_PT_ATTRS_USER_RO (RUAN_PT_PAGE_DESC | RUAN_PT_ATTR_NC | RUAN_PT_AP_RO_USER | RUAN_PT_SH_OUTER | RUAN_PT_AF) /* 0x6c3 */
 #define RUAN_PT_ADDR_MASK 0x0000fffffffff000ull
 #define RUAN_SMMU_MAIR0 0x44u
 #define RUAN_SMMU_TCR 0x00800020u              /* T0SZ 32, walks NC/non-shareable, TG0 4K, EPD1 (no TTBR1) */
@@ -61,9 +68,8 @@ static inline uint64_t ruan_pt_next(struct ruan_pt *p, uint64_t *t, unsigned e)
 	return t[e] & RUAN_PT_ADDR_MASK;
 }
 
-/* Map [va, va+bytes) to [pa, ...). Page-aligned va and pa, va+bytes within 4 GiB. Refuses (-1) an already-mapped page, so
- * two regions can never overlap; nothing is changed for pages before the one that failed only in the overlap case. */
-static inline int ruan_pt_map(struct ruan_pt *p, uint32_t va, uint64_t pa, uint32_t bytes)
+/* Map [va, va+bytes) to [pa, ...) with specified attributes. */
+static inline int ruan_pt_map_attr(struct ruan_pt *p, uint32_t va, uint64_t pa, uint32_t bytes, uint64_t attrs)
 {
 	if ((va | (uint32_t)pa) & (RUAN_PT_PAGE - 1) || !bytes || (uint64_t)va + bytes > (1ull << 32) || (pa & ~RUAN_PT_ADDR_MASK))
 		return -1;
@@ -77,9 +83,35 @@ static inline int ruan_pt_map(struct ruan_pt *p, uint32_t va, uint64_t pa, uint3
 		uint64_t *l3 = ruan_pt_tbl(p, l3pa);
 		const unsigned e = (unsigned)((v >> 12) & 511);
 		if (l3[e] & RUAN_PT_VALID) return -1;
-		l3[e] = ((pa + off) & RUAN_PT_ADDR_MASK) | RUAN_PT_PAGE_ATTRS;
+		l3[e] = ((pa + off) & RUAN_PT_ADDR_MASK) | attrs;
 	}
 	return 0;
+}
+
+/* Map or remap [va, va+bytes) to [pa, ...). Overwrites existing L3 page entries. */
+static inline int ruan_pt_remap_attr(struct ruan_pt *p, uint32_t va, uint64_t pa, uint32_t bytes, uint64_t attrs)
+{
+	if ((va | (uint32_t)pa) & (RUAN_PT_PAGE - 1) || !bytes || (uint64_t)va + bytes > (1ull << 32) || (pa & ~RUAN_PT_ADDR_MASK))
+		return -1;
+	for (uint64_t off = 0; off < bytes; off += RUAN_PT_PAGE) {
+		const uint64_t v = (uint64_t)va + off;
+		uint64_t *l1 = ruan_pt_tbl(p, p->pa);
+		const uint64_t l2pa = ruan_pt_next(p, l1, (unsigned)((v >> 30) & 3));
+		if (!l2pa) return -1;
+		const uint64_t l3pa = ruan_pt_next(p, ruan_pt_tbl(p, l2pa), (unsigned)((v >> 21) & 511));
+		if (!l3pa) return -1;
+		uint64_t *l3 = ruan_pt_tbl(p, l3pa);
+		const unsigned e = (unsigned)((v >> 12) & 511);
+		l3[e] = ((pa + off) & RUAN_PT_ADDR_MASK) | attrs;
+	}
+	return 0;
+}
+
+/* Map [va, va+bytes) to [pa, ...). Page-aligned va and pa, va+bytes within 4 GiB. Refuses (-1) an already-mapped page, so
+ * two regions can never overlap; nothing is changed for pages before the one that failed only in the overlap case. */
+static inline int ruan_pt_map(struct ruan_pt *p, uint32_t va, uint64_t pa, uint32_t bytes)
+{
+	return ruan_pt_map_attr(p, va, pa, bytes, RUAN_PT_PAGE_ATTRS);
 }
 
 /* Walk va as the SMMU would: the physical address, or ~0 when unmapped. */

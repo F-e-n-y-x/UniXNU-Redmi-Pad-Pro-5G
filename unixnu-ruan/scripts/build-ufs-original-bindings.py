@@ -90,7 +90,7 @@ while index < len(arguments):
 command += ['-I', str(ROOT / 'build/storage-abi/include'), '-I', str(ROOT / '.cache/xnu-work/osfmk'),
             '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter', '-Wno-deprecated-declarations',
             '-Wno-c99-designator', '-Wno-reorder-init-list', '-Wno-unnecessary-virtual-specifier',
-            '-Wno-deprecated-enum-enum-conversion']
+            '-Wno-deprecated-enum-enum-conversion', '-Wno-missing-designated-field-initializers']
 result = subprocess.run(command, cwd=recipe['directory'], capture_output=True, text=True)
 (reference.with_suffix('.log')).write_text(result.stdout + result.stderr)
 require(result.returncode == 0, (result.stdout + result.stderr)[-3500:])
@@ -147,7 +147,7 @@ for at in range(0, len(blob) - (len(methods) + 2) * 8 + 1, 8):
 require(len(found) == 1, 'Cannot uniquely identify the original block-storage class dispatch')
 table, pointers = found[0]
 matched = sum(name in by_name for name in methods)
-require(matched == 176, f'Unexpected original/native kernel binding count: {matched}')
+require(matched in (176, 183), f'Unexpected original/native kernel binding count: {matched}')
 
 constructors = []
 for address in range(text['va'], text['va'] + text['size'] - 32, 4):

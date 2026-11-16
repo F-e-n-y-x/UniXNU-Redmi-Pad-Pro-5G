@@ -23,9 +23,16 @@
 #include <sys/msgbuf.h>
 #include <pexpert/pexpert.h>
 
+#include "RuanBacklight.h"   // SY7758 backlight (weak: the command says so when the driver is not linked)
+extern "C" int ruan_backlight_set_level(uint32_t level) __attribute__((weak_import));
+extern "C" int ruan_backlight_reg(uint8_t reg, int value) __attribute__((weak_import));
+extern "C" struct ruan_backlight_state g_ruan_backlight __attribute__((weak_import));
+
 extern "C" {
 #include "SmmuBypass.h"
+#include "RuanBattery.h"
 
+extern struct hakios_battery_state g_ruan_battery __attribute__((weak_import));
 extern void boot_progress_stage(const char *text) __attribute__((weak_import));
 
 // package/LegacyDisplayProbe.cpp (ruan): the GOP scanout NativeLegacyDisplay copies frames into.
@@ -36,16 +43,39 @@ extern volatile uint32_t native_legacy_gop_width __attribute__((weak_import));
 extern volatile uint32_t native_legacy_gop_height __attribute__((weak_import));
 extern volatile uint32_t native_legacy_stage __attribute__((weak_import));
 extern volatile uint64_t native_legacy_copy_n __attribute__((weak_import));
+extern volatile uint64_t native_legacy_gpu_blits __attribute__((weak_import));
+extern volatile uint32_t native_legacy_gpu_last_ticks __attribute__((weak_import));
+
+extern volatile uint32_t ruan_metal_stage __attribute__((weak_import));
+extern volatile int ruan_metal_status __attribute__((weak_import));
+extern volatile uint32_t ruan_metal_registered __attribute__((weak_import));
+extern volatile uint32_t native_adreno_metal_opens __attribute__((weak_import));
+extern volatile uint32_t native_adreno_metal_property_reads __attribute__((weak_import));
+extern char native_adreno_last_property[64] __attribute__((weak_import));
+extern char native_adreno_last_client[64] __attribute__((weak_import));
+
+extern volatile uint32_t native_legacy_swap_accepted_count __attribute__((weak_import));
+extern volatile uint32_t native_legacy_swap_rejected_count __attribute__((weak_import));
+extern volatile uint32_t native_legacy_early_retires __attribute__((weak_import));
+extern volatile uint32_t native_legacy_gpu_fallbacks __attribute__((weak_import));
+extern volatile int native_legacy_gpu_last_fallback_reason __attribute__((weak_import));
+extern "C" uint32_t ruan_gpu_ring_wraps(void) __attribute__((weak_import));
+extern "C" int ruan_gpu_dma_blit_frame(uint32_t, uint32_t, uint32_t) __attribute__((weak_import));
+extern "C" int native_adreno_fences(uint32_t *, uint32_t *) __attribute__((weak_import));
+extern volatile uint64_t native_legacy_vsync_events[6] __attribute__((weak_import));
 
 // package/RuanInput.c (touch + buttons)
 extern volatile uint32_t ruan_touch_events __attribute__((weak_import));
 extern volatile uint32_t ruan_button_events __attribute__((weak_import));
 extern char ruan_input_row[96] __attribute__((weak_import));
+extern "C" void hakios_touch_post(uint32_t, uint32_t, uint32_t, uint32_t) __attribute__((weak_import));
 
 // package/BootReset.c: probe the PMIC reboot-reason cell; write "bootloader" into it and read it back.
 extern int boot_reset_probe(char *text, unsigned cap) __attribute__((weak_import));
 extern int boot_reset_mark_bootloader(char *text, unsigned cap) __attribute__((weak_import));
 extern struct msgbuf *msgbufp;   // bsd/kern/subr_log.c (XNU_KERNEL_PRIVATE in sys/msgbuf.h)
+extern const char *ruan_wifi_status_str(void) __attribute__((weak_import));
+extern const char *ruan_audio_status_str(void) __attribute__((weak_import));
 
 // The boot-progress banner prints this (package/BootProgress.c defines it weak; this definition wins when linked).
 char ruan_usb_short[48] = "usb: off";
@@ -491,7 +521,68 @@ static void handleCommand(TerminalSession &s, const char *raw) {
     if (strEq(raw, "ping")) {
         s.reply.writeStr("[usb] PONG ruan\r\n");
     } else if (strEq(raw, "features") || strEq(raw, "help")) {
-        s.reply.writeStr("FEATURES: ping status bootargs display usb touch replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg gpu\r\n");
+        s.reply.writeStr("FEATURES: ping status bootargs display usb touch battery wifi audio replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg gpu\r\n");
+    } else if (strEq(raw, "wifi") || strEq(raw, "wlan")) {
+        if (&ruan_wifi_status_str && ruan_wifi_status_str) {
+            snprintf(buf, sizeof(buf), "[usb] WIFI: %s\r\n", ruan_wifi_status_str());
+        } else {
+            snprintf(buf, sizeof(buf), "[usb] WIFI: driver not linked\r\n");
+        }
+        s.reply.writeStr(buf);
+    } else if (strEq(raw, "audio") || strEq(raw, "sound")) {
+        if (&ruan_audio_status_str && ruan_audio_status_str) {
+            snprintf(buf, sizeof(buf), "[usb] AUDIO: %s\r\n", ruan_audio_status_str());
+        } else {
+            snprintf(buf, sizeof(buf), "[usb] AUDIO: driver not linked\r\n");
+        }
+        s.reply.writeStr(buf);
+    } else if (strEq(raw, "backlight") || strStarts(raw, "backlight ")) {
+        // "backlight" shows the SY7758 state; "backlight N" (16..4095) writes the brightness and reads it back
+        if (!&g_ruan_backlight || !&ruan_backlight_set_level) {
+            s.reply.writeStr("[usb] BACKLIGHT: driver not linked\r\n");
+        } else if (strStarts(raw, "backlight reg ") && &ruan_backlight_reg) {
+            // "backlight reg R" reads SY7758 register R; "backlight reg R V" writes V then reads it back
+            const char *p = raw + 14;
+            bool okr = false, okv = false;
+            const uint32_t reg = parseUint(p, &okr);
+            const uint32_t val = parseUint(p, &okv);
+            const int got = okr && reg <= 0xff && (!okv || val <= 0xff) ? ruan_backlight_reg((uint8_t)reg, okv ? (int)val : -1) : -2;
+            snprintf(buf, sizeof(buf), "[usb] BACKLIGHT REG %02x%s = %d (0x%02x)\r\n", reg & 0xff, okv ? " written" : "", got, got & 0xff);
+            s.reply.writeStr(buf);
+        } else {
+            const char *p = raw + 9;
+            bool ok = false;
+            const uint32_t level = parseUint(p, &ok);
+            int rc = 0;
+            if (ok) rc = ruan_backlight_set_level(level);
+            snprintf(buf, sizeof(buf),
+                     "[usb] BACKLIGHT: %s%s rc=%d level=%u ready=%d id=%02x updates=%llu errors=%u last_irq=%08x status=%s\r\n",
+                     ok ? "set " : "", ok ? "done" : "", rc, g_ruan_backlight.current_level, g_ruan_backlight.ready,
+                     g_ruan_backlight.dev_id, (unsigned long long)g_ruan_backlight.updates_count, g_ruan_backlight.errors,
+                     g_ruan_backlight.last_irq, g_ruan_backlight.status);
+            s.reply.writeStr(buf);
+        }
+    } else if (strEq(raw, "battery") || strEq(raw, "power")) {
+        // g_ruan_battery declared at file scope in extern "C" block above (weak_import)
+        if (&g_ruan_battery) {
+            // 0 means "not measured" in the driver: say so instead of printing 0 mA / 0 C
+            char cur[16] = "unknown", temp[16] = "unknown";
+            if (g_ruan_battery.current_ua) snprintf(cur, sizeof(cur), "%dmA", g_ruan_battery.current_ua / 1000);
+            if (g_ruan_battery.temperature_hundredths) snprintf(temp, sizeof(temp), "%dC", g_ruan_battery.temperature_hundredths / 100);
+            snprintf(buf, sizeof(buf),
+                     "[usb] BATTERY: present=%d level=%d%% (estimated from voltage) volt=%dmV cur=%s temp=%s ext=%d chg=%d full=%d"
+                     " (voltage source: see 'battery:' line in log)\r\n",
+                     g_ruan_battery.present,
+                     g_ruan_battery.percent_hundredths / 100,
+                     g_ruan_battery.voltage_uv / 1000,
+                     cur, temp,
+                     g_ruan_battery.external,
+                     g_ruan_battery.status == 1,
+                     g_ruan_battery.status == 4);
+        } else {
+            snprintf(buf, sizeof(buf), "[usb] BATTERY: driver not linked\r\n");
+        }
+        s.reply.writeStr(buf);
     } else if (strEq(raw, "info") || strEq(raw, "uptime") || strEq(raw, "status")) {
         const uint64_t ms = nowMs();
         snprintf(buf, sizeof(buf),
@@ -505,16 +596,96 @@ static void handleCommand(TerminalSession &s, const char *raw) {
         snprintf(buf, sizeof(buf), "[usb] bootargs=%s\r\n", PE_boot_args());
         s.reply.writeStr(buf);
     } else if (strEq(raw, "display")) {
+        uint32_t f_sub = 0, f_ret = 0;
+        if (&native_adreno_fences) native_adreno_fences(&f_sub, &f_ret);
         snprintf(buf, sizeof(buf),
-                 "[usb] FB: stage=%u %ux%u phys=0x%llx virt=0x%llx bytes=0x%llx copies=%llu\r\n",
+                 "[usb] FB: stage=%u %ux%u phys=0x%llx virt=0x%llx bytes=0x%llx copies=%llu gpu_blits=%llu gpu_ticks=%u\r\n"
+                 "[usb] FB SWAP: accepted=%u rejected=%u early_retire=%u fallbacks=%u last_fb_reason=%d wraps=%u fences_sub=%u fences_ret=%u\r\n"
+                 "[usb] VSYNC: arm=%llu tick=%llu no_client=%llu missed=%llu start=%llu req=%llu\r\n",
                  &native_legacy_stage ? native_legacy_stage : 0u,
                  &native_legacy_gop_width ? native_legacy_gop_width : 0u,
                  &native_legacy_gop_height ? native_legacy_gop_height : 0u,
                  &native_legacy_gop_physical ? (unsigned long long)native_legacy_gop_physical : 0ULL,
                  &native_legacy_gop_virtual ? (unsigned long long)native_legacy_gop_virtual : 0ULL,
                  &native_legacy_gop_bytes ? (unsigned long long)native_legacy_gop_bytes : 0ULL,
-                 &native_legacy_copy_n ? (unsigned long long)native_legacy_copy_n : 0ULL);
+                 &native_legacy_copy_n ? (unsigned long long)native_legacy_copy_n : 0ULL,
+                 &native_legacy_gpu_blits ? (unsigned long long)native_legacy_gpu_blits : 0ULL,
+                 &native_legacy_gpu_last_ticks ? native_legacy_gpu_last_ticks : 0u,
+                 &native_legacy_swap_accepted_count ? native_legacy_swap_accepted_count : 0u,
+                 &native_legacy_swap_rejected_count ? native_legacy_swap_rejected_count : 0u,
+                 &native_legacy_early_retires ? native_legacy_early_retires : 0u,
+                 &native_legacy_gpu_fallbacks ? native_legacy_gpu_fallbacks : 0u,
+                 &native_legacy_gpu_last_fallback_reason ? native_legacy_gpu_last_fallback_reason : 0,
+                 &ruan_gpu_ring_wraps ? ruan_gpu_ring_wraps() : 0u,
+                 f_sub, f_ret,
+                 &native_legacy_vsync_events ? (unsigned long long)native_legacy_vsync_events[0] : 0ULL,
+                 &native_legacy_vsync_events ? (unsigned long long)native_legacy_vsync_events[1] : 0ULL,
+                 &native_legacy_vsync_events ? (unsigned long long)native_legacy_vsync_events[2] : 0ULL,
+                 &native_legacy_vsync_events ? (unsigned long long)native_legacy_vsync_events[3] : 0ULL,
+                 &native_legacy_vsync_events ? (unsigned long long)native_legacy_vsync_events[4] : 0ULL,
+                 &native_legacy_vsync_events ? (unsigned long long)native_legacy_vsync_events[5] : 0ULL);
         s.reply.writeStr(buf);
+    } else if (strStarts(raw, "display.stress")) {
+        const char *p = raw + 14;
+        bool ok = false;
+        uint32_t count = parseUint(p, &ok);
+        if (!ok || count == 0) count = 25;
+        if (count > 500) count = 500;
+        int last_rc = 0;
+        uint32_t success = 0;
+        uint64_t t0 = 0, t1 = 0;
+        if (&ruan_gpu_dma_blit_frame) {
+            __asm__ volatile("isb\n\tmrs %0, cntvct_el0" : "=r"(t0));
+            for (uint32_t i = 0; i < count; i++) {
+                int rc = ruan_gpu_dma_blit_frame(0x50000000u, 0x50000000u, 1600 * 2560);
+                if (rc == 0) {
+                    success++;
+                    if (&native_legacy_gpu_blits) native_legacy_gpu_blits = native_legacy_gpu_blits + 1;
+                } else {
+                    last_rc = rc;
+                    break;
+                }
+            }
+            __asm__ volatile("isb\n\tmrs %0, cntvct_el0" : "=r"(t1));
+        }
+        uint32_t f_sub = 0, f_ret = 0;
+        if (&native_adreno_fences) native_adreno_fences(&f_sub, &f_ret);
+        snprintf(buf, sizeof(buf),
+                 "[usb] DISPLAY STRESS: n=%u/%u rc=%d ticks=%llu wraps=%u fences_sub=%u fences_ret=%u\r\n",
+                 success, count, last_rc, (unsigned long long)(t1 - t0),
+                 &ruan_gpu_ring_wraps ? ruan_gpu_ring_wraps() : 0u,
+                 f_sub, f_ret);
+        s.reply.writeStr(buf);
+    } else if (strEq(raw, "touch.tap")) {
+        if (&hakios_touch_post) {
+            hakios_touch_post(1, 0, 32768, 32768); // HAKIOS_TOUCH_DOWN
+            for (volatile int i = 0; i < 50000; i++) {}
+            hakios_touch_post(3, 0, 32768, 32768); // HAKIOS_TOUCH_UP
+            s.reply.writeStr("[usb] touch.tap: posted down+up at center\r\n");
+        } else {
+            s.reply.writeStr("[usb] touch.tap: hakios_touch_post missing\r\n");
+        }
+    } else if (strEq(raw, "touch.swipe")) {
+        if (&hakios_touch_post) {
+            hakios_touch_post(1, 0, 32768, 55000); // HAKIOS_TOUCH_DOWN
+            for (uint32_t y = 55000; y >= 15000; y -= 5000) {
+                for (volatile int i = 0; i < 20000; i++) {}
+                hakios_touch_post(2, 0, 32768, y);     // HAKIOS_TOUCH_MOVE
+            }
+            hakios_touch_post(3, 0, 32768, 15000); // HAKIOS_TOUCH_UP
+            s.reply.writeStr("[usb] touch.swipe: posted upward swipe (unlock)\r\n");
+        } else {
+            s.reply.writeStr("[usb] touch.swipe: hakios_touch_post missing\r\n");
+        }
+    } else if (strEq(raw, "button.lock") || strEq(raw, "button.power")) {
+        if (&hakios_touch_post) {
+            hakios_touch_post(4, 1, 0, 0); // HAKIOS_BUTTON_DOWN, HAKIOS_BUTTON_LOCK
+            for (volatile int i = 0; i < 50000; i++) {}
+            hakios_touch_post(5, 1, 0, 0); // HAKIOS_BUTTON_UP, HAKIOS_BUTTON_LOCK
+            s.reply.writeStr("[usb] button.lock: toggled lock/power key\r\n");
+        } else {
+            s.reply.writeStr("[usb] button.lock: hakios_touch_post missing\r\n");
+        }
     } else if (strEq(raw, "touch") || strEq(raw, "touch.status") || strEq(raw, "input.status")) {
         snprintf(buf, sizeof(buf), "[usb] INPUT: touch=%u buttons=%u %s\r\n",
                  &ruan_touch_events ? ruan_touch_events : 0u,
@@ -899,7 +1070,7 @@ static bool bringUpController(TerminalSession &s) {
     return true;
 }
 
-static TerminalSession *gSession = nullptr;
+__attribute__((unused)) static TerminalSession *gSession = nullptr;
 
 static void usbDebugThread(void *arg, int waitResult) {
     (void)arg;
