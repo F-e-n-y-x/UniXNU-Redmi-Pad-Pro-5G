@@ -63,9 +63,13 @@ def read_for(fd, seconds, wire, on_text, stop=None):
         if not data:
             time.sleep(0.01)
             continue
-        text, frames = wire.feed(data)
-        if text:
-            on_text(text)
+        if wire:
+            text, frames = wire.feed(data)
+            if text:
+                on_text(text)
+        else:
+            frames = []
+            on_text(data)
         if stop and stop(frames):
             return True
     return False
@@ -144,7 +148,7 @@ def fetch(fd, wire, command, timeout):
             elif kind == b'ERR':
                 raise RuntimeError(rest.decode(errors='replace'))
         return False
-    if not read_for(fd, timeout, wire, lines, done):
+    if not read_for(fd, timeout, None, lines, done):
         raise RuntimeError(f'timeout after {timeout:.0f} s ({len(state.get("data", b""))} bytes)')
     return state['name'], bytes(state['data'])
 
@@ -163,7 +167,7 @@ def listdir(fd, wire, path, timeout=20.0):
                 return True
             entries.append((parts[1].decode(), int(parts[2]), parts[3].decode(errors='replace')))
         return False
-    if not read_for(fd, timeout, wire, lines, done):
+    if not read_for(fd, timeout, None, lines, done):
         raise RuntimeError('timeout')
     if end['err']:
         raise RuntimeError(f'errno {end["err"]} ({os.strerror(end["err"])})')
@@ -182,7 +186,7 @@ def main():
     sub.add_parser('reboot')
     p = sub.add_parser('ls'); p.add_argument('path')
     p = sub.add_parser('get'); p.add_argument('path'); p.add_argument('-o', '--output'); p.add_argument('--timeout', type=float, default=300.0)
-    p = sub.add_parser('dmesg'); p.add_argument('-o', '--output')
+    p = sub.add_parser('dmesg'); p.add_argument('-o', '--output'); p.add_argument('--timeout', type=float, default=180.0)
     p = sub.add_parser('pull-crashes'); p.add_argument('-d', '--dir', default='crashes')
     a = ap.parse_args()
 
@@ -225,7 +229,7 @@ def main():
     elif a.what in ('get', 'dmesg'):
         try:
             name, data = fetch(fd, wire, 'dmesg' if a.what == 'dmesg' else 'cat ' + a.path,
-                               60.0 if a.what == 'dmesg' else a.timeout)
+                               a.timeout)
         except RuntimeError as e:
             sys.exit(f'ruan-usbdbg: {a.what} failed: {e}')
         if a.what == 'dmesg' and not a.output:

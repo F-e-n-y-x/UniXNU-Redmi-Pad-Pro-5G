@@ -108,6 +108,7 @@ static uint32_t gpu_stream0_cb_off = 0x22000u;
 static int gpu_s3_writable(uint32_t off)
 {
 	if (off == RUAN_GBIF_HALT * 4u || off == RUAN_RBBM_GBIF_HALT * 4u) return 1;
+	if (off == RUAN_RBBM_INT_CLEAR_CMD * 4u || off == RUAN_RBBM_INT_0_MASK * 4u) return 1;
 	if (off == RUAN_CP_PROTECT_CNTL * 4u || off == RUAN_CP_APRIV_CNTL * 4u || off == RUAN_CP_BV_APRIV_CNTL * 4u || off == RUAN_CP_AHB_CNTL * 4u) return 1;
 	if (off >= RUAN_CP_RB_BASE * 4u && off <= RUAN_CP_SQE_CNTL * 4u) return 1;
 	if (off == RUAN_CP_BV_RB_RPTR_ADDR_LO * 4u || off == RUAN_CP_BV_RB_RPTR_ADDR_HI * 4u) return 1;
@@ -1274,6 +1275,7 @@ struct ruan_gpu_s3_cp {
 };
 static struct ruan_gpu_s3_cp ruan_gpu_s3_cp_result;
 static uint32_t s3_current_wptr;
+static volatile uint32_t s_gpu_ring_wraps = 0;
 
 static void s3_cp_start(struct ruan_gpu_s3_cp *cp, struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
 {
@@ -1341,6 +1343,8 @@ static void s3_cp_start(struct ruan_gpu_s3_cp *cp, struct ruan_gpu_s3_hw *h, str
 
 	result_line("gpu s3_cp: enable SQE micro-engine (CP_SQE_CNTL = 1)");
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_SQE_CNTL * 4u, 1);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_INT_CLEAR_CMD * 4u, 0xffffffffu);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_INT_0_MASK * 4u, RUAN_A710_GEN7_INT_MASK);
 
 	result_line("gpu s3_cp: advance CP_RB_WPTR and poll for RPTR == WPTR");
 	s3_current_wptr = w;
@@ -1367,6 +1371,68 @@ static void s3_cp_start(struct ruan_gpu_s3_cp *cp, struct ruan_gpu_s3_hw *h, str
 	cp->ok = 1;
 }
 
+#define RUAN_CP_RB_DWORDS             8192u
+#define RUAN_S3_POOL_FENCE_OFF        (RUAN_S3_POOL_SCRATCH_OFF + 0x10u)
+#define RUAN_S3_GPU_VA_FENCE          (RUAN_S3_GPU_VA_SCRATCH + 0x10u)
+
+static int ruan_ring_reserve(unsigned dwords, unsigned *out_w)
+{
+	if (!va[GPB_WIN_GPU] || !pool_cpu) return -1;
+	if (dwords >= RUAN_CP_RB_DWORDS) return -1;
+
+	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
+	unsigned w = s3_current_wptr;
+	if (w >= RUAN_CP_RB_DWORDS) w = 0;
+
+	/* If packet doesn't fit before end of ring, pad with CP_NOP and wrap to 0 */
+	if (w + dwords > RUAN_CP_RB_DWORDS) {
+		unsigned rem = RUAN_CP_RB_DWORDS - w;
+
+		/* Wait until CP has moved off 0 (rptr > dwords) so wrapping to 0 won't collide with RPTR */
+		for (unsigned p = 0; p < 25000; p++) {
+			uint32_t rptr = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_CP_RB_RPTR * 4u);
+			if (rptr > dwords) break;
+			delay(10);
+		}
+		uint32_t rptr = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_CP_RB_RPTR * 4u);
+		if (rptr <= dwords) return -16; /* -EBUSY: CP hasn't consumed head */
+
+		/* Emit NOP packet covering all remaining dwords to end of ring */
+		if (rem > 0) {
+			rb[w] = cp_type7_packet(CP_NOP, rem - 1);
+			for (unsigned i = 1; i < rem; i++) rb[w + i] = 0;
+			clean_pool_range((uintptr_t)&rb[w], rem * 4u);
+		}
+		w = 0;
+		s_gpu_ring_wraps++;
+	}
+
+	/* Now w + dwords <= RUAN_CP_RB_DWORDS. Ensure [w, w + dwords) doesn't catch up to rptr */
+	for (unsigned p = 0; p < 25000; p++) {
+		uint32_t rptr = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_CP_RB_RPTR * 4u);
+		if (w < rptr) {
+			if (w + dwords < rptr) break;
+		} else if (w > rptr) {
+			if (w + dwords < RUAN_CP_RB_DWORDS || rptr > 0) break;
+		} else {
+			/* w == rptr: ring is empty */
+			if (w + dwords < RUAN_CP_RB_DWORDS || rptr > 0) break;
+		}
+		delay(10);
+	}
+
+	uint32_t rptr = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_CP_RB_RPTR * 4u);
+	if (w < rptr && w + dwords >= rptr) {
+		return -16; /* -EBUSY: ring full */
+	}
+	if (w >= rptr && w + dwords >= RUAN_CP_RB_DWORDS && rptr == 0) {
+		return -16; /* -EBUSY */
+	}
+
+	*out_w = w;
+	return 0;
+}
+
 struct ruan_gpu_s3_smoke {
 	uint32_t magic_written, magic_read;
 	uint32_t wptr_before, wptr_after, rptr_after;
@@ -1388,18 +1454,23 @@ static void s3_smoke_test(struct ruan_gpu_s3_smoke *sm, struct ruan_gpu_s3_cp *c
 			return;
 		}
 	}
-	sm->wptr_before = s3_current_wptr;
+	unsigned w = 0;
+	if (ruan_ring_reserve(4, &w) != 0) {
+		strlcpy(sm->why, "ring full on smoke_test", sizeof sm->why);
+		return;
+	}
+	sm->wptr_before = w;
 	sm->magic_written = 0xC0FFEE01u;
 
 	result_line("gpu s3_smoke: emit CP_MEM_WRITE 0xC0FFEE01 to SCRATCH_VA");
 	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
-	unsigned w = s3_current_wptr;
 	rb[w++] = cp_type7_packet(CP_MEM_WRITE, 3);
 	rb[w++] = RUAN_S3_GPU_VA_SCRATCH;
 	rb[w++] = 0;
 	rb[w++] = sm->magic_written;
-	clean_pool();
+	clean_pool_range((uintptr_t)&rb[w - 4], 4 * 4u);
 
+	if (w >= RUAN_CP_RB_DWORDS) w = 0;
 	sm->wptr_after = w;
 	s3_current_wptr = w;
 	if (wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, w)) {
@@ -1472,23 +1543,28 @@ static void s3_blitter(struct ruan_gpu_s3_blitter *bl, struct ruan_gpu_s3_smoke 
 			return;
 		}
 	}
+	unsigned w = 0;
+	if (ruan_ring_reserve(19, &w) != 0) {
+		strlcpy(bl->why, "ring full on s3_blitter", sizeof bl->why);
+		return;
+	}
 	result_line("gpu s3_blitter: fill user test buffer (0x40100000) with 16 colored words");
 	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
-	unsigned w = s3_current_wptr;
 	rb[w++] = cp_type7_packet(CP_MEM_WRITE, 2 + 16);
 	rb[w++] = RUAN_S3_GPU_VA_USER;
 	rb[w++] = 0;
 	for (unsigned p = 0; p < 16; p++) {
 		rb[w++] = 0x00FF00FFu;
 	}
-	clean_pool();
+	clean_pool_range((uintptr_t)&rb[w - 19], 19 * 4u);
+	if (w >= RUAN_CP_RB_DWORDS) w = 0;
 	s3_current_wptr = w;
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, w);
 
 	for (unsigned p = 0; p < 2000; p++) {
 		uint32_t rptr = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_CP_RB_RPTR * 4u);
 		uint32_t status = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_RBBM_STATUS * 4u);
-		if (rptr == w && !(status & (1u << 31))) break;
+		if (rptr == s3_current_wptr && !(status & (1u << 31))) break;
 		delay(100);
 	}
 	clean_pool();
@@ -1521,7 +1597,6 @@ static void s4_fb_blit(struct ruan_gpu_s4_fb *fb, struct ruan_gpu_s3_blitter *bl
 	}
 	result_line("gpu s4_fb: draw test rectangle to GOP framebuffer (0x50000000 -> phys 0xb8000000)");
 	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
-	unsigned w = s3_current_wptr;
 
 	/* Draw a 100x40 vibrant neon magenta test box on GOP screen at (1230, 80) */
 	/* 2560x1600 32-bpp ARGB8888; stride = 2560 pixels = 10240 bytes */
@@ -1532,6 +1607,11 @@ static void s4_fb_blit(struct ruan_gpu_s4_fb *fb, struct ruan_gpu_s3_blitter *bl
 	const uint32_t color = 0xFFFF00FFu; /* Neon Magenta */
 
 	for (unsigned y = 0; y < height; y++) {
+		unsigned w = 0;
+		if (ruan_ring_reserve(3 + width, &w) != 0) {
+			strlcpy(fb->why, "ring full on s4_fb_blit", sizeof fb->why);
+			return;
+		}
 		uint32_t line_gpu_va = RUAN_S3_GPU_VA_FB + ((y_start + y) * 2560u + x_start) * 4u;
 		rb[w++] = cp_type7_packet(CP_MEM_WRITE, 2 + width);
 		rb[w++] = line_gpu_va;
@@ -1539,15 +1619,16 @@ static void s4_fb_blit(struct ruan_gpu_s4_fb *fb, struct ruan_gpu_s3_blitter *bl
 		for (unsigned x = 0; x < width; x++) {
 			rb[w++] = color;
 		}
+		clean_pool_range((uintptr_t)&rb[w - (3 + width)], (3 + width) * 4u);
+		if (w >= RUAN_CP_RB_DWORDS) w = 0;
+		s3_current_wptr = w;
+		(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, w);
 	}
-	clean_pool();
-	s3_current_wptr = w;
-	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, w);
 
 	for (unsigned p = 0; p < 2000; p++) {
 		uint32_t rptr = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_CP_RB_RPTR * 4u);
 		uint32_t status = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_RBBM_STATUS * 4u);
-		if (rptr == w && !(status & (1u << 31))) break;
+		if (rptr == s3_current_wptr && !(status & (1u << 31))) break;
 		delay(100);
 	}
 	clean_pool();
@@ -1606,8 +1687,12 @@ static void s5_mem_to_mem(struct ruan_gpu_s5_m2m *m2m, struct ruan_gpu_s4_fb *fb
 	}
 	clean_pool();
 
+	unsigned w = 0;
+	if (ruan_ring_reserve(6, &w) != 0) {
+		strlcpy(m2m->why, "ring full on s5_mem_to_mem", sizeof m2m->why);
+		return;
+	}
 	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
-	unsigned w = s3_current_wptr;
 
 	/* Emit CP_MEMCPY (opcode 0x75, 5 dwords payload) */
 	rb[w++] = cp_type7_packet(CP_MEMCPY, 5);
@@ -1617,14 +1702,15 @@ static void s5_mem_to_mem(struct ruan_gpu_s5_m2m *m2m, struct ruan_gpu_s4_fb *fb
 	rb[w++] = RUAN_S3_GPU_VA_USER + 0x10000u;    /* DST_LO */
 	rb[w++] = 0;                                 /* DST_HI */
 
-	clean_pool();
+	clean_pool_range((uintptr_t)&rb[w - 6], 6 * 4u);
+	if (w >= RUAN_CP_RB_DWORDS) w = 0;
 	s3_current_wptr = w;
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, w);
 
 	for (unsigned p = 0; p < 2000; p++) {
 		uint32_t rptr = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_CP_RB_RPTR * 4u);
 		uint32_t status = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_RBBM_STATUS * 4u);
-		if (rptr == w && !(status & (1u << 31))) break;
+		if (rptr == s3_current_wptr && !(status & (1u << 31))) break;
 		delay(100);
 	}
 	clean_pool();
@@ -1688,9 +1774,13 @@ static void s5_fb_dma_blit(struct ruan_gpu_s5_fb *sfb, struct ruan_gpu_s5_m2m *m
 	const unsigned fb_stride_pixels = 1600;
 
 	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
-	unsigned w = s3_current_wptr;
 
 	for (unsigned y = 0; y < height; y++) {
+		unsigned w = 0;
+		if (ruan_ring_reserve(6, &w) != 0) {
+			strlcpy(sfb->why, "ring full on s5_fb_dma_blit", sizeof sfb->why);
+			return;
+		}
 		uint32_t src_va = RUAN_S3_GPU_VA_USER + (y * width) * 4u;
 		uint32_t dst_va = RUAN_S3_GPU_VA_FB + ((y_start + y) * fb_stride_pixels + x_start) * 4u;
 
@@ -1700,20 +1790,21 @@ static void s5_fb_dma_blit(struct ruan_gpu_s5_fb *sfb, struct ruan_gpu_s5_m2m *m
 		rb[w++] = 0;                 /* SRC_HI */
 		rb[w++] = dst_va;            /* DST_LO */
 		rb[w++] = 0;                 /* DST_HI */
-	}
 
-	clean_pool_range((uintptr_t)rb, 0x8000u);
-	s3_current_wptr = w;
-	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, w);
+		clean_pool_range((uintptr_t)&rb[w - 6], 6 * 4u);
+		if (w >= RUAN_CP_RB_DWORDS) w = 0;
+		s3_current_wptr = w;
+		(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, w);
+	}
 
 	for (unsigned p = 0; p < 2000; p++) {
 		sfb->rptr = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_CP_RB_RPTR * 4u);
 		sfb->rbbm_status = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_RBBM_STATUS * 4u);
 		sfb->polls = p;
-		if (sfb->rptr == w && !(sfb->rbbm_status & (1u << 31))) break;
+		if (sfb->rptr == s3_current_wptr && !(sfb->rbbm_status & (1u << 31))) break;
 		delay(100);
 	}
-	sfb->wptr = w;
+	sfb->wptr = s3_current_wptr;
 
 	/* Query SMMU Stream-0 fault registers */
 	(void)rd(NULL, W_SMMUF, gpu_stream0_cb_off + CB_FSR, &sfb->fsr);
@@ -1984,6 +2075,11 @@ int ruan_gpu_is_s5_ready(void)
 	return ruan_gpu_s5_fb_result.ok && va[GPB_WIN_GPU] != 0;
 }
 
+uint32_t ruan_gpu_ring_wraps(void)
+{
+	return s_gpu_ring_wraps;
+}
+
 int ruan_gpu_stream0_map_page(uint32_t va_addr, uint64_t pa_addr, uint32_t bytes)
 {
 	return ruan_pt_remap_attr(&stream0_pt, va_addr, pa_addr, bytes, RUAN_PT_ATTRS_USER_RW);
@@ -1997,45 +2093,134 @@ void ruan_gpu_stream0_tlb_flush(void)
 	}
 }
 
+static volatile uint32_t s_gpu_last_int0, s_gpu_last_hw_fault;   /* last error status seen, for debugging */
+static volatile uint32_t s_gpu_blits_submitted = 0;
+static volatile uint32_t s_gpu_blits_retired = 0;
+
 int ruan_gpu_dma_blit_frame(uint32_t src_va, uint32_t dst_va, uint32_t total_dwords)
 {
 	if (!va[GPB_WIN_GPU]) return -1;
-	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
-	unsigned w = s3_current_wptr;
 
-	if (w + 16 >= 8192) {
-		w = 0;
+	/* Chunk into segments <= 32768 dwords (128 KiB) to avoid hardware ROQ/DMA FIFO stalls */
+	const uint32_t max_chunk_dwords = 32768u;
+	uint32_t chunks = (total_dwords + max_chunk_dwords - 1u) / max_chunk_dwords;
+	if (chunks == 0) return -1;
+	unsigned needed_dwords = chunks * 6u + 1u /* WAIT_MEM_WRITES */ + 1u /* WAIT_FOR_ME */ + 4u /* MEM_WRITE */;
+
+	unsigned w = 0;
+	int res = ruan_ring_reserve(needed_dwords, &w);
+	if (res != 0) return res;
+
+	unsigned w_start = w;
+	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
+	volatile uint32_t *fence_ptr = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_FENCE_OFF);
+	uint32_t seq = ++s_gpu_blits_submitted;
+
+	uint32_t remaining = total_dwords;
+	uint32_t cur_src = src_va;
+	uint32_t cur_dst = dst_va;
+
+	while (remaining > 0) {
+		uint32_t cur_chunk = remaining > max_chunk_dwords ? max_chunk_dwords : remaining;
+		rb[w++] = cp_type7_packet(CP_MEMCPY, 5);
+		rb[w++] = cur_chunk;
+		rb[w++] = cur_src;
+		rb[w++] = 0;
+		rb[w++] = cur_dst;
+		rb[w++] = 0;
+
+		cur_src += cur_chunk * 4u;
+		cur_dst += cur_chunk * 4u;
+		remaining -= cur_chunk;
 	}
 
-	rb[w++] = cp_type7_packet(CP_MEMCPY, 5);
-	rb[w++] = total_dwords;
-	rb[w++] = src_va;
-	rb[w++] = 0;
-	rb[w++] = dst_va;
-	rb[w++] = 0;
+	/* Wait for all DMA memory writes to commit before writing fence */
+	rb[w++] = cp_type7_packet(CP_WAIT_MEM_WRITES, 0);
+	rb[w++] = cp_type7_packet(CP_WAIT_FOR_ME, 0);
 
-	clean_pool_range((uintptr_t)rb, 0x8000u);
+	/* Write monotonic fence to scratch page */
+	rb[w++] = cp_type7_packet(CP_MEM_WRITE, 3);
+	rb[w++] = RUAN_S3_GPU_VA_FENCE;
+	rb[w++] = 0;
+	rb[w++] = seq;
+
+	clean_pool_range((uintptr_t)&rb[w_start], (w - w_start) * 4u);
+	if (w >= RUAN_CP_RB_DWORDS) w = 0;
 	s3_current_wptr = w;
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_RB_WPTR * 4u, w);
 
-	/* Poll for completion (typically ~1.5 ms for full 1600x2560 frame) */
-	for (unsigned p = 0; p < 20000; p++) {
-		uint32_t rptr = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_CP_RB_RPTR * 4u);
-		uint32_t rbbm_status = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_RBBM_STATUS * 4u);
-		if (rptr == w && !(rbbm_status & (1u << 31))) break;
+	/* Poll for completion (typically ~1.2 ms for full 16 MB frame DMA copy) */
+	int completed = 0;
+	uint32_t rptr = 0, rbbm_status = 0;
+	for (unsigned p = 0; p < 25000; p++) {
+		rptr = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_CP_RB_RPTR * 4u);
+		rbbm_status = *(volatile uint32_t *)(va[GPB_WIN_GPU] + RUAN_RBBM_STATUS * 4u);
+		if (rptr == w && !(rbbm_status & (1u << 31))) {
+			completed = 1;
+			break;
+		}
 		delay(10);
 	}
+
+	/* Invalidate fence cache line so CPU reads fresh DRAM written by GPU */
+	clean_pool_range((uintptr_t)fence_ptr, 64);
+	__asm__ volatile("dsb sy" ::: "memory");
+
+	if (!completed || *fence_ptr != seq) {
+		uint32_t rbbm_int0 = 0, cp_fault = 0, fsr = 0;
+		(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_INT_0_STATUS * 4u, &rbbm_int0);
+		if (rbbm_int0 & RUAN_A710_INT_HWERROR) (void)rd(NULL, GPB_WIN_GPU, RUAN_CP_HW_FAULT * 4u, &cp_fault);
+		if (va[W_SMMUF] && gpu_stream0_cb_off) (void)rd(NULL, W_SMMUF, gpu_stream0_cb_off + CB_FSR, &fsr);
+		kprintf("ruan-gpu: timeout blit seq=%u rptr=%u wptr=%u rbbm=0x%08x fence=%u (exp %u) int0=0x%08x fault=0x%08x fsr=0x%08x\n",
+		        seq, rptr, w, rbbm_status, *fence_ptr, seq, rbbm_int0, cp_fault, fsr);
+		return -60; /* -ETIMEDOUT */
+	}
+
+	/* RBBM error interrupts, read and cleared the way KGSL gen7_irq_handler does (status written back to
+	 * INT_CLEAR_CMD), so one fault fails one frame and not every frame after it. CP_HW_FAULT is only meaningful
+	 * with HWERROR set (gen7_err_callback). */
+	uint32_t rbbm_int0 = 0, cp_fault = 0;
+	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_INT_0_STATUS * 4u, &rbbm_int0);
+	if (rbbm_int0) (void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_INT_CLEAR_CMD * 4u, rbbm_int0);
+	if (rbbm_int0 & RUAN_A710_INT_HWERROR) (void)rd(NULL, GPB_WIN_GPU, RUAN_CP_HW_FAULT * 4u, &cp_fault);
+	s_gpu_last_int0 = rbbm_int0, s_gpu_last_hw_fault = cp_fault;
+	if (rbbm_int0 & RUAN_A710_INT_ERRORS) {
+		kprintf("ruan-gpu: hardware error int0=0x%08x fault=0x%08x\n", rbbm_int0, cp_fault);
+		return -5; /* -EIO */
+	}
+
+	if (va[W_SMMUF] && gpu_stream0_cb_off) {
+		uint32_t fsr = 0;
+		(void)rd(NULL, W_SMMUF, gpu_stream0_cb_off + CB_FSR, &fsr);
+		if (fsr & 0x0000007Fu) {
+			(void)wr(NULL, W_SMMUF, gpu_stream0_cb_off + CB_FSR, fsr); /* clear fault */
+			kprintf("ruan-gpu: smmu fault fsr=0x%08x\n", fsr);
+			return -14; /* -EFAULT: SMMU translation / permission fault */
+		}
+	}
+
+	/* Blit and fence confirmed retired by hardware */
+	s_gpu_blits_retired = seq;
 	__asm__ volatile("dsb sy" ::: "memory");
 	return 0;
+}
+
+int native_adreno_fences(uint32_t *submitted, uint32_t *retired)
+{
+	if (!submitted || !retired) return 0;
+	*submitted = s_gpu_blits_submitted;
+	*retired = s_gpu_blits_retired;
+	return 1;
 }
 
 void
 ruan_gpu_survey(void)
 {
-	unsigned mode = 0, survey = 0, fb_gpu = 0;
+	unsigned mode = 0, survey = 0, fb_gpu = 0, fb_gpu_stream = 0;
 	PE_parse_boot_argn("ruan-gpu", &mode, sizeof(mode));
 	if (!mode && PE_parse_boot_argn("ruan-gpu-survey", &survey, sizeof(survey)) && survey == 1) mode = 1;
 	if (!mode && PE_parse_boot_argn("fb-gpu", &fb_gpu, sizeof(fb_gpu)) && fb_gpu == 1) mode = 16;
+	if (!mode && PE_parse_boot_argn("fb-gpu-stream", &fb_gpu_stream, sizeof(fb_gpu_stream)) && fb_gpu_stream == 1) mode = 16;
 	if (mode > GPB_MAX_MODE) {
 		boot_progress_stage("gpu: ruan-gpu mode exceeds GPB_MAX_MODE");
 		return;

@@ -15,6 +15,7 @@ extern "C" {
 #endif
 
 void native_usb_debug_probe(void);
+void flush_dcache64(uint64_t addr, unsigned count, int phys);
 
 #ifdef __cplusplus
 }

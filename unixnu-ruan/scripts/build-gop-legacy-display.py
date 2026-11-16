@@ -421,10 +421,21 @@ hid_probe_obj = compile_cxx(PROBE_SOURCE.parent / 'HidInputProbe.cpp', OUT / 'Hi
 usb_debug_obj = compile_cxx(PROBE_SOURCE.parent / 'UsbDebugCdc.cpp', OUT / 'UsbDebugCdc.o')
 print(f'PASS: NativeHidInput bound to the original IOHIDDevice ({len(hid_bindings)} bindings, owned {hid_owned})')
 
+# Stage S6: Build staged AGXAccelerator (IOAcceleratorES subclass for Metal discovery)
+accel_script = ROOT / 'scripts/build-adreno740-accelerator.py'
+accel_objects = []
+if accel_script.exists():
+    run([sys.executable, str(accel_script)])
+    accel_dir = ROOT / 'build/adreno740-accelerator'
+    if (accel_dir / 'NativeAdrenoAccelerator.late.o').exists() and (accel_dir / 'original-bindings.o').exists():
+        accel_bindings_renamed = OUT / 'accel-original-bindings.o'
+        shutil.copy2(accel_dir / 'original-bindings.o', accel_bindings_renamed)
+        accel_objects = [accel_dir / 'NativeAdrenoAccelerator.late.o', accel_bindings_renamed]
+
 archive = OUT / 'libNativeLegacyDisplay.late.a'
 archive.unlink(missing_ok=True)
 run([shutil.which('llvm-ar'), 'rcs', archive, late, OUT / 'original-bindings.o', probe_obj,
-     hid_late, OUT / 'hid-original-bindings.o', hid_probe_obj, usb_debug_obj])
+     hid_late, OUT / 'hid-original-bindings.o', hid_probe_obj, usb_debug_obj, *accel_objects])
 
 sources = [GOPFB / 'NativeLegacyDisplay.cpp', GOPFB / 'NativeLegacyRequest.h',
            GOPFB / 'OriginalMobileFramebufferABI.h', PROBE_SOURCE, OUT / 'OriginalLegacyFramebufferABI.h', *GOPFB_PATCHES,

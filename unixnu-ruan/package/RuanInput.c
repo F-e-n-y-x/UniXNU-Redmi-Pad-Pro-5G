@@ -140,6 +140,8 @@ hakios_spmi_unlock(void)
 void
 ruan_input_start(void)
 {
+	extern void ruan_battery_init(void);
 	hakios_focaltech_init();
 	hakios_buttons_init();
+	ruan_battery_init();
 }

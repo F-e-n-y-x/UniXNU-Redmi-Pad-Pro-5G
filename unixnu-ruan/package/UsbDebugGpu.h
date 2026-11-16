@@ -135,7 +135,15 @@ static bool usbGpuCommand(TerminalSession &s, const char *raw, char *buf, size_t
     if (!&ruan_gpu_run) {
         s.reply.writeStr("GPU: not in this kernel (package/RuanGpuPower.c)\r\n");
     } else if (!ok) {
-        snprintf(buf, cap, "GPU: last %s | %s\r\n", &ruan_gpu_short ? ruan_gpu_short : "", &ruan_gpu_row ? ruan_gpu_row : "");
+        snprintf(buf, cap, "GPU: last %s | %s\r\n[usb] METAL: stage=%u (status=%d) reg=%u opens=%u reads=%u prop='%s' cli='%s'\r\n",
+                 &ruan_gpu_short ? ruan_gpu_short : "", &ruan_gpu_row ? ruan_gpu_row : "",
+                 &ruan_metal_stage ? ruan_metal_stage : 0u,
+                 &ruan_metal_status ? ruan_metal_status : -1,
+                 &ruan_metal_registered ? ruan_metal_registered : 0u,
+                 &native_adreno_metal_opens ? native_adreno_metal_opens : 0u,
+                 &native_adreno_metal_property_reads ? native_adreno_metal_property_reads : 0u,
+                 &native_adreno_last_property ? native_adreno_last_property : "",
+                 &native_adreno_last_client ? native_adreno_last_client : "");
         s.reply.writeStr(buf);
     } else if ((mode < 1u || mode > 16u) && mode != 99u) {
         s.reply.writeStr("GPU: gpu 1..7 (S1/S2 GMU/clocks/SMMU), "

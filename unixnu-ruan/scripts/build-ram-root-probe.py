@@ -172,12 +172,21 @@ objects = [ramblock / 'NativeRamBlock.o', ramblock / 'original-bindings.o',
            compile_like('bsd/DEVELOPMENT/kern_exec.o.json', DEVICE / 'package/RuanInput.c', OUT / 'RuanInput.o'),
            compile_like('bsd/DEVELOPMENT/kern_exec.o.json', DEVICE / 'package/RuanTouch.c', OUT / 'RuanTouch.o', HAKIOS_C),
            compile_like('bsd/DEVELOPMENT/kern_exec.o.json', DEVICE / 'package/RuanButtons.c', OUT / 'RuanButtons.o', HAKIOS_C),
+           # Battery / PowerSource subsystem (SPMI PM7250B / PMK8350 vadc & IOPMPowerSource)
+           compile_like('bsd/DEVELOPMENT/kern_exec.o.json', DEVICE / 'package/RuanBattery.c', OUT / 'RuanBattery.o', HAKIOS_C),
+           compile_cxx_like('iokit/DEVELOPMENT/IOPlatformExpert.cpo.json', DEVICE / 'package/HakiosBattery.cpp', OUT / 'HakiosBattery.o'),
+           # Backlight subsystem (MIPI DSI DCS 0x51 & AppleARMBacklight conformance)
+           compile_cxx_like('iokit/DEVELOPMENT/IOPlatformExpert.cpo.json', DEVICE / 'package/RuanBacklight.cpp', OUT / 'RuanBacklight.o'),
            # ruan-cpufreq: EPSS frequency vote (package/RuanCpuFreq.c, layout from UniXNU-Dizi-Ruan CpuFreqProbe.cpp)
            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanCpuFreq.c', OUT / 'RuanCpuFreq.o'),
            # Adreno 710 bring-up stage S1 (gpu-dev): gated GCC/GPUCC reads, CX GDSC power-up, GPU SMMU survey (ruan-gpu=<1-3>)
            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanGpuPower.c', OUT / 'RuanGpuPower.o'),
            # HFI queue table for gpu 6 (UniXNU kits/AdrenoFirmware/AdrenoHfi.c, copied into package/)
-           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/AdrenoHfi.c', OUT / 'AdrenoHfi.o')]
+           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/AdrenoHfi.c', OUT / 'AdrenoHfi.o'),
+           # Qualcomm WCN6750 Wi-Fi subsystem (icnss2 / ath11k & 12M MSA)
+           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanWifiProbe.c', OUT / 'RuanWifiProbe.o'),
+           # Qualcomm LPASS Quad WSA883x Smart Amplifiers Audio subsystem
+           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanAudioProbe.c', OUT / 'RuanAudioProbe.o')]
 archive = OUT / 'libRamRootProbe.a'
 archive.unlink(missing_ok=True)
 subprocess.run(['xcrun', 'ar', 'rcs', archive, *objects], check=True)

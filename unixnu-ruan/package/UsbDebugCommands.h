@@ -133,6 +133,11 @@ static bool usbCaptureAndQueueGsc1(UsbScreenState &sc, UsbReplyRing &reply, bool
         return false;
     }
 
+    // Invalidate/flush CPU dcache for GOP framebuffer so GPU DMA blits in DRAM are read cleanly
+    if (native_legacy_gop_virtual && native_legacy_gop_bytes) {
+        flush_dcache64((uint64_t)native_legacy_gop_virtual, (unsigned)native_legacy_gop_bytes, 0);
+    }
+
     // Point-sample XNU BGRA8888 GOP framebuffer -> little-endian RGB565
     for (uint32_t y = 0; y < outH; ++y) {
         const uint32_t sy = (y * srcH) / outH;

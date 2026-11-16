@@ -217,13 +217,52 @@ TAG=<tag> bash zima-ramroot.sh usb <dir>     # tablet in stock fastboot
     - Status: `gpu m6 ok s6 fw1 hfi1`, return code `rc=0`.
   - **Stage S2 is complete!** The GMU is running firmware from DDR, responding over SMMU stream 5, and the Host-Firmware Interface (HFI) is active.
 
-### Resume here (next session / Stage S3)
-1. **Stage S3 (SQE microcode & CP / zap):**
-   - SQE microcode (`a710_sqe.fw`, 36308 bytes, sha256 `c5588585...`) shipped in rootfs or staged.
-   - Zap shader authentication via Qualcomm SCM PAS ID 13 into reserved carveout `gpu_microcode_region` (`0x89e1a000` + `0x2000`).
-   - Allocate ringbuffer and fence from the remaining 15.5 MiB in the reserved GPU pool (`0x8B8B80000`).
-2. **UI Rendering:**
-   - Investigate Metal / Turnip binding to accelerate SpringBoard/WindowServer beyond the linear CPU GOP framebuffer.
-3. Lab procedure:
-   - Pi 5 (`192.168.11.5`) `~/ramroot/ruan-usbdbg.py`: `shot | log | dmesg | ls | get | gpu N | reboot-fastboot`.
-   - Never flash storage partitions; test RAM-only via `zima-ramroot.sh usb out-rbu7`.
+### 21. GPU S3–S5: GX power, command processor, DMA (rbu8–rbu28, 2026-11-15/16, Antigravity)
+Details per build are in README.md checkpoints rbu10→rbu28; this is the porter's summary.
+- **S3, `gpu 8`–`gpu 11`:**
+  - GX powered via the GMU: OOB GPU_SET (ack interrupt unmasked, 500 ms poll), HFI start, and a GX bandwidth/perf vote. ARC/BCM levels are found from cmd-db, with fallback tables if cmd-db can't be mapped.
+  - `gen7_start` writes: GBIF, CP_PROTECT and HWCG.
+  - Stream-0 context: **bank 2**, SMR mask 0x400. GPU VA window 0x40000000 + pool offset; the GOP framebuffer (phys 0xb8000000) is at GPU VA 0x50000000.
+  - SQE start fix (rbu14): APRIV 0x7f, and don't halt via CP_SQE_CNTL.
+  - CP_MEM_WRITE of 0xC0FFEE01 was read back by the CPU.
+- **Secure mode:**
+  - Writing `RBBM_SECVID_TRUST_CNTL` from the CPU faulted, so it was removed (2167c6d).
+  - `CP_SET_SECURE_MODE 0` stalled the CP without a zap shader, so it was removed (rbu17).
+  - The zap shader (SCM PAS 13) is **not done**. Non-secure buffers work anyway.
+- **S4, `gpu 14`:** CP_MEM_WRITE drew a 100×40 rectangle into the framebuffer; all 4000 pixels were read back.
+- **S5, `gpu 15`/`gpu 16`:** a CP_MEMCPY (0x75) copy between buffers (256 dwords) and into the framebuffer (40000 px), both read back. This is command-processor DMA, not the 2D blit engine.
+- **Per-frame path (`fb-gpu-stream=1`/`fb-gpu=1`, `native_legacy_gpu_offer`):** maps up to 4 compositor surfaces into stream 0 and does one CP_MEMCPY per frame, with completion on a thread call. Experimental; the default is still the CPU copy (`fb-wc=1`).
+- **Mistakes to learn from:**
+  - **rbu24 broke the type-7 header**: opcode and count swapped, parity dropped, so the CP halted with `rptr 0`. Fixed in rbu25.
+  - The header's count mask was also 0x7fff, which overlaps the parity bit; it is now 0x3fff.
+  - Both are now caught by `docs/research/gpu-dev/tests/pm4_host.c`. Build it with `cc -Wall -Wextra -Werror -I../../../../unixnu-ruan/package pm4_host.c`.
+
+### 22. Review of rbu22–rbu28 (Claude, 2026-11-16)
+- **Not real yet, despite "verified" in old checkpoints:**
+  - Wi-Fi: `RuanWifiProbe.c` only maps one MSA page.
+  - Audio: `RuanAudioProbe.c` touches no hardware.
+  - Metal/IOAcceleratorES: `NativeAdrenoAccelerator.cpp` and `build-adreno740-accelerator.py` are missing, so it stops at stage 1, and the user-client stub returned success with a NULL handler.
+  - Battery %: falls back silently to a hardcoded 3980 mV (= the 73% in screenshots).
+- **Per-frame GPU path bugs (handed to Antigravity to fix):**
+  - Ring wrap to 0 without NOP padding, so the CP runs stale dwords.
+  - The blit returns 0 on timeout; fences report retired = submitted.
+  - Cached IOMemoryDescriptors are not retained (GPU DMA from freed pages); `sourceStride` is ignored.
+- **Rule going forward:** a subsystem is "verified" only when a register or data readback from that hardware is logged. Printing a status string is not verification.
+
+### 23. Battery, backlight, GPU WIP (rbu29–rbu33, 2026-11-16/17)
+- **Battery (tested rbu29):** PM7250B fuel gauge read-only over SPMI observer (QG 0x848: LAST_ADC_V 0xC0, LAST_ADC_I 0xC2); charger state BATTERY_CHARGER_STATUS_1 (CHGR+0x06). Log `battery: vbat 4365 mV from qg …, ibat -507 mA`; iPadOS shows 100% + charging.
+- **Backlight = Silergy SY7758 on I2C** (DT `sy7758@2e` on i2c@984000 = QUP0 SE1; panel `bl_ctrl_external`; WLED/LPG disabled). Old DSI-DCS driver was fake.
+  - rbu30/31 (tested): GENI FIFO I2C works: id 0x63, bootloader level 500. Brightness regs 0x10/0x11 write+readback OK; DEV_CTL 0x01 switched 0x83→0x85 (register mode, as Linux sy7758_init). USB `backlight N`, `backlight reg R [V]` (decimal). User could not see a light change before the mode switch; after it, not confirmed by eye.
+  - iPadOS slider: CoreBrightness (CBDisplayContaineriOS) needs IOObjectConformsTo(service,"AppleARMBacklight").
+    - rbu32: defining our own class `AppleARMBacklight` → boot panic "class AppleARMBacklight is a duplicate; kext com.apple.driver.AppleARMPlatform already has a class by that name". Reverted (f1eca33).
+    - rbu33: UniXNU-sheng method (copy vtable, slot 7 getMetaClass → Apple's AppleARMBacklight metaclass; publish backlight-control only then) → Apple logo, then black screen, USB never up, no log. Parked as `unixnu-ruan/wip/backlight-impersonate-rbu33-crashes.patch`, not in the tree.
+    - After rbu33, a re-boot of known-good rbu31 also failed (fastboot boot accepted, tablet left USB, crash without message). Unknown whether rbu33 was really the cause or the old intermittent early-boot failure / tablet state. Re-test rbu31 first next time.
+  - sheng note: publishing `backlight-control` WITHOUT the conformance blocks QuartzCore's libEDR send and stops screen updates — rbu23–31 did that; may explain `copies=3` display stalls.
+- **GPU (Antigravity WIP, 7bca7b4):** chunked CP_MEMCPY frame copy, RBBM_INT_0_MASK, wrap/fence/fallback counters. Built into rbu31; 5-minute fb-gpu-stream test never ran. Antigravity's quota ran out (resets ~2026-11-23).
+- **Tools:** `/root/unixnu-work/cycle.sh <tag>` packages current kernel with rbu31 args, copies to Pi, reboot-fastboot, RAM boot. Don't `pkill -f` a pattern that appears in your own ssh command line (kills the command).
+
+### Resume here (next session)
+1. Boot known-good rbu31 (`~/ramroot/boot-rbu31.sh` on the Pi, tablet in fastboot). If it fails too, the problem is not the backlight patch: chase the early-boot failure (ramoops replay, `pull-crashes`).
+2. Backlight: confirm by eye that `backlight 4095` / `backlight 0` change the light on rbu31. Then retry the slider: apply wip/backlight-impersonate-rbu33-crashes.patch with `backlight-control` publication delayed until after SpringBoard, or compare with UniXNU-sheng / -dby_w09 / -uke / -ishtar / -komodo package/AppleARMBacklight.cpp for what they do differently on iPadOS 17.
+3. GPU: run fb-gpu-stream=1 5+ min on rbu31; check gpu_blits, fallbacks + last_fb_reason, wraps, fences in USB `display`.
+4. Always look for an existing UniXNU fork implementation first (`gh search code`).

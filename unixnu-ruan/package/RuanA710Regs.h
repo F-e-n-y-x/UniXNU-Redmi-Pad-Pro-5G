@@ -25,6 +25,18 @@
 #define RUAN_RBBM_STATUS                    0x00210u
 #define RUAN_RBBM_STATUS3                   0x00213u
 #define RUAN_RBBM_INT_0_STATUS              0x00201u
+#define RUAN_RBBM_INT_CLEAR_CMD             0x00037u   /* gen7_reg.h GEN7_RBBM_INT_CLEAR_CMD; KGSL writes the status back here */
+#define RUAN_RBBM_INT_0_MASK                0x00038u   /* gen7_reg.h GEN7_RBBM_INT_0_MASK; interrupt mask */
+#define RUAN_CP_INTERRUPT_STATUS            0x00823u   /* gen7_reg.h; detail for INT bit 9 HWERROR */
+/* KGSL GEN7_INT_MASK enabling all RBBM interrupts (adreno_gen7.h) */
+#define RUAN_A710_GEN7_INT_MASK             ((1u << 1) | (1u << 6) | (1u << 7) | (1u << 8) | (1u << 9) | (1u << 15) | \
+                                             (1u << 17) | (1u << 20) | (1u << 22) | (1u << 23) | (1u << 24) | (1u << 25) | (1u << 28))
+/* Error bits of RBBM_INT_0_STATUS (gen7_reg.h GEN7_INT_*, the error cases of KGSL adreno_gen7.c gen7_err_callback /
+ * GEN7_INT_MASK): AHBERROR 1, ATBASYNCFIFOOVERFLOW 6, GPCERROR 7, HWERROR 9, ATBBUSOVERFLOW 22, HANGDETECT 23,
+ * OUTOFBOUNDACCESS 24, UCHETRAP 25, TSBWRITEERROR 28. Bits 17/20 are RB_DONE_TS / CACHE_CLEAN_TS: normal completion. */
+#define RUAN_A710_INT_HWERROR               (1u << 9)
+#define RUAN_A710_INT_ERRORS                ((1u << 1) | (1u << 6) | (1u << 7) | (1u << 9) | (1u << 22) | (1u << 23) | \
+                                             (1u << 24) | (1u << 25) | (1u << 28))
 #define RUAN_RBBM_PERFCTR_CNTL              0x00500u
 #define RUAN_RBBM_PERFCTR_GPU_BUSY_MASKED   0x0050bu
 #define RUAN_RBBM_INTERFACE_HANG_INT_CNTL   0x0001fu
