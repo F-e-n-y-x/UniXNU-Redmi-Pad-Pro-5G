@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build ruan's RAM root: an APFS image of iPadOS 17.7.11 (21H461) that XNU mounts as /dev/md0 (boot-arg rd=md0).
 
-usage: make-ramroot.py --mini|--full --os OS.dmg [--systemos SYSTEMOS.dmg] --work DIR --out IMAGE [--descriptor FILE]
+usage: make-ramroot.py --mini|--full --os OS.dmg [--systemos SYSTEMOS.dmg] --work DIR --out IMAGE [--descriptor FILE] [--overlay DIR]
 
   --mini   sbin/launchd and usr/lib/dyld with the directories around them (a few MB): small enough for the payload
            FAT, it proves the RAM root mount and launchd's exec; dyld then stops for want of its shared cache.
@@ -318,6 +318,49 @@ def gpu_firmware(tree, manifest):
             out.write(f'{stat.S_IFREG | 0o644:o}\t0\t0\t{GPU_FIRMWARE_PATH}/{name}\t\n')
 
 
+def overlay(tree, manifest, src):
+    """--overlay DIR: DIR's files over the root at the same paths (build-turnip-smoke.py's smoke tool and Turnip). A file the root
+    already has keeps its manifest line (mode, owner); new files are root:wheel, 0755 when executable, else 0644, with their directories."""
+    present = {line.split('\t')[3] for line in manifest.read_text().splitlines()}
+    with open(manifest, 'a') as out:
+        for path in sorted(p for p in src.rglob('*') if p.is_file()):
+            rel = path.relative_to(src).as_posix()
+            parts = rel.split('/')
+            for i in range(1, len(parts)):
+                d = '/'.join(parts[:i])
+                if d not in present:
+                    out.write(f'{stat.S_IFDIR | 0o755:o}\t0\t0\t{d}\t\n')
+                    present.add(d)
+            (tree / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tree / rel).unlink(missing_ok=True)
+            shutil.copyfile(path, tree / rel)
+            if rel not in present:
+                out.write(f'{stat.S_IFREG | (0o755 if os.access(path, os.X_OK) else 0o644):o}\t0\t0\t{rel}\t\n')
+                present.add(rel)
+
+
+def data_overlay(tree, manifest, src):
+    """--data-overlay DIR: DIR's files into the Data volume (DIR mirrors private/var: DIR/mobile/Library/Caches/... lands at
+    /private/var/mobile/Library/Caches/...), owned by mobile (501) under mobile/, else root; 0700 directories, 0600 files, as the Metal
+    and Turnip caches the device wrote (pulled with ruan-usbdbg.py get), so a fresh RAM Data container starts with warm caches."""
+    present = {line.split('\t')[3] for line in manifest.read_text().splitlines()}
+    with open(manifest, 'a') as out:
+        for path in sorted(p for p in src.rglob('*') if p.is_file()):
+            rel = path.relative_to(src).as_posix()
+            owner = 501 if rel == 'mobile' or rel.startswith('mobile/') else 0
+            parts = rel.split('/')
+            for i in range(1, len(parts)):
+                d = '/'.join(parts[:i])
+                if d not in present:
+                    out.write(f'{stat.S_IFDIR | 0o700:o}\t{owner}\t{owner}\t{d}\t\n')
+                    present.add(d)
+            (tree / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, tree / rel)
+            if rel not in present:
+                out.write(f'{stat.S_IFREG | 0o600:o}\t{owner}\t{owner}\t{rel}\t\n')
+                present.add(rel)
+
+
 def add_links(manifest, links):
     present = {line.split('\t')[3] for line in manifest.read_text().splitlines()}
     with open(manifest, 'a') as out:
@@ -483,6 +526,8 @@ def main():
     ap.add_argument('--data', action='store_true')
     ap.add_argument('--data-container', action='store_true')
     ap.add_argument('--descriptor', type=Path)
+    ap.add_argument('--data-overlay', type=Path, help='(with --data-container) files for the Data volume, mirroring private/var')
+    ap.add_argument('--overlay', type=Path, help='(with --full) a directory whose files replace or join the root at the same paths')
     args = ap.parse_args()
     if args.full and not args.systemos:
         ap.error('--full needs --systemos')
@@ -521,6 +566,8 @@ def main():
     add_links(manifest, links)
     if args.full:
         gpu_firmware(tree, manifest)
+        if args.overlay:
+            overlay(tree, manifest, args.overlay)
     volumes = [f'System={tree},manifest={manifest}']
     if args.data:
         data_tree, data_manifest = data_volume(args.os, slt, args.work)
@@ -545,6 +592,8 @@ def main():
         apfsck(image)
         data_tree, data_manifest = data_volume(args.os, slt, args.work)
         seed_data(data_tree, data_manifest, missing_jobs(tree))
+        if args.data_overlay:
+            data_overlay(data_tree, data_manifest, args.data_overlay)
         data = args.work / 'ruan-data.apfs'             # a fixed name: mkapfs.py derives the UUIDs from it
         run([sys.executable, '-I', MKAPFS, '-o', data, '--slack', str(DATA_SLACK), f'Data={data_tree},manifest={data_manifest}'])
         fix_spaceman(data)
@@ -561,6 +610,8 @@ def main():
               f'ram-data-split={split}', file=sys.stderr)
     # read back: launchd (and the cache's first file) must come out of the image byte for byte
     checks = ['sbin/launchd'] + ([f'{DYLD}/dyld_shared_cache_arm64'] if args.full else [])
+    if args.full and args.overlay:
+        checks += [p.relative_to(args.overlay).as_posix() for p in args.overlay.rglob('*') if p.is_file()]
     for path in checks:
         got = subprocess.run([sys.executable, '-I', APFS, 'cat', str(image), '/' + path], check=True,
                              stdout=subprocess.PIPE).stdout

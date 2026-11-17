@@ -26,6 +26,7 @@
 #include "RuanA710HwInit.h"
 #include "RuanA710Pm4.h"
 #include "RuanBuiltinFw.h"
+#include "RuanAdrenoGlue.h"   // gpu 17/18: UniXNU's Adreno740 driver on top of this power-up (package/RuanAdrenoGlue.cpp)
 
 extern void boot_progress_stage(const char *s);
 extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, uint32_t flags);
@@ -113,8 +114,12 @@ static int gpu_s3_writable(uint32_t off)
 	if (off >= RUAN_CP_RB_BASE * 4u && off <= RUAN_CP_SQE_CNTL * 4u) return 1;
 	if (off == RUAN_CP_BV_RB_RPTR_ADDR_LO * 4u || off == RUAN_CP_BV_RB_RPTR_ADDR_HI * 4u) return 1;
 	if (off == RUAN_CP_SQE_INSTR_BASE_LO * 4u || off == RUAN_CP_SQE_INSTR_BASE_HI * 4u) return 1;
+	if (off == 0x00885u * 4u) return 1;   /* CP_SCRATCH(2): NativeAdrenoRing::program clears it (gpu 17) */
 	if (off == RUAN_RBBM_PERFCTR_CNTL * 4u || off == RUAN_RBBM_PERFCTR_GPU_BUSY_MASKED * 4u || off == RUAN_RBBM_INTERFACE_HANG_INT_CNTL * 4u) return 1;
-	if (off >= 0x00e80u * 4u && off <= 0x00e88u * 4u) return 1;   /* UCHE */
+	if (off >= RUAN_UCHE_MODE_CNTL * 4u && off <= RUAN_UCHE_CLIENT_PF * 4u) return 1;   /* UCHE 0xe01..0xe19 */
+	if (off >= RUAN_RBBM_SECVID_TSB_TRUSTED_BASE_LO * 4u && off <= RUAN_RBBM_SECVID_TSB_CNTL * 4u) return 1;   /* SECVID TSB */
+	if (off == RUAN_UCHE_CMDQ_CONFIG * 4u || off == RUAN_RB_NC_MODE_CNTL * 4u || off == RUAN_TPL1_NC_MODE_CNTL * 4u ||
+	    off == RUAN_SP_NC_MODE_CNTL * 4u || off == RUAN_GRAS_NC_MODE_CNTL * 4u || off == RUAN_RB_CMP_DBG_ECO_CNTL * 4u) return 1;
 	if (off == 0x00e3au * 4u) return 1;   /* UCHE_GBIF_GX_CONFIG */
 	for (unsigned i = 0; i < RUAN_A710_HWCG_COUNT; i++) if (off == ruan_a710_hwcg[i].reg * 4u) return 1;
 	for (unsigned i = 0; i < RUAN_A710_GBIF_COUNT; i++) if (off == ruan_a710_gbif[i].reg * 4u) return 1;
@@ -1136,6 +1141,10 @@ struct ruan_gpu_s3_hw {
 };
 static struct ruan_gpu_s3_hw ruan_gpu_s3_hw_result;
 static struct ruan_pt stream0_pt;
+// gpu 17/18: hw_init without ruan's own stream-0 tables and bank-2 context; NativeAdrenoGpuContext programs bank 2 instead.
+// stream0_owner: 1 once this file's stream 0 owns bank 2 (gpu 9..16), 2 once the glue's context does; one owner per boot,
+// since a bank is never torn down here (Gunyah).
+static int s3_hw_skip_stream0, stream0_owner;
 
 static void s3_hw_init(struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
 {
@@ -1170,7 +1179,28 @@ static void s3_hw_init(struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, stru
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_TRAP_BASE_HI * 4u, 0x0001ffffu);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_WRITE_THRU_BASE_LO * 4u, 0xfffff000u);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_WRITE_THRU_BASE_HI * 4u, 0x0001ffffu);
-	(void)wr(NULL, GPB_WIN_GPU, 0x00e85u * 4u, 0x800000u);
+	// gen7_start (KGSL, the A710's own driver) from here on; GMEM range as msm a6xx_hw_init for a7xx: 16 MiB + gmem (512 KiB, the
+	// gmem_base RuanAdrenoGlue.cpp reports to Turnip).
+	// No UCHE_GMEM_RANGE: KGSL's gen7_3_0 (adreno-gpulist.h) has gmem_base 0 and never writes it; the registers read 0/0 after our
+	// 16 MiB writes (rbu52b). RuanAdrenoGlue.cpp reports gmem_base 0 to Turnip to match.
+	// _set_secvid (KGSL gen7_start, sheng gpuHwInit): the trusted (secure) buffer region off. Never written before rbu55, so its
+	// reset value decided which GPU addresses count as trusted; unprivileged (IB) accesses there are dropped without a fault.
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_SECVID_TSB_CNTL * 4u, 0u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_SECVID_TSB_TRUSTED_BASE_LO * 4u, 0u);
+	(void)wr(NULL, GPB_WIN_GPU, (RUAN_RBBM_SECVID_TSB_TRUSTED_BASE_LO + 1u) * 4u, 0u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_SECVID_TSB_TRUSTED_SIZE * 4u, 0u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_CACHE_WAYS * 4u, 0x800000u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_CMDQ_CONFIG * 4u, (6u << 16) | (6u << 12) | (9u << 8) | (1u << 3) | (1u << 2) | 2u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_RB_NC_MODE_CNTL * 4u, (1u << 11) | (1u << 4) | (3u << 1));
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_TPL1_NC_MODE_CNTL * 4u, 3u << 1);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_SP_NC_MODE_CNTL * 4u, (2u << 4) | (3u << 1));
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_GRAS_NC_MODE_CNTL * 4u, 3u << 5);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_MODE_CNTL * 4u, 3u << 21);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_CLIENT_PF * 4u, 1u);
+	{
+		uint32_t eco = 0;
+		if (!rd(NULL, GPB_WIN_GPU, RUAN_RB_CMP_DBG_ECO_CNTL * 4u, &eco)) (void)wr(NULL, GPB_WIN_GPU, RUAN_RB_CMP_DBG_ECO_CNTL * 4u, eco | (1u << 11));
+	}
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_AHB_CNTL * 4u, 0x1u);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_PERFCTR_CNTL * 4u, 0x1u);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_INTERFACE_HANG_INT_CNTL * 4u, (1u << 30) | (RUAN_A710_HANG_DETECT_CYCLES & 0x0fffffffu));
@@ -1199,6 +1229,13 @@ static void s3_hw_init(struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, stru
 		h->hwcg_writes++;
 	}
 
+	if (s3_hw_skip_stream0) {
+		// the bank-2 page must still be known: allowed() lets the glue's context writes through only there
+		gpu_stream0_cb_off = ruan_smmu_survey_result.id1 ? cb_offset(ruan_smmu_survey_result.id1, GPU_STREAM0_BANK) : 0x22000u;
+		(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_STATUS * 4u, &h->rbbm_status);
+		h->ok = 1;
+		return;
+	}
 	result_line("gpu s3_hw: Stream-0 page tables on GPU pool (+0x100000, 256 KiB)");
 	uint8_t *s0_cpu = pool_cpu + RUAN_S3_POOL_STREAM0_PT_OFF;
 	uint64_t s0_pa = pool_pa + RUAN_S3_POOL_STREAM0_PT_OFF;
@@ -1263,6 +1300,7 @@ static void s3_hw_init(struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, stru
 	(void)rd(NULL, W_SMMUF, gpu_stream0_cb_off + CB_SCTLR, &h->sctlr_after);
 	h->ttbr0_lo = (uint32_t)s0_pa;
 	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_STATUS * 4u, &h->rbbm_status);
+	stream0_owner = 1;
 	h->ok = 1;
 }
 
@@ -1838,14 +1876,53 @@ static void s5_fb_dma_blit(struct ruan_gpu_s5_fb *sfb, struct ruan_gpu_s5_m2m *m
 	}
 }
 
+// gpu 17 / 18 (boot-arg ruan-adreno=1): GX on as gpu 8, gen7 hw_init without stream 0 (gpu 9 minus the SMMU part), then
+// package/RuanAdrenoGlue.cpp: 17 = NativeAdreno GPU context on bank 2 + CP init + one fenced CP_MEM_WRITE, 18 = that plus
+// native_adreno_publish. Weak: a kernel without libRuanAdreno.a says "nolink".
+extern int ruan_adreno_glue_run(unsigned stage, const struct ruan_adreno_glue_io *io, char *row, size_t row_bytes)
+    __attribute__((weak_import));
+static int glue_gpu_rd(uint32_t reg, uint32_t *v) {return rd(NULL, GPB_WIN_GPU, reg * 4u, v);}
+static int glue_gpu_wr(uint32_t reg, uint32_t v) {return wr(NULL, GPB_WIN_GPU, reg * 4u, v);}
+static int glue_smmu_rd(uint32_t off, uint32_t *v) {return rd(NULL, W_SMMUF, off, v);}
+static int glue_smmu_wr(uint32_t off, uint32_t v) {return wr(NULL, W_SMMUF, off, v);}
+static char glue_row[64];
+static int s3_glue(unsigned mode, struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s3_hw *hw, struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
+{
+	unsigned on = 0;
+	glue_row[0] = 0;
+	if (!PE_parse_boot_argn("ruan-adreno", &on, sizeof on) || on != 1) {strlcpy(glue_row, "glue off (boot-arg ruan-adreno=1)", sizeof glue_row); return -1;}
+	if (!ruan_adreno_glue_run) {strlcpy(glue_row, "glue nolink", sizeof glue_row); return -1;}
+	// One owner of bank 2 per boot: ruan's stream 0 (gpu 9..16) leaves it enabled and is never torn down (Gunyah).
+	if (stream0_owner == 1) {strlcpy(glue_row, "glue: bank 2 is ruan's stream 0 (gpu 9..16 ran), reboot", sizeof glue_row); return -1;}
+	if (gmu_bank == GPU_STREAM0_BANK || gmu_slot == GPU_STREAM0_SLOT) {strlcpy(glue_row, "glue: GMU took bank 2 / slot 1", sizeof glue_row); return -1;}
+	s3_gx_on(gx, c, b);
+	if (gx->gx_on) {
+		s3_hw_skip_stream0 = 1;
+		s3_hw_init(hw, gx, c, b);
+		s3_hw_skip_stream0 = 0;
+	}
+	if (!hw->ok) {strlcpy(glue_row, "glue: GX/hw_init not ok", sizeof glue_row); return -1;}
+	stream0_owner = 2;
+	// rbu57: RBBM_SECVID_TRUST_CNTL is secure-locked (an HLOS write aborted, esr 0x96000010); secure mode is left through the zap
+	// shader instead (RuanAdrenoGlue.cpp zapExit, gpu-zap=1). `gpu` REGS keeps reading it (trust=).
+	if (!sqe_fw_data) sqe_fw_data = ruan_builtin_sqe_fw, sqe_fw_size = sizeof(ruan_builtin_sqe_fw);
+	const struct ruan_adreno_glue_io io = {
+		glue_gpu_rd, glue_gpu_wr, glue_smmu_rd, glue_smmu_wr, (uint32_t)len[W_SMMUF],
+		GPU_STREAM0_BANK, GPU_STREAM0_SLOT, RUAN_SMMU_SID_GPU, 0x400u,   // ruan DT: kgsl-smmu SID 0, mask 0x400 (rbu59b: 0x402 is refused by Gunyah, SEA)
+		sqe_fw_data, sqe_fw_size,
+		// past this file's pool layout (GMU 512 KiB, S3 buffers and stream-0 tables up to +0x240000), rounded to 4 MiB
+		RUAN_GPU_POOL_BASE + 0x400000u, RUAN_GPU_POOL_BYTES - 0x400000u,
+		result_line};
+	return ruan_adreno_glue_run(mode == 18 ? 2 : 1, &io, glue_row, sizeof glue_row);
+}
 
 int
 ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 {
 	trace_fn = trace, trace_ctx = ctx;
-	if (!mode || (mode > 16 && mode != RUAN_GPU_OFF)) {
+	if (!mode || (mode > 18 && mode != RUAN_GPU_OFF)) {
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m%u?", mode);
-		result_line("gpu: mode is 1..16 or off, nothing done");
+		result_line("gpu: mode is 1..18 or off, nothing done");
 		trace_fn = NULL;
 		return -1;
 	}
@@ -1895,7 +1972,9 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 	struct ruan_gpu_s4_fb *fb = &ruan_gpu_s4_fb_result;
 	struct ruan_gpu_s5_m2m *m2m = &ruan_gpu_s5_m2m_result;
 	struct ruan_gpu_s5_fb *sfb = &ruan_gpu_s5_fb_result;
-	if (mode >= 8 && mode <= 16) {
+	if (mode >= 9 && mode <= 16 && stream0_owner == 2)   // hw_init already ran without stream 0: its ring would fault
+		result_line("gpu: bank 2 is the NativeAdreno context (gpu 17/18 ran), reboot for 9..16");
+	else if (mode >= 8 && mode <= 16) {
 		s3_gx_on(gx, c, b);
 		if (mode >= 9 && gx->gx_on) s3_hw_init(hw, gx, c, b);
 		if (mode >= 10 && hw->ok) s3_cp_start(cp, hw, gx, c, b);
@@ -1906,7 +1985,8 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		if (mode >= 15 && fb->ok) s5_mem_to_mem(m2m, fb, bl, sm, cp, hw, gx, c, b);
 		if (mode >= 16 && m2m->ok) s5_fb_dma_blit(sfb, m2m, fb, bl, sm, cp, hw, gx, c, b);
 	}
-	if (mode != 16) {
+	const int glue_rc = mode == 17 || mode == 18 ? s3_glue(mode, gx, hw, c, b) : 0;
+	if (mode < 16) {   // 16 keeps them for the per-frame blits, 17/18 for the driver (its ring, hang check and TTBR0 switches)
 		for (unsigned w = 0; w < NWIN; w++) {
 			if (va[w]) ml_io_unmap(va[w], (vm_size_t)len[w]);
 			va[w] = 0;
@@ -1985,46 +2065,46 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode >= 10) {
+	if (mode >= 10 && mode <= 16) {
 		snprintf(line, sizeof(line), "gpu s3_cp %s sqe %u rptr %u wptr %u rbbm %08x int0 %08x fault %08x polls %u %s",
 		    cp->ok ? "ok" : "FAIL", cp->sqe_bytes, cp->rptr, cp->wptr, cp->rbbm_status, cp->rbbm_int_0, cp->cp_hw_fault, cp->polls,
 		    cp->why[0] ? cp->why : "CP ME_INIT idle");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode >= 11) {
+	if (mode >= 11 && mode <= 16) {
 		snprintf(line, sizeof(line), "gpu s3_smoke %s magic %08x (wrote %08x) rptr %u/%u polls %u rbbm %08x %s",
 		    sm->ok ? "ok" : "FAIL", sm->magic_read, sm->magic_written, sm->rptr_after, sm->wptr_after, sm->polls, sm->rbbm_status,
 		    sm->why[0] ? sm->why : "GPU executed CP_MEM_WRITE verified by CPU!");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode >= 12) {
+	if (mode >= 12 && mode <= 16) {
 		snprintf(line, sizeof(line), "gpu s3_zap trust %08x>%08x secure %s %s",
 		    zp->trust_cntl_before, zp->trust_cntl_after, zp->secure_cleared ? "CLEARED" : "LOCKED",
 		    zp->why[0] ? zp->why : "trust control unlocked");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode >= 13) {
+	if (mode >= 13 && mode <= 16) {
 		snprintf(line, sizeof(line), "gpu s3_blitter %s pixels %u/16 %s",
 		    bl->ok ? "ok" : "FAIL", bl->pixels_filled, bl->why[0] ? bl->why : "16 words filled into user buffer");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode >= 14) {
+	if (mode >= 14 && mode <= 16) {
 		snprintf(line, sizeof(line), "gpu s4_fb %s pixels %u/4000 %s",
 		    fb->ok ? "ok" : "FAIL", fb->pixels_drawn, fb->why[0] ? fb->why : "4000 pixels blitted to GOP FB");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode >= 15) {
+	if (mode >= 15 && mode <= 16) {
 		snprintf(line, sizeof(line), "gpu s5_m2m %s dwords %u/256 %s",
 		    m2m->ok ? "ok" : "FAIL", m2m->dwords_copied, m2m->why[0] ? m2m->why : "256 dwords copied via CP_MEMCPY");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode >= 16) {
+	if (mode == 16) {
 		snprintf(line, sizeof(line), "gpu s5_fb %s pixels %u/40000 %s",
 		    sfb->ok ? "ok" : "FAIL", sfb->pixels_copied, sfb->why[0] ? sfb->why : "40000 pixels blitted to GOP FB via CP_MEMCPY DMA");
 		result_line(line);
@@ -2051,6 +2131,10 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m15 %s m2m%u", m2m->ok ? "ok" : "FAIL", m2m->dwords_copied);
 	} else if (mode == 16) {
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m16 %s fb_dma%u", sfb->ok ? "ok" : "FAIL", sfb->pixels_copied);
+	} else if (mode == 17 || mode == 18) {
+		result_line(glue_row);
+		strlcpy(ruan_gpu_row, glue_row, sizeof(ruan_gpu_row));
+		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m%u %s", mode, glue_rc ? "FAIL" : "ok");
 	} else
 	snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m%u cx%s gx%s smmu%s%s%s", mode, cx ? "on" : "off",
 	    gpb_gdsc_on(r->gx_gdscr) ? "on" : "off", r->smmu == GPB_DONE ? "ok" : "-", mode == 4 ? (k->gmu_read ? " gmuR" : " gmu-") : "",
@@ -2067,7 +2151,8 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 	    (mode == 13 && !bl->ok) ||
 	    (mode == 14 && !fb->ok) ||
 	    (mode == 15 && !m2m->ok) ||
-	    (mode == 16 && !sfb->ok)) ? -2 : 0;
+	    (mode == 16 && !sfb->ok) ||
+	    ((mode == 17 || mode == 18) && glue_rc)) ? -2 : 0;
 }
 
 int ruan_gpu_is_s5_ready(void)
@@ -2078,6 +2163,75 @@ int ruan_gpu_is_s5_ready(void)
 uint32_t ruan_gpu_ring_wraps(void)
 {
 	return s_gpu_ring_wraps;
+}
+
+// USB `gpu` (UsbDebugGpu.h), rbu50: the GPU's fault state after Turnip's submits. GPU registers (gen7 offsets, KGSL gen7_reg.h) and the
+// GPU context bank's fault registers (bank 2: FSR, FAR, FSYNR0). Reads only.
+// rbu74: one 64-bit word of physical memory through a fresh uncached mapping (sheng physRead64), and a software walk of bank 2's
+// current TTBR0 table (4 KiB granule, T0SZ from TCR) for a GPU address: the hung IB's words for `gpu`. Reads only.
+static int phys_read64(uint64_t pa, uint64_t *out)
+{
+	const vm_offset_t m = ml_io_map_unmappable((vm_offset_t)(pa & ~0xfffull), 0x1000, 7 /* VM_WIMG_IO */);
+	if (!m) return -1;
+	*out = *(volatile uint64_t *)(m + (pa & 0xff8));
+	ml_io_unmap(m, 0x1000);
+	return 0;
+}
+int ruan_gpu_reg_read(uint32_t reg, uint32_t *value) {return rd(NULL, GPB_WIN_GPU, reg * 4u, value);}
+int ruan_gpu_va_read32(uint64_t gva, uint32_t *value)
+{
+	uint32_t lo = 0, hi = 0, tcr = 0;
+	if (!va[W_SMMUF] || !gpu_stream0_cb_off || rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x20u, &lo) || rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x24u, &hi) ||
+	    rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x30u, &tcr)) return -1;
+	const unsigned bits = 64u - (tcr & 0x3fu);
+	if (bits < 25 || bits > 48) return -2;
+	uint64_t table = ((uint64_t)hi << 32 | lo) & 0x0000fffffffff000ull, desc = 0;
+	for (int level = 4 - (int)((bits - 12 + 8) / 9); level <= 3; ++level) {
+		const unsigned shift = 12u + 9u * (unsigned)(3 - level);
+		if (phys_read64(table + ((gva >> shift) & 0x1ffu) * 8u, &desc) || !(desc & 1)) return -3;
+		if (level == 3 || !(desc & 2)) {
+			const uint64_t pa = (desc & 0x0000fffffffff000ull & ~((1ull << shift) - 1)) | (gva & ((1ull << shift) - 1));
+			uint64_t w = 0;
+			if (phys_read64(pa & ~7ull, &w)) return -4;
+			*value = (uint32_t)(w >> ((pa & 4) * 8));
+			return 0;
+		}
+		table = desc & 0x0000fffffffff000ull;
+	}
+	return -5;
+}
+
+int ruan_gpu_fault_regs(char *out, size_t size)
+{
+	static const struct {const char *name; uint32_t reg;} regs[] = {
+		{"int0", 0x201}, {"rbbm", 0x210}, {"hwf", 0x821}, {"prot", 0x824}, {"rptr", 0x806}, {"wptr", 0x807}, {"ib1", 0x928}, {"ib1hi", 0x929}, {"ib1rem", 0x92a}, {"ib2", 0x92b}, {"ib2hi", 0x92c}, {"ib2rem", 0x92d},
+		{"cpst1", 0x825}, {"rbbm3", 0x213}, {"wtb", 0xe07}, {"wtbhi", 0xe08}, {"trap", 0xe09}, {"traphi", 0xe0a}, {"gmin", 0xe0b}, {"gmax", 0xe0d},
+		{"ways", 0xe17}, {"umode", 0xe01}, {"pf", 0xe19}, {"tsbbase", 0xf800}, {"tsbhi", 0xf801}, {"tsbsize", 0xf802}, {"tsbcntl", 0xf803},
+		{"tsbst", 0xfc00}, {"trust", 0xf400}, {"gbifhalt", 0x3c45}, {"rbhalt", 0x16}, {"qsb0", 0x3c03}, {"qos", 0x11}, {"sc0", 0x3c01},
+		{"sc1", 0x3c02}};
+	size_t at = 0;
+	for (unsigned i = 0; i < sizeof regs / sizeof *regs && at < size; i++) {
+		uint32_t v = 0;
+		const int bad = rd(NULL, GPB_WIN_GPU, regs[i].reg * 4u, &v);
+		at += (size_t)snprintf(out + at, size - at, bad ? " %s=?" : " %s=%x", regs[i].name, v);
+	}
+	uint32_t fsr = 0, far_lo = 0, far_hi = 0, fsynr = 0, ttbr_lo = 0, ttbr_hi = 0;
+	if (at < size && va[W_SMMUF] && gpu_stream0_cb_off &&
+	    !rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x58u, &fsr) && !rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x60u, &far_lo) &&
+	    !rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x64u, &far_hi) && !rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x68u, &fsynr) &&
+	    !rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x20u, &ttbr_lo) && !rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x24u, &ttbr_hi))
+		at += (size_t)snprintf(out + at, size - at, " | cb2 fsr=%x far=%x%08x fsynr0=%x ttbr0=%x%08x", fsr, far_hi, far_lo, fsynr,
+		    ttbr_hi, ttbr_lo);
+	// GR0 global faults (a stream no SMR routes: sGFSYNR1 bits 15:0 = its SID), and SMR slot 1 as programmed.
+	// Off unless gpu-gfsr=1: GR0 belongs to Gunyah (rbu51 reset silently; the reads ran only on a `gpu` query, so likely not them).
+	uint32_t gfsr = 0, gfsynr0 = 0, gfsynr1 = 0, gfsynr2 = 0, smr = 0, s2cr = 0, gfsr_on = 0;
+	PE_parse_boot_argn("gpu-gfsr", &gfsr_on, sizeof gfsr_on);
+	if (gfsr_on == 1 && at < size && va[W_SMMUF] && !rd(NULL, W_SMMUF, 0x48u, &gfsr) && !rd(NULL, W_SMMUF, 0x50u, &gfsynr0) &&
+	    !rd(NULL, W_SMMUF, 0x54u, &gfsynr1) && !rd(NULL, W_SMMUF, 0x58u, &gfsynr2) &&
+	    !rd(NULL, W_SMMUF, GPB_SMMU_SMR(GPU_STREAM0_SLOT), &smr) && !rd(NULL, W_SMMUF, GPB_SMMU_S2CR(GPU_STREAM0_SLOT), &s2cr))
+		at += (size_t)snprintf(out + at, size - at, " | gr0 gfsr=%x gfsynr=%x/%x/%x smr1=%x s2cr1=%x", gfsr, gfsynr0, gfsynr1, gfsynr2,
+		    smr, s2cr);
+	return 0;
 }
 
 int ruan_gpu_stream0_map_page(uint32_t va_addr, uint64_t pa_addr, uint32_t bytes)
@@ -2213,16 +2367,32 @@ int native_adreno_fences(uint32_t *submitted, uint32_t *retired)
 	return 1;
 }
 
+extern void *initproc;
+typedef struct thread *thread_t;
+extern int kernel_thread_start_priority(void (*)(void *, int), void *, int, thread_t *);
+extern void thread_deallocate(thread_t);
+static void glue_late(void *arg, int wr)
+{
+	(void)wr;
+	for (unsigned i = 0; !initproc && i < 1200; i++) delay(50000);   // up to 60 s for bsd_init's init process
+	(void)ruan_gpu_run((unsigned)(uintptr_t)arg, NULL, NULL);
+}
+
 void
 ruan_gpu_survey(void)
 {
 	unsigned mode = 0, survey = 0, fb_gpu = 0, fb_gpu_stream = 0;
 	PE_parse_boot_argn("ruan-gpu", &mode, sizeof(mode));
 	if (!mode && PE_parse_boot_argn("ruan-gpu-survey", &survey, sizeof(survey)) && survey == 1) mode = 1;
-	if (!mode && PE_parse_boot_argn("fb-gpu", &fb_gpu, sizeof(fb_gpu)) && fb_gpu == 1) mode = 16;
+	(void)fb_gpu;   // fb-gpu=1 is the Metal plugin's GPU hand-off now (LegacyDisplayProbe.cpp); ruan's blitter is fb-gpu-stream=1
 	if (!mode && PE_parse_boot_argn("fb-gpu-stream", &fb_gpu_stream, sizeof(fb_gpu_stream)) && fb_gpu_stream == 1) mode = 16;
-	if (mode > GPB_MAX_MODE) {
+	if (mode > GPB_MAX_MODE && mode != 17 && mode != 18) {   // 17/18: the Adreno glue at boot, while large contiguous buffers still exist
 		boot_progress_stage("gpu: ruan-gpu mode exceeds GPB_MAX_MODE");
+		return;
+	}
+	if (mode == 17 || mode == 18) {   // IOKit is not up here (rbu41 panicked in inTaskWithPhysicalMask): run once init exists
+		thread_t t;
+		if (kernel_thread_start_priority(glue_late, (void *)(uintptr_t)mode, 80, &t) == KERN_SUCCESS) thread_deallocate(t);
 		return;
 	}
 	if (mode) (void)ruan_gpu_run(mode, NULL, NULL);

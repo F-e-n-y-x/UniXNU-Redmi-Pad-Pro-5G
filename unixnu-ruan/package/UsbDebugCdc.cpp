@@ -53,6 +53,8 @@ extern volatile uint32_t native_adreno_metal_opens __attribute__((weak_import));
 extern volatile uint32_t native_adreno_metal_property_reads __attribute__((weak_import));
 extern char native_adreno_last_property[64] __attribute__((weak_import));
 extern char native_adreno_last_client[64] __attribute__((weak_import));
+extern uint32_t ruan_iomfb_calls[128] __attribute__((weak_import)), ruan_iomfb_errors[128] __attribute__((weak_import));
+extern int32_t ruan_iomfb_last[128] __attribute__((weak_import));
 
 extern volatile uint32_t native_legacy_swap_accepted_count __attribute__((weak_import));
 extern volatile uint32_t native_legacy_swap_rejected_count __attribute__((weak_import));
@@ -625,6 +627,16 @@ static void handleCommand(TerminalSession &s, const char *raw) {
                  &native_legacy_vsync_events ? (unsigned long long)native_legacy_vsync_events[4] : 0ULL,
                  &native_legacy_vsync_events ? (unsigned long long)native_legacy_vsync_events[5] : 0ULL);
         s.reply.writeStr(buf);
+        if (&ruan_iomfb_calls) {
+            // rbu80: the IOMobileFramebuffer methods called so far, as selector:calls/failures(last IOReturn).
+            size_t at = (size_t)snprintf(buf, sizeof(buf), "[usb] IOMFB methods:");
+            for (unsigned sel = 0; sel < 128 && at < sizeof(buf) - 24; ++sel)
+                if (ruan_iomfb_calls[sel])
+                    at += (size_t)snprintf(buf + at, sizeof(buf) - at, " %u:%u/%u(%x)", sel, ruan_iomfb_calls[sel], ruan_iomfb_errors[sel],
+                                           (unsigned)ruan_iomfb_last[sel]);
+            strlcat(buf, "\r\n", sizeof(buf));
+            s.reply.writeStr(buf);
+        }
     } else if (strStarts(raw, "display.stress")) {
         const char *p = raw + 14;
         bool ok = false;

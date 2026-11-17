@@ -137,6 +137,28 @@ int boot_reset_watchdog(uint32_t deadline, char *text, unsigned cap) {
 }
 
 // Writes "bootloader" into the reboot-reason cell, verifies it, then PSCI SYSTEM_RESET. Returns only when something refused (text says what);
+/* Always-on pet, from Allenwdk/UniXNU-uke package/BootWatchdogPolicy.c: Gunyah keeps a virtual watchdog for this VM that only UEFI and
+ * Android's gh_virt_wdt pet; nothing petted it here unless ruan-autoreset-wdt was set, a likely cause of the random resets. Raise the
+ * bite time to 300 s first (x1 = 0xffff, the cookie UEFI passes, x2 = ms) so a hang shows as a freeze, then ping every second. */
+volatile int32_t boot_reset_pet_stats[3];   // [0] set-time result, [1] last ping result, [2] pings
+static void pet_thread(void *arg, wait_result_t wr) {
+  (void)arg; (void)wr;
+  for (;;) {
+    boot_reset_pet_stats[1] = (int32_t)smc2(GunyahWdtPing, 0, 0, NULL);
+    boot_reset_pet_stats[2] = boot_reset_pet_stats[2] + 1;
+    assert_wait_timeout((event_t)&boot_reset_pet_stats, THREAD_UNINT, 1000, NSEC_PER_MSEC);
+    thread_block(THREAD_CONTINUE_NULL);
+  }
+}
+int boot_reset_pet_start(char *text, unsigned cap) {
+  boot_reset_pet_stats[0] = (int32_t)smc2(GunyahWdtSetTime, 0xffff, 300000, NULL);
+  thread_t thread;
+  if (kernel_thread_start_priority(pet_thread, NULL, MAXPRI_KERNEL, &thread) != KERN_SUCCESS) {snprintf(text, cap, "wdt pet: no thread"); return 1;}
+  thread_deallocate(thread);
+  snprintf(text, cap, "wdt pet: bite 300 s (set %d), ping every 1 s", boot_reset_pet_stats[0]);
+  return 0;
+}
+
 // the cell is left as it was in every refusal before the write.
 int boot_reset_bootloader(char *text, unsigned cap) {
   struct reset_maps m;

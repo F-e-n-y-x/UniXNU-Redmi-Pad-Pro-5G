@@ -25,3 +25,7 @@ ruan-ram-data-split.patch
 ruan-ram-block-personality.patch
 # aks=1 offline-key-events=1: the AppleKeyStore stand-in (package/KeyStoreProbe.cpp) before launchd.
 ruan-keystore-probe.patch
+# NativeSandboxGrantProcess="*" (package/LegacyDisplayProbe.cpp) grants every process its native GPU client (rbu64: MACF refused backboardd).
+ruan-native-sandbox-grant-any.patch
+# Counts IOMobileFramebuffer user-client methods per selector for USB `display` (rbu80, vsync/frame-rate investigation).
+ruan-iomfb-method-counts.patch

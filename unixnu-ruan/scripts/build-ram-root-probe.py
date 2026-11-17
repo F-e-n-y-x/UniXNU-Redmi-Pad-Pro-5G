@@ -121,6 +121,10 @@ subprocess.run(['llvm-objcopy', '--remove-section=__DATA,__mod_init_func',
                 '--globalize-symbol=__GLOBAL__sub_I_NativeKeyStoreEvents.cpp',
                 keystore / 'NativeKeyStoreEvents.o', OUT / 'NativeKeyStoreEvents.late.o'], check=True)
 
+compile_cxx_like('iokit/DEVELOPMENT/IOPlatformExpert.cpo.json', DEVICE / 'package/RuanBacklightSvc.cpp', OUT / 'RuanBacklightSvc.o')
+subprocess.run(['llvm-objcopy', '--remove-section=__DATA,__mod_init_func', '--globalize-symbol=__GLOBAL__sub_I_RuanBacklightSvc.cpp',
+                OUT / 'RuanBacklightSvc.o', OUT / 'RuanBacklightSvc.late.o'], check=True)
+
 # The Data volume's disk (UniXNU component RamBlock, NativeRamBlock): a real IOMedia, which APFS needs for a mount ("invalid
 # fsindex: -1" on a bare md node, test 2026-11-14 14:39; "fs iokit node was not found" with a devfs alias, unixnu-fuxi v30).
 # ruan has one loader RAM disk (DarwinBoot takes one RAMDisk), so the driver serves the part from ram-data-split=<offset> on
@@ -177,6 +181,10 @@ objects = [ramblock / 'NativeRamBlock.o', ramblock / 'original-bindings.o',
            compile_cxx_like('iokit/DEVELOPMENT/IOPlatformExpert.cpo.json', DEVICE / 'package/HakiosBattery.cpp', OUT / 'HakiosBattery.o'),
            # Backlight subsystem (MIPI DSI DCS 0x51 & AppleARMBacklight conformance)
            compile_cxx_like('iokit/DEVELOPMENT/IOPlatformExpert.cpo.json', DEVICE / 'package/RuanBacklight.cpp', OUT / 'RuanBacklight.o'),
+           # ruan-bl-svc=1: the non-blocking service (package/RuanBacklightSvc.cpp + GeniI2c.c, from UniXNU-Dizi-Ruan sheng), its class
+           # staged late as the key store's: registered by RuanBacklight.cpp between preModLoad and postModLoad
+           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/GeniI2c.c', OUT / 'GeniI2c.o'),
+           OUT / 'RuanBacklightSvc.late.o',
            # ruan-cpufreq: EPSS frequency vote (package/RuanCpuFreq.c, layout from UniXNU-Dizi-Ruan CpuFreqProbe.cpp)
            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanCpuFreq.c', OUT / 'RuanCpuFreq.o'),
            # Adreno 710 bring-up stage S1 (gpu-dev): gated GCC/GPUCC reads, CX GDSC power-up, GPU SMMU survey (ruan-gpu=<1-3>)

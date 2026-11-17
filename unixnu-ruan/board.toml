@@ -38,6 +38,9 @@ archives = [
   "component:RamBlock",
   # RAM-root diagnostic (package/RamRootProbe.c) and the key store stand-in; linked through CONFIG_XNU_EXTRA_LD_ARCHIVES.
   "build-ram-root-probe.py",
+  # gpu 17/18 (ruan-adreno=1): UniXNU's Adreno740 driver + ArmSmmu4K/AdrenoPM4 kits (patches/adreno/) + package/RuanAdrenoGlue.cpp,
+  # force-loaded through CONFIG_XNU_EXTRA_LD_ARCHIVES (macOS/docs/research/GPU-METAL-PORT.md steps 2-3).
+  "build-ruan-adreno.py",
   # The GOP display path (display-prep/PLAN.md): NativeLegacyDisplay (UniXNU GopFramebuffer) bound to the prelinked original
   # IOMobileFramebufferLegacy + package/LegacyDisplayProbe.cpp, into libNativeLegacyDisplay.late.a, force-loaded with
   # CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y. Needs a previous kernel in out/.../kernel as its reference candidate (first build: off).

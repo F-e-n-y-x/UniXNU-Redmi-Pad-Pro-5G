@@ -1,0 +1,109 @@
+Adreno740: one masked GPU route through the board's SMMU accessors, no 4 MiB preemption records, NC table walk (ruan).
+Applied by scripts/build-ruan-adreno.py to a copy of drivers/Adreno740; the core tree is not changed.
+
+--- a/drivers/Adreno740/NativeAdrenoGpuContext.h	2026-11-17 03:07:45.916962059 +0530
++++ b/drivers/Adreno740/NativeAdrenoGpuContext.h	2026-11-17 03:09:44.979259685 +0530
+@@ -68,8 +68,11 @@
+     NativeAdrenoGpuContext(const NativeAdrenoGpuContext &)=delete;
+     NativeAdrenoGpuContext &operator=(const NativeAdrenoGpuContext &)=delete;
+     /* The report is the GMU context's: route counts cover both streams. */
++    /* routes: 2 (the GPU's two streams) or 1 (slots[0]/sids[0] only); mask: SMR.MASK of every route (ruan: one route, SID 0
++     * mask 0x400, as its DT has it). */
+     IOReturn bringUp(const ArmSmmu4KIo *io,unsigned bank,unsigned asid,const unsigned slots[2],
+-        const uint16_t sids[2],void (*progress)(uint32_t step),NativeAdrenoGmuContextReport *report);
++        const uint16_t sids[2],void (*progress)(uint32_t step),NativeAdrenoGmuContextReport *report,
++        unsigned routes=2,uint16_t mask=0);
+     bool ready() const {return ready_;}
+     /* The GPU address size of every table of this bank (ias). */
+     unsigned inputBits() const {return input_bits_;}
+@@ -106,6 +109,10 @@
+ extern "C" IOReturn NativeAdrenoGpuContextBringup(volatile uint8_t *smmu,size_t bytes,unsigned bank,unsigned asid,
+     unsigned slot0,unsigned sid0,unsigned slot1,unsigned sid1,void (*progress)(uint32_t),
+     NativeAdrenoGmuContextReport *report);
++/* The same through the board's own register accessors (copied; the cookie must outlive the context) and one masked route:
++ * for an SMMU whose writes the board filters or traces (ruan: Gunyah rejects some GR1 values, every access is traced). */
++extern "C" IOReturn NativeAdrenoGpuContextBringupIo(const ArmSmmu4KIo *io,unsigned bank,unsigned asid,unsigned slot,
++    unsigned sid,unsigned mask,void (*progress)(uint32_t),NativeAdrenoGmuContextReport *report);
+ /* sqe, ring, memptrs, pwrup, scratch: physical base, size and GPU address, only after Ready. */
+ extern "C" IOReturn NativeAdrenoGpuContextBuffers(NativeAdrenoGpuBuffer out[GpuBufferCount]);
+ /* The GPU address size (ias) of the ready GPU context, 0 before Ready. */
+--- a/drivers/Adreno740/NativeAdrenoGpuContext.cpp	2026-11-17 03:07:45.916934389 +0530
++++ b/drivers/Adreno740/NativeAdrenoGpuContext.cpp	2026-11-17 03:09:44.979348735 +0530
+@@ -8,16 +8,23 @@
+ 
+ static const uint64_t kIovas[GpuBufferCount]={GpuSqeIova,GpuRingIova,GpuMemptrsIova,GpuPwrupIova,GpuScratchIova,
+     GpuPreemptRecordIova,GpuPreemptRecord1Iova,GpuPreemptSmmuIova,GpuPreemptSmmu1Iova,GpuRing1Iova,GpuMemptrs1Iova};
++/* A board without CP preemption (ruan: gpu-preempt=0, A710 has none) takes one page per record: the two 4192 KiB records
++ * must be physically contiguous, which a kernel confined to a DRAM window may not find. */
++#ifdef NATIVE_ADRENO_NO_PREEMPT_RECORDS
++#define NATIVE_ADRENO_RECORD_BYTES GpuPageBytes
++#else
++#define NATIVE_ADRENO_RECORD_BYTES GpuPreemptRecordBytes
++#endif
+ static const size_t kBytes[GpuBufferCount]={GpuSqeBytes,GpuRingBytes,GpuPageBytes,GpuPageBytes,GpuPageBytes,
+-    GpuPreemptRecordBytes,GpuPreemptRecordBytes,GpuPageBytes,GpuPageBytes,GpuRingBytes,GpuPageBytes};
++    NATIVE_ADRENO_RECORD_BYTES,NATIVE_ADRENO_RECORD_BYTES,GpuPageBytes,GpuPageBytes,GpuRingBytes,GpuPageBytes};
+ IOReturn NativeAdrenoGpuContext::bringUp(const ArmSmmu4KIo *io,unsigned bank,unsigned asid,const unsigned slots[2],
+-    const uint16_t sids[2],void (*progress)(uint32_t),NativeAdrenoGmuContextReport *report)
++    const uint16_t sids[2],void (*progress)(uint32_t),NativeAdrenoGmuContextReport *report,unsigned routes,uint16_t mask)
+ {
+     if(!report)return kIOReturnBadArgument;
+     *report={};
+     if(used_)return kIOReturnBusy;
+-    if(!io || !slots || !sids || bank>63 || !asid || asid>0xffff || slots[0]>127 || slots[1]>127 ||
+-        slots[0]==slots[1])return kIOReturnBadArgument;
++    if(!io || !slots || !sids || bank>63 || !asid || asid>0xffff || routes<1 || routes>2 || slots[0]>127 ||
++        (routes==2 && (slots[1]>127 || slots[0]==slots[1])))return kIOReturnBadArgument;
+     used_=true;kernel_asid_=asid;
+     IOReturn status=kIOReturnSuccess;
+     auto step=[&](Step s) {report->step=s;if(progress)progress(s);};
+@@ -57,8 +64,8 @@
+     }
+     if(!status) {
+         step(Attach);
+-        const ArmSmmu4KStream routes[2]={{slots[0],sids[0]},{slots[1],sids[1]}};
+-        status=smmu_.attach(routes,2);
++        const ArmSmmu4KStream streams[2]={{slots[0],sids[0],mask},{slots[routes-1],sids[routes-1],mask}};
++        status=smmu_.attach(streams,routes);
+         const ArmSmmu4KStreamResult *s=smmu_.streamResult();
+         report->route_status=smmu_.attachStatus();
+         report->route_phase=s->phase;report->route_writes=s->writes;report->routes_verified=s->streams_verified;
+@@ -260,6 +267,18 @@
+     const uint16_t sids[2]={uint16_t(sid0),uint16_t(sid1)};
+     return board_gpu_context->bringUp(&io,bank,asid,slots,sids,progress,report);
+ }
++extern "C" IOReturn NativeAdrenoGpuContextBringupIo(const ArmSmmu4KIo *io,unsigned bank,unsigned asid,unsigned slot,
++    unsigned sid,unsigned mask,void (*progress)(uint32_t),NativeAdrenoGmuContextReport *report)
++{
++    static ArmSmmu4KIo board_io;
++    if(!report || board_gpu_context || !io || sid>0xffff || mask>0xffff)return kIOReturnBadArgument;
++    board_io=*io;
++    board_gpu_context=new NativeAdrenoGpuContext;
++    if(!board_gpu_context)return kIOReturnNoMemory;
++    const unsigned slots[2]={slot,slot};
++    const uint16_t sids[2]={uint16_t(sid),uint16_t(sid)};
++    return board_gpu_context->bringUp(&board_io,bank,asid,slots,sids,progress,report,1,uint16_t(mask));
++}
+ extern "C" IOReturn NativeAdrenoGpuContextBuffers(NativeAdrenoGpuBuffer out[GpuBufferCount])
+ {
+     if(!out)return kIOReturnBadArgument;
+--- a/drivers/Adreno740/NativeAdrenoSmmuContext.cpp	2026-11-17 03:07:45.917653419 +0530
++++ b/drivers/Adreno740/NativeAdrenoSmmuContext.cpp	2026-11-17 03:09:44.979391115 +0530
+@@ -11,10 +11,15 @@
+     const IOReturn prepared=NativeAdrenoPrepareSmmuMemory(tables,input_bits,output_bits,iova,bytes,upper,leaf_budget,
+         &arena_,&state_,&visibility_);
+     if(prepared!=kIOReturnSuccess)return prepared==kIOReturnNoResources?prepared:kIOReturnBadArgument;
+-    /* The adreno SMMU node is dma-coherent at the pinned tree, so table walks are inner write-back. */
++    /* The adreno SMMU node is dma-coherent at the pinned tree, so table walks are inner write-back. A board whose GPU SMMU
++     * is not known to be coherent builds with NATIVE_ADRENO_SMMU_COHERENT_WALK=0 (ruan: its working stream-0 context walks
++     * non-cacheable); the table pages are cleaned either way until a coherence proof says otherwise. */
++#ifndef NATIVE_ADRENO_SMMU_COHERENT_WALK
++#define NATIVE_ADRENO_SMMU_COHERENT_WALK 1
++#endif
+     config_=(ArmSmmu4KContextConfig){.lower=upper?nullptr:&arena_.config,.upper=upper?&arena_.config:nullptr,
+         .lower_tables=upper?nullptr:&state_.tables,.upper_tables=upper?&state_.tables:nullptr,.id0=0,.id2=0,
+-        .asid=asid,.coherent_walk=1,.stall_on_fault=0,.continue_after_fault=1};
++        .asid=asid,.coherent_walk=NATIVE_ADRENO_SMMU_COHERENT_WALK,.stall_on_fault=0,.continue_after_fault=1};
+     tables_=tables;bank_=bank;poll_budget_=poll_budget;prepared_=true;
+     return kIOReturnSuccess;
+ }

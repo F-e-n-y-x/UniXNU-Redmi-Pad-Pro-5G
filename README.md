@@ -1,12 +1,12 @@
 # iPadOS & macOS on Redmi Pad Pro 5G (ruan)
 
-**Current Active Target**: **iPadOS 17.7.11 (21H461)**, RAM-booted. Working: home screen, touch (NT36532), buttons, CPU frequency, USB debug. Battery readout: partly (see below). Adreno 710: the command processor runs and copies memory by DMA (`CP_MEM_WRITE`, `CP_MEMCPY`), but the screen is still drawn by the CPU; no Metal. Not started: Wi-Fi, audio (only status stubs, see the rbu24 correction below).
+**Current Active Target**: **iPadOS 17.7.11 (21H461)**, RAM-booted. **The Adreno 710 now renders iPadOS** (Metal → AdrenoMetal → Turnip → A710, zap shader loaded, GPU out of secure mode): home screen on `rbu66`, lock screen and touch with no GPU hang on `rbu79`. Still very slow (~0.35 fps: backboardd's IOMFB swap path times out and it never registers for vsync). Not started: Wi-Fi, audio.
 
 > **Review correction (2026-11-16):** earlier checkpoints below say Wi-Fi, audio and Metal/IOAcceleratorES were "verified". The code does not touch that hardware: `RuanAudioProbe.c` prints "ready" unconditionally, `RuanWifiProbe.c` only maps one page of the MSA window, and `NativeAdrenoAccelerator.cpp` is not in the repo, so the accelerator stops at stage 1. Treat those three as **not started**. The battery readout does real SPMI reads but silently falls back to a hardcoded 3980 mV when a read fails, and 3980 mV is exactly the 73% shown in the rbu22–rbu24 screenshots, so that percentage is unproven until the driver reports which source it used.
 
 **Main / Ultimate Project Goal**: Native **macOS port** on ruan (Snapdragon SM7435, Cortex-A78/A55 ARMv8.2, **no PAC**, Adreno 710 Metal), flashable like a custom ROM.
 
-## Hardware status (2026-11-16)
+## Hardware status (2026-11-18)
 
 "Tested" means confirmed on the tablet with a logged readback; "built" means it compiles but has not run yet.
 
@@ -20,8 +20,8 @@
 | USB debug (CDC) | ✅ tested | shot, log, dmesg, files, gpu N, reboot-fastboot |
 | GPU: GMU / GX power | ✅ tested | GMU firmware boots, HFI ready, GX on |
 | GPU: command processor | ✅ tested | SQE runs; `CP_MEM_WRITE` and `CP_MEMCPY` (DMA) verified by readback |
-| GPU: per-frame copy to screen | ⚠️ experimental | `fb-gpu-stream=1`; `rbu29` ran with fallbacks=3, gpu_blits=0 (per-frame GPU copy not exercised yet) |
-| GPU: drawing / Metal | ❌ not started | no 2D/3D engine use; Metal needs a full driver (see research) |
+| GPU: per-frame copy to screen | ❌ blocked | the GPU can't write the GOP splash buffer at 0xb8000000 (it hangs, `rbu71`); needs DPU scanout of our own buffer. Frames reach the screen by CPU copy |
+| GPU: drawing / Metal | ✅ tested | Turnip smoke test passes (`rbu62b`); backboardd renders through Metal on the A710 (`rbu66` home screen, `rbu79` no hang). ~0.35 fps |
 | Battery voltage | ✅ tested | from PM7250B fuel gauge QG `0x848` (`vbat 4365 mV from qg (gauge last ADC)`) |
 | Battery current / charging / full | ✅ tested | gauge current (`cur=-719mA`, `ext=1`, `full=1`); charger state from `BATTERY_CHARGER_STATUS_1` |
 | Battery % | ⚠️ estimate | from voltage only; reads high while charging (real SOC is on the ADSP) |
@@ -83,6 +83,15 @@ Derived from the garnet (POCO X6 5G, same SoC) platform in [JosephMontfort/hakio
 | Audio amp | AW88261 | FourSemi FS16xx / WSA883x (LPASS SWR1+SWR4) |
 | Wi-Fi | WCN6750 | WCN6750 (AHB MSI 0x17210040, MSA 0x82A00000) |
 | RAM | 8/12 GB | 8 GB |
+
+## Checkpoint: 2026-11-17/18: iPadOS rendered by the Adreno 710 GPU (`rbu34` → `rbu80`)
+
+<p align="center"><img src="screenshots/rbu66-homescreen-gpu.png" width="31%"> <img src="screenshots/rbu70-lockscreen-gpu.png" width="31%"></p>
+
+- **Turnip on A710** (`rbu62b`): Vulkan clear/fill/draw read back correctly. Fixes on the way: Gunyah watchdog pet off (it caused resets), GPU buffers from the reserved pool (no contiguous kernel memory), per-ASID TLB invalidation, KGSL gen7 UCHE/SECVID setup, and the **zap shader** loaded through SCM PAS 13 (segments written before `init_image`; `is_supported` says no but it works) so the GPU leaves secure mode.
+- **Metal** (`rbu65`/`rbu66`): sheng's AdrenoMetal plugin + metal2vulkan + Turnip; sandbox grant `*` for backboardd/mediaserverd. Home screen drawn by the GPU at ~19 min.
+- **GPU hang fixed** (`rbu79`): stale cached alias lines overwrote Turnip's command buffers in DRAM; each new buffer's kernel alias is now cleaned (`dc civac`, `gpu-wc-clean`).
+- **Open**: ~0.35 fps (IOMFB selector 6 times out per swap, selector 72 vsync never called), ~1/3 of boots reset after launchd, ~16 min boot, one white widget. Details: `docs/IPADOS-BRINGUP.md` §24–26, `docs/research/GPU-METAL-PORT.md`, `docs/research/unixnu-site-notes.md`.
 
 ## Checkpoint: 2026-11-16 night: Fuel Gauge Hardware Telemetry & S5 DMA Ring/Fence Stabilization Verified on Silicon (`rbu29`)
 - **What is in this build**:

@@ -879,6 +879,18 @@ boot_progress_start(void)
 		thread_set_thread_name(thread, "boot-progress");
 		thread_deallocate(thread);
 	}
+	/* Gunyah watchdog pet, opt-in ruan-wdt-pet=1: on by default it reset the tablet ~20 s after launchd (rbu34/35 vs rbu36) (package/BootReset.c, from UniXNU-uke); ruan-autoreset-wdt keeps its own arming */
+	{
+		extern int boot_reset_pet_start(char *, unsigned);
+		unsigned pet = 0, wdt_arm = 0;
+		char text[120];
+		PE_parse_boot_argn("ruan-wdt-pet", &pet, sizeof(pet));
+		PE_parse_boot_argn("ruan-autoreset-wdt", &wdt_arm, sizeof(wdt_arm));
+		if (pet && !wdt_arm) {
+			boot_reset_pet_start(text, sizeof(text));
+			if (enabled) event(text);
+		}
+	}
 	/* Touch and buttons (package/RuanInput.c): each driver checks its own boot-arg (ruan_touch=1, garnet_buttons=1). */
 	extern void ruan_input_start(void);
 	ruan_input_start();

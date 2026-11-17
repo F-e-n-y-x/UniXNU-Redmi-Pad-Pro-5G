@@ -262,7 +262,29 @@ Details per build are in README.md checkpoints rbu10→rbu28; this is the porter
 - **Tools:** `/root/unixnu-work/cycle.sh <tag>` packages current kernel with rbu31 args, copies to Pi, reboot-fastboot, RAM boot. Don't `pkill -f` a pattern that appears in your own ssh command line (kills the command).
 
 ### Resume here (next session)
+0. GPU: **step 4 passes (rbu62b)**: Turnip's Vulkan smoke test works on the A710 (zap via PAS 13 with segments written before init_image; root-cause chain in research/GPU-METAL-PORT.md "Milestone"). Next: boot rbu63 (Metal plugin root, step 5) with `/root/unixnu-work/boot-local.sh rbu63`; pass = 6800..6803 in `gpu`'s TURNIP line. Older notes: "Checkpoint rbu44–rbu60".
+   Superseded detail follows: GPU Metal step 4 (2026-11-17): see research/GPU-METAL-PORT.md "Checkpoint rbu44–rbu60". The Turnip smoke test runs on the device but nothing lands because the GPU stays in secure mode (TRUST_CNTL 1); the zap shader is the way out. Boot rbu60a/b/c/d (`/root/unixnu-work/boot-local.sh rbu60x`, tablet on local USB) in that order and read `gpu` + the ramoops replay: they bisect the SCM PAS 13 sequence. Last stable GPU images: rbu54/rbu56 (`gpu-tlbiall=2`, diag=1).
 1. Boot known-good rbu31 (`~/ramroot/boot-rbu31.sh` on the Pi, tablet in fastboot). If it fails too, the problem is not the backlight patch: chase the early-boot failure (ramoops replay, `pull-crashes`).
 2. Backlight: confirm by eye that `backlight 4095` / `backlight 0` change the light on rbu31. Then retry the slider: apply wip/backlight-impersonate-rbu33-crashes.patch with `backlight-control` publication delayed until after SpringBoard, or compare with UniXNU-sheng / -dby_w09 / -uke / -ishtar / -komodo package/AppleARMBacklight.cpp for what they do differently on iPadOS 17.
 3. GPU: run fb-gpu-stream=1 5+ min on rbu31; check gpu_blits, fallbacks + last_fb_reason, wraps, fences in USB `display`.
 4. Always look for an existing UniXNU fork implementation first (`gh search code`).
+
+## 24. rbu34–rbu43 (2026-11-17)
+- rbu34/35 reset to Android ~20 s after launchd; rbu36 (`ruan-wdt-pet=0`) stable → the Gunyah watchdog pet is now opt-in (`ruan-wdt-pet=1`).
+- GPU glue (UniXNU Adreno740 on A710, bank 2): contiguous kernel allocations fail on this kernel (`ctx e00002bd`), so context buffers come from the reserved GPU pool (patch 0003). `ruan-gpu=17` at boot runs from a thread once initproc exists (rbu41 panicked running it before IOKit).
+- **rbu43: `gpu 17` ok (CP init, fenced CP_MEM_WRITE scratch 0a710c0d), `gpu 18` ok (`glue s10 published`), tablet stays up.** Args: rbu31 minus `ruan-gpu=16 fb-gpu-stream=1`, plus `ruan-adreno=1 ruan-gpu=17`.
+- Next: Metal step 4 (Turnip smoke test with `TU_DEBUG=sysmem`), then AdrenoMetal plugin.
+
+## 25. rbu66 (2026-11-17): iPadOS home screen with the GPU
+- rbu66 (zap default, Turnip on A710, AdrenoMetal plugin, sandbox grant `*`): backboardd renders through Metal → Turnip → A710; home screen reached at t≈1154 s (screenshot `testing/rbu66-homescreen-gpu.png`). Display still gets frames by CPU copy (`fb-gpu` off). One widget renders white. Boot: `/root/unixnu-work/boot-local.sh rbu66`.
+- Next: direct GPU scanout (fb-gpu), boot time (pipeline cache), widget, GMEM/UBWC, flaky ~1/3 reset after launchd.
+
+## 26. Checkpoint 2026-11-18 (rbu66–rbu80) — Resume here
+- Tablet on this PC's USB (not the Pi). Boot: `/root/unixnu-work/boot-local.sh <tag>`; sequential runner `run-series.sh`; USB debug `usb-dev/host/ruan-usbdbg.py --tty /dev/ttyACM0 cmd gpu|display|replay|shot`. Webcam MJPEG: `cam/camserve.py` on :8090.
+- **Best build: rbu79** (zap default, Turnip on A710, AdrenoMetal, sandbox grant `*`, 384 MiB Data, wc-clean flush). Lock screen ~16 min, no GPU hang for 15+ min, touch works, but **~0.35 fps**.
+- GPU hang root cause (rbu71–rbu78): stale cached alias lines overwriting Turnip's command buffers in DRAM; fixed by `dc civac` of each new BO's kernel alias (patches/adreno/0005, `gpu-wc-clean`, default on).
+- fb-gpu (GPU copy into 0xb8000000) hangs the GPU: the GOP splash buffer isn't GPU-writable on ruan → keep `fb-gpu` off; real GPU scanout needs our own DPU scanout buffer.
+- Open: (1) fps — backboardd never registers a vsync client (`VSYNC no_client`); rbu80 (booted, not yet read) logs every IOMFB selector backboardd calls (`cmd display` → `IOMFB methods`). (2) ~1/3 boots reset after launchd (unrelated to GPU). (3) boot time ~16 min. (4) one white widget.
+- Agent history and details: docs/research/GPU-METAL-PORT.md.
+- **rbu80 result** (`cmd display`, ~20 min): `IOMFB methods: 3:1/1(e00002bc) 4:231/0 5:231/0 6:562/230(e00002d5) 8:131/0 12,15,22,27,28,29,33,50,55,57,74,79,84 fail once (mostly e00002c7 unsupported) 68:2/1 88:1/0`. **Selector 72 (vsync registration) is never called.** Selector 6 fails 230 of 562 calls with e00002d5 (kIOReturnTimeout?) — one failure per swap, likely the swap-wait/present path that paces backboardd. Next: decode selector 6 and the once-failing setup selectors (12/22/27/29/33/50/55/57/74/79/84) against sheng's NativeLegacyDisplay; implementing them may be what makes QuartzCore request vsync.
+- **Upstream to pick up next session** (UniXNU core is at 7d85ede 2026-11-13; origin is at 429d337 2026-11-17, ~40 commits ahead): a shader-cache registration agent (#304, #302; may cut our ~16 min cold-compile boot), Metal perf runtime R2507 (#292–#298), ArmCpu sleep/resume (#299), build validation fixes (#300–#303). UFS root per unixnu.com/porting/ufs: ShengUfs + `CONFIG_XNU_NATIVE_UFS=y`, `native-ufs-root=1`, `[userdata] first_lba/last_lba/lba_bytes`, `root_match_volume_uuid`. Needs a root partition on UFS, so a flash/repartition decision is the user's (vildangil's dizi does this with a 32 GiB `unixnu` partition).

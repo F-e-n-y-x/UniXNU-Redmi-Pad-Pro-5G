@@ -14,7 +14,8 @@ CONFIG_XNU_SHENG_PMGR=y
 # RAM-root diagnostic hooks of patches/xnu/ruan-ram-root-probe.patch (boot-args ram-root-probe, ram-restore-trust) and the
 # boot-progress page of patches/xnu/ruan-boot-progress.patch (package/BootProgress.c, boot-arg boot-progress=1).
 # CONFIG_XNU_BOOT_PROGRESS stays unset: build-xnu-4k-baseline.sh accepts it only with NATIVE_UFS + OWNER_ROOT_AUDIT.
-CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/ram-root-probe/libRamRootProbe.a"
+# libRuanAdreno.a (scripts/build-ruan-adreno.py): force-loaded, as sheng links libAdreno740.a, so the driver's metaclasses register.
+CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/ram-root-probe/libRamRootProbe.a -Wl,-force_load,{tree}/build/ruan-adreno/libRuanAdreno.a"
 # The OS profile enables mockfs for offline tests; on ruan it mounted md0 as mockfs (raw bytes for every file) ahead of
 # APFS, so /sbin/launchd read as the APFS container -> ENOEXEC (RAM_ROOT FAIL stage=4 fs=mockfs, 2026-11-14).
 CONFIG_XNU_SOURCE_MOCKFS=n

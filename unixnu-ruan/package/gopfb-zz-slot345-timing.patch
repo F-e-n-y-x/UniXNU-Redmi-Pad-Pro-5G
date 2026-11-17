@@ -1,0 +1,12 @@
+--- a/NativeLegacyDisplay.cpp	2026-11-17 23:29:59.027948678 +0530
++++ b/NativeLegacyDisplay.cpp	2026-11-17 23:29:59.036971489 +0530
+@@ -1223,6 +1223,9 @@
+     // No color matrix hardware either; the compositor's matrix is accepted, as the virtual-machine display accepts it.
+     IOReturn swapSetColorMatrix(void *,uint32_t,uint32_t) override {return kIOReturnSuccess;}
+ #endif
++    // Slot 345, an abstract boolean the original family asks after a 5 s swap-wait timeout (TimingEnable; UniXNU-Pagani build 63, caller
++    // 0xfffffff00578c1cc on 21H461 as on rbu70's panic). The GOP panel's timing is always on: answer true instead of the guard's panic.
++    bool isTimingEnabled() override {return true;}
+ #define LEAF(n) __attribute__((noreturn,noinline)) void opaque##n() override { native_legacy_backend_guard(n,this,__builtin_return_address(0)); }
+     NATIVE_LEGACY_LEAVES(LEAF)
+ #undef LEAF

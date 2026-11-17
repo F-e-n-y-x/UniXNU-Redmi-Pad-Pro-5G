@@ -235,7 +235,74 @@ static void gpu_stream_tick(thread_call_param_t p0, thread_call_param_t p1)
 	}
 }
 
-// Adreno 710 Stage S5 Mode 16 In-Kernel Display Frame Blitter Hook (fb-gpu-stream=1 or fb-gpu=1)
+// fb-gpu=1 (rbu68, sheng's meaning; ruan's own CP_MEMCPY blitter is fb-gpu-stream=1 only): UniXNU-sheng's GPU hand-off. NativeGOPPresenter (drivers/GopFramebuffer, built by build-gop-legacy-display.py) is
+// offered each swap instead of the CPU copy; the Metal plugin in backboardd (NativeMetalBridgePhase.h serveScanout, open type 0x4148)
+// waits for it, copies the surface into the scanout on the A710 and completes the swap. Refused or failed offers fall back to the CPU copy.
+extern "C" void native_gop_presenter_static_init(void) __asm__("__GLOBAL__sub_I_NativeGOPPresenter.cpp") __attribute__((weak_import));
+extern "C" IOService *native_gop_presenter_create(void) __attribute__((weak_import));
+extern "C" bool native_gop_gpu_offer(IOService *, void *display, IOMemoryDescriptor *, uint64_t stride, uint32_t width, uint32_t height,
+                                     uint32_t format) __attribute__((weak_import));
+extern "C" void native_gop_presenter_set_source(IOService *presenter, IOService *nub) __attribute__((weak_import));
+static IOService *gpuHandoffPresenter;
+volatile uint32_t ruan_handoff_stage;   // 1 created, 2 started, 0x10|n failed at step n
+static unsigned fbGpuMode(void)
+{
+	unsigned fb_gpu = 0;
+	PE_parse_boot_argn("fb-gpu", &fb_gpu, sizeof(fb_gpu));
+	return fb_gpu;
+}
+static void ruan_handoff_start(IOService *nub)
+{
+	if (fbGpuMode() != 1 || gpuHandoffPresenter) return;
+	if (!&native_gop_presenter_create || !&native_gop_presenter_set_source) {ruan_handoff_stage = 0x11; return;}
+	IOService *handoff = native_gop_presenter_create();
+	// Not under the display subsystem's node (sheng int-075/077: SpringBoard found no display with the presenter there).
+	IOService *home = IOService::getResourceService();
+	bool attached = false;
+	ruan_handoff_stage = 1;
+	if (handoff && home) native_gop_presenter_set_source(handoff, nub);
+	if (handoff && home && handoff->init() && (attached = handoff->attach(home)) && handoff->start(home)) {gpuHandoffPresenter = handoff; ruan_handoff_stage = 2;}
+	else {if (attached) handoff->detach(home); OSSafeReleaseNULL(handoff); ruan_handoff_stage = 0x12;}
+}
+
+// rbu71: an offered frame the plugin has not finished within fb-gpu-timeout ms (default 50) is failed to the display
+// (native_legacy_gpu_complete with kIOReturnTimeout): the display then retires/kicks its queue and takes the CPU copy, so a lost GPU copy
+// can never stall the compositor (rbu70: offer 5 never completed and the UI froze). The presenter keeps that frame as offered and so
+// refuses new offers (CPU copies) until the plugin completes or abandons it; its late completion finds no request and does nothing.
+extern "C" volatile uint64_t native_gop_gpu_offers __attribute__((weak_import)), native_gop_gpu_completions __attribute__((weak_import)),
+    native_gop_gpu_failures __attribute__((weak_import)), native_gop_gpu_abandoned __attribute__((weak_import));
+extern void native_legacy_gpu_complete(void *display, int status);
+volatile uint64_t ruan_handoff_timeouts;
+static uint64_t handoffFinished(void)
+{
+	return &native_gop_gpu_completions ? native_gop_gpu_completions + native_gop_gpu_failures + native_gop_gpu_abandoned : 0;
+}
+static thread_call_t s_handoff_watch;
+static void *s_handoff_display;
+static uint64_t s_handoff_offers, s_handoff_finished;
+static void handoffExpired(thread_call_param_t, thread_call_param_t)
+{
+	// Still the same offer (no newer one) and nothing finished since it was made: fail it to the display.
+	if (!&native_gop_gpu_offers || native_gop_gpu_offers != s_handoff_offers || handoffFinished() != s_handoff_finished) return;
+	ruan_handoff_timeouts = ruan_handoff_timeouts + 1;
+	native_legacy_gpu_complete(s_handoff_display, (int)kIOReturnTimeout);
+}
+static void handoffWatch(void *display, uint64_t finishedBefore)
+{
+	unsigned ms = 50;
+	PE_parse_boot_argn("fb-gpu-timeout", &ms, sizeof(ms));
+	if (!ms) return;
+	if (!s_handoff_watch) s_handoff_watch = thread_call_allocate(handoffExpired, nullptr);
+	if (!s_handoff_watch || !&native_gop_gpu_offers) return;
+	s_handoff_display = display;
+	s_handoff_offers = native_gop_gpu_offers;
+	s_handoff_finished = finishedBefore;
+	uint64_t deadline;
+	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
+	thread_call_enter_delayed(s_handoff_watch, deadline);
+}
+
+// Adreno 710 Stage S5 Mode 16 In-Kernel Display Frame Blitter Hook (fb-gpu-stream=1)
 // Dispatches compositor surfaces directly to the Adreno 710 hardware blitter via CP_MEMCPY
 // and monotonic fences, eliminating CPU frame presentation overhead.
 bool native_legacy_gpu_offer(void *display, IOMemoryDescriptor *memory, uint64_t sourceStride, uint32_t width, uint32_t height, uint32_t format)
@@ -243,7 +310,15 @@ bool native_legacy_gpu_offer(void *display, IOMemoryDescriptor *memory, uint64_t
 	unsigned fb_gpu_stream = 0, fb_gpu = 0;
 	PE_parse_boot_argn("fb-gpu-stream", &fb_gpu_stream, sizeof(fb_gpu_stream));
 	PE_parse_boot_argn("fb-gpu", &fb_gpu, sizeof(fb_gpu));
-	if (fb_gpu_stream != 1 && fb_gpu != 1) {
+	if (fb_gpu == 1) {
+		const uint64_t finishedBefore = handoffFinished();
+		const bool offered = gpuHandoffPresenter && &native_gop_gpu_offer &&
+		    native_gop_gpu_offer(gpuHandoffPresenter, display, memory, sourceStride, width, height, format);
+		if (!offered) native_legacy_gpu_fallback_observed(-3);
+		else handoffWatch(display, finishedBefore);
+		return offered;
+	}
+	if (fb_gpu_stream != 1) {
 		native_legacy_gpu_fallback_observed(-1);
 		return false;
 	}
@@ -413,17 +488,29 @@ void native_adreno_note_property_read(const char *key) {
 }
 
 extern "C" IOUserClient *native_adreno_user_client_create(task_t, void *, UInt32, OSDictionary *) __attribute__((weak_import));
+// The real driver's open (NativeAdrenoPublish.cpp, renamed by scripts/build-ruan-adreno.py): progress markers, the tunnel and BOs for
+// Turnip. It answers kIOReturnNotReady until gpu 18 (native_adreno_publish) has run; without libRuanAdreno.a the stand-in below stays.
+extern "C" IOReturn ruan_adreno_driver_new_user_client(IOService *, task_t, void *, UInt32, OSDictionary *, IOUserClient **, unsigned)
+    __attribute__((weak_import));
 
+extern "C" {uint32_t ruan_adreno_marks_seen[0x7000 / 32];}
 IOReturn native_adreno_new_user_client(IOService *provider, task_t owningTask, void *securityID,
                                        UInt32 type, OSDictionary *properties, IOUserClient **handler,
                                        unsigned limit) {
-	(void)securityID; (void)limit;
 	if (handler) *handler = nullptr;
 	native_adreno_metal_opens++;
 	if (owningTask) {
 		proc_t p = (proc_t)get_bsdtask_info(owningTask);
 		if (p) proc_name(proc_pid(p), native_adreno_last_client, sizeof(native_adreno_last_client));
 	}
+	// Every progress marker ever sent (open types 0x4147xxxx, xxxx < 0x7000), as a bitmap the USB `gpu` command prints (rbu67): the driver's
+	// own ring keeps only the newest 16, and the plugin's 68xx come minutes before the smoke tool's last ones.
+	if ((type >> 16) == 0x4147u && (type & 0xffffu) && (type & 0xffffu) < 0x7000u) {
+		const uint32_t v = type & 0xffffu;
+		__atomic_fetch_or(&ruan_adreno_marks_seen[v >> 5], 1u << (v & 31), __ATOMIC_RELAXED);
+	}
+	if (&ruan_adreno_driver_new_user_client)
+		return ruan_adreno_driver_new_user_client(provider, owningTask, securityID, type, properties, handler, limit);
 	if (!handler || !&native_adreno_user_client_create) return kIOReturnUnsupported;
 	IOUserClient *client = native_adreno_user_client_create(owningTask, securityID, type, properties);
 	if (!client) return kIOReturnNoMemory;
@@ -485,6 +572,9 @@ void ruan_gpu_publish_accelerator(void) {
 	}
 	accelerator->setProperty("MetalPluginName", "NativeAdrenoMetal");
 	accelerator->setProperty("MetalPluginClassName", "NativeAdrenoMetalDevice");
+	// As sheng: every Metal client gets this accelerator's user client in place of the sandbox verdict (UniXNU zzw-native-adreno-sandbox-grant.patch);
+	// the original profiles name AGXDeviceUserClient, not the RuanAdrenoDeviceUserClient the open returns.
+	accelerator->setProperty("NativeSandboxGrantProcess", "*");
 	ruan_metal_stage = 4;
 	if (!accelerator->attach(IOService::getPlatform())) {
 		accelerator->release();
@@ -572,6 +662,7 @@ void native_legacy_display_probe(void) {
 		return native_legacy_verdict("preModLoad");
 	}
 	native_legacy_display_static_init();
+	if (fbGpuMode() == 1 && &native_gop_presenter_static_init) native_gop_presenter_static_init();   // its class, in the same module
 	native_legacy_meta_status = OSMetaClass::postModLoad(handle);
 	if (native_legacy_meta_status) {
 		return native_legacy_verdict("postModLoad");
@@ -653,6 +744,7 @@ void native_legacy_display_late_probe(void) {
 	if (started) {
 		native_legacy_stage = 10;
 		OSSafeReleaseNULL(arm_io);
+		ruan_handoff_start(nub);
 		// Touch and buttons: the HID publisher (package/NativeHidInput.cpp + HidInputProbe.cpp, from UniXNU-j716f), started the
 		// way j716f does it, once the display is up (offline-hid-input=1 offline-hid-home=1 sheng-touch-hid=1).
 		extern void native_hid_input_probe(void);

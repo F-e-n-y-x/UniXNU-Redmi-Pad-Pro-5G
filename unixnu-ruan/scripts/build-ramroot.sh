@@ -18,6 +18,10 @@
 #      RAMBLOCK=1 (with DATA_CONTAINER=1): the Data container is served by NativeRamBlock (a real IOMedia, which APFS needs to
 #      mount it) and mounted by its volume UUID: ram-data-uuid=<it> instead of ram-data-dev=md1.
 #      WORK=dir: make-ramroot.py's work directory (default $RAMROOT/work-full). FD=file: the UEFI FD to pack.
+#      DATA_OVERLAY=dir (with REBUILD_ROOT=1 DATA_CONTAINER=1): files for the Data volume, mirroring private/var (warm Metal/Turnip
+#      caches pulled from a booted tablet). DATA_SLACK (make-ramroot.py) sets the Data container's free blocks.
+#      OVERLAY=dir (usb, with REBUILD_ROOT=1): build-turnip-smoke.py's output; its overlay/ joins the root (make-ramroot.py
+#      --overlay) and its cdhashes go to $OUT/root-usb.cdhash, which every later payload of this root appends to trust.bundle.
 set -euo pipefail
 MODE=${1:?usage: build-ramroot.sh mini|usb}
 NAME=$MODE${TAG:+-$TAG}
@@ -39,7 +43,8 @@ if [ ! -f "$root" ] || [ -n "${REBUILD_ROOT:-}" ]; then
 		python3 $D/scripts/make-ramroot.py --mini --os $I/044-76040-038.dmg --work $R/work-mini --out "$root"
 	else
 		python3 $D/scripts/make-ramroot.py --full --os $I/044-76040-038.dmg --systemos $I/044-76034-038.dmg \
-			--work "$WORK" --out "$root" --descriptor $OUT/root-usb.desc $data
+			--work "$WORK" --out "$root" --descriptor $OUT/root-usb.desc $data ${OVERLAY:+--overlay "$OVERLAY/overlay"} ${DATA_OVERLAY:+--data-overlay "$DATA_OVERLAY"}
+		rm -f $OUT/root-usb.cdhash; [ -n "${OVERLAY:-}" ] && cp "$OVERLAY/cdhashes" $OUT/root-usb.cdhash
 	fi
 fi
 [ $MODE = usb ] && [ ! -f $OUT/root-usb.desc ] && { echo "build-ramroot.sh: $OUT/root-usb.desc missing: REBUILD_ROOT=1" >&2; exit 1; }
@@ -65,7 +70,10 @@ PY
 	fi
 	for arg in ram-data-split=$(cat $OUT/root-usb.split) ram-data=1 $data_dev; do extra+=("--kernel-arg=$arg"); done
 fi
+rm -f $OUT/trust.bundle   # a fresh file: cycle.sh's out-<tag> directories share their roots' files as hard links
 python3 $U/scripts/bundle-ipsw-trust.py $OUT/trust.bundle $I/044-76040-038.dmg.trustcache $I/044-76034-038.dmg.trustcache >/dev/null
+# The root's own binaries (OVERLAY above), as one more module.
+[ -f $OUT/root-usb.cdhash ] && python3 $U/scripts/trust-append-module.py $OUT/trust.bundle $OUT/trust.bundle $(cat $OUT/root-usb.cdhash)
 
 cd $U
 if [ -n "${REBUILD_KERNEL:-}" ] || [ ! -f $O/kernel/kernel.macho ]; then
@@ -80,8 +88,10 @@ assert storage[0] and storage[0] == storage[1], 'IOStorageFamily moved: the Nati
 PY
 fi
 initrd=$root; [ $MODE = usb ] && initrd=$OUT/root-usb.desc
+# With the root's own module the bundle is no longer one of the IPSW's two (board allow-list): pass it as the owner's bundle.
+trust_arg=--trust-cache; [ -f $OUT/root-usb.cdhash ] && trust_arg=--owner-trust-cache
 ./unixnu build payload --uefi ../uefi-ruan --unique-chip-id "$(cat $W/unique-chip-id.txt)" \
-	--data-ramdisk "$initrd" --trust-cache $OUT/trust.bundle --kernel-arg rd=md0 ${extra[@]+"${extra[@]}"} > $OUT/payload-$NAME.log 2>&1 \
+	--data-ramdisk "$initrd" $trust_arg $OUT/trust.bundle --kernel-arg rd=md0 ${extra[@]+"${extra[@]}"} > $OUT/payload-$NAME.log 2>&1 \
 	|| { tail -20 $OUT/payload-$NAME.log; exit 1; }
 
 # The payload as a 56 MiB FAT in an "XNUP" container (see macOS/uefi/build-ipados-ruan.sh): ABL took a ~62 MB kernel
