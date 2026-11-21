@@ -710,7 +710,11 @@ void native_legacy_display_probe(void) {
 }
 
 // bsd_autoconf (offline-legacy-start.patch), after IOKitBSDInit().
+void ruan_panel_set_120hz(void);
 void native_legacy_display_late_probe(void) {
+	ruan_panel_set_120hz();   // ruan-120hz=1|2 (RuanPanel120.c): before the display reads its refresh
+	extern void ruan_cpufreq_start(void);
+	ruan_cpufreq_start();   // second chance: boot_progress_start's call left no trace from rbu140p on (guarded, starts once)
 	boot_progress_stage("late_probe: start");
 	IOService *display = pendingLegacyDisplay;
 	if (!display) {

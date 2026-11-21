@@ -1,0 +1,55 @@
+--- a/package/WpssProbe.cpp	2026-11-21 09:59:07.458343497 +0530
++++ b/package/WpssProbe.cpp	2026-11-21 09:59:07.467271837 +0530
+@@ -12,6 +12,10 @@
+ // client 24 signal 0 and channel IPCRTR (intents 0x800 x5, 0x2000 x3, 0x4400 x2). PAS id 6 and crash reason SMEM item 626 are Linux's
+ // sc7280 values (qcom_q6v5_pas.c), the closest upstream WPSS.
+ //
++// ruan (Redmi Pad Pro 5G, SM7435, live DT remoteproc-wpss@8a00000 "qcom,parrot-wpss-pas" + qcom,smp2p-wpss + bt_wcn6750): the same
++// items, pid, IPCC client/signals, glink channel/intents, firmware name and carveout size as the 3a; differences: carveout wpss_region
++// 0x85300000 (+0x1900000), TLMM 0xf000000, qcom,wl-reset-gpio 36, and the boot arguments are ruan-wifi / ruan-wifi-fw / ruan-wifi-wlen.
++// The thread is RuanWifiWpss.cpp's (no ADSP on ruan), which implements AsteroidsRemote.h.
+ // wifi=1 surveys (SMEM partition and items, the WPSS's SMP2P state) and writes nothing; wifi=2 starts the WPSS and runs the IPC router
+ // on its edge so the services it announces show in the log. With wifi=5 the router link is handed to the WiFi module (asteroids_wpss_qrtr_*)
+ // instead. wifi-fw=PATH names the image (as sheng_fw_open takes it); otherwise the firmware partition's qca6750/wpss and wpss are tried.
+@@ -43,7 +47,7 @@
+ namespace R = asteroids_remote;
+ enum Stage {StPartition = 1, StSurveyed = 2, StSmp2p = 3, StLoadState = 4, StRails = 5, StStarted = 6, StReady = 7, StGlink = 8,
+             StChannel = 9, StHello = 10, StWlfw = 11};
+-constexpr uint64_t kWpssBase = 0x9bb00000, kWpssSize = 0x1900000;
++constexpr uint64_t kWpssBase = 0x85300000, kWpssSize = 0x1900000;   // ruan: wpss_region@85300000
+ constexpr uint32_t kPasWpss = 6, kRemotePid = 13, kItemIn = 617, kItemOut = 616, kItemCrash = 626;
+ constexpr uint32_t kItemGlinkDesc = 478, kItemGlinkTx = 479, kItemGlinkRx = 480, kGlinkFifo = 0x4000;
+ constexpr uint32_t kSignalGlink = 0, kSignalSmp2p = 2;
+@@ -365,11 +369,11 @@
+ // nothing does here, and with it low the firmware asserted in whal_wmac_transition_to_fw_ctrl at the first vdev. Driven high before the
+ // WPSS starts (wifi-wlen=0 leaves it). TLMM 0xf100000, 0x1000 per pin: config at +0 (bit 9 output enable), in/out at +4 (bit 1 the level).
+ // [0] config before | in/out before << 16, [1] config | in/out after << 16
+-constexpr uint64_t kTlmm = 0xf100000;
+-constexpr unsigned kWlEnPin = 44;
++constexpr uint64_t kTlmm = 0xf000000;     // ruan: pinctrl@f000000 (qcom,parrot-pinctrl), 0x1000 per pin assumed
++constexpr unsigned kWlEnPin = 36;         // ruan: bt_wcn6750 qcom,wl-reset-gpio = <&tlmm 0x24 0>
+ void wlanEnable() {
+     unsigned want = 1;
+-    PE_parse_boot_argn("wifi-wlen", &want, sizeof want);
++    PE_parse_boot_argn("ruan-wifi-wlen", &want, sizeof want);
+     IODeviceMemory *memory = IODeviceMemory::withRange(kTlmm + kWlEnPin * 0x1000ull, 0x1000);
+     IOMemoryMap *map = memory ? memory->map(kIOMapAnywhere | kIOMapInhibitCache) : nullptr;
+     if (memory) memory->release();
+@@ -412,7 +416,7 @@
+     stage(StRails);
+ 
+     char chosen[80] = "";
+-    const bool have = PE_parse_boot_argn("wifi-fw", chosen, sizeof chosen) && chosen[0];
++    const bool have = PE_parse_boot_argn("ruan-wifi-fw", chosen, sizeof chosen) && chosen[0];
+     const uint64_t began = mach_absolute_time();
+     if ((rc = openAndBoot(have ? chosen : nullptr))) {
+         if (rc == -1) note("fw: ", "no wpss image");
+@@ -457,7 +461,7 @@
+ 
+ extern "C" void asteroids_wpss_run(void) {
+     gMode = 0;
+-    PE_parse_boot_argn("wifi", &gMode, sizeof gMode);
++    PE_parse_boot_argn("ruan-wifi", &gMode, sizeof gMode);
+     if (!gMode || native_wpss_stats[0]) return;
+     survey();
+     stage(StSurveyed);

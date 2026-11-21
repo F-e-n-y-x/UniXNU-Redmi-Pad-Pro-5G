@@ -910,12 +910,14 @@ autoreset_thread(void *arg __unused, wait_result_t wr __unused)
 }
 
 extern void ruan_cpufreq_start(void);   /* package/RuanCpuFreq.c, ruan-cpufreq=<n>; strong: a weak import would not pull it from the archive */
+extern void ruan_wifi_start(void);      /* package/RuanWifiWpss.cpp, ruan-wifi=<1-5>; strong for the same reason (it waits ruan-wifi-delay) */
 
 void
 boot_progress_start(void)
 {
 	thread_t thread;
 	ruan_cpufreq_start();
+	ruan_wifi_start();   /* nothing without ruan-wifi; LegacyDisplayProbe's late probe calls ruan_wifi_init as the second chance */
 	extern void ruan_gpu_survey(void);
 	ruan_gpu_survey();   /* package/RuanGpuPower.c: ruan-gpu=<1-3> (gpu-dev stage S1), ruan-gpu-survey=1 = mode 1; nothing otherwise */
 	if (enabled) {

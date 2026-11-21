@@ -8,6 +8,13 @@
 
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
+// ShengUfs (NativeUfs.cpp): the display SMMU bank state for direct scanout, shown by USB `dpu`
+extern "C" volatile uint32_t native_ufs_dpu_state __attribute__((weak_import));
+extern "C" volatile uint32_t native_ufs_dpu_smmu[24] __attribute__((weak_import));
+extern "C" volatile uint32_t native_ufs_dpu_check[8] __attribute__((weak_import));
+extern "C" void ruan_cpufreq_report(char *, unsigned) __attribute__((weak_import));
+extern "C" unsigned armcpu_stats_row(unsigned, char *, unsigned) __attribute__((weak_import));   // ArmCpu.cpp, USB `cpu` (per-core rows need diag=1)   // RuanCpuFreq.c, USB `cpufreq`
+extern "C" volatile uint32_t native_legacy_direct[14] __attribute__((weak_import));   // NativeLegacyDisplay direct-scanout counters
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <string.h>
@@ -83,6 +90,7 @@ extern int boot_reset_probe(char *text, unsigned cap) __attribute__((weak_import
 extern int boot_reset_mark_bootloader(char *text, unsigned cap) __attribute__((weak_import));
 extern struct msgbuf *msgbufp;   // bsd/kern/subr_log.c (XNU_KERNEL_PRIVATE in sys/msgbuf.h)
 extern const char *ruan_wifi_status_str(void) __attribute__((weak_import));
+extern unsigned ruan_wifi_log(unsigned i, char *out, unsigned len) __attribute__((weak_import));   // RuanWifiWpss.cpp, USB `wifi.log`
 extern const char *ruan_audio_status_str(void) __attribute__((weak_import));
 
 // The boot-progress banner prints this (package/BootProgress.c defines it weak; this definition wins when linked).
@@ -529,7 +537,7 @@ static void handleCommand(TerminalSession &s, const char *raw) {
     if (strEq(raw, "ping")) {
         s.reply.writeStr("[usb] PONG ruan\r\n");
     } else if (strEq(raw, "features") || strEq(raw, "help")) {
-        s.reply.writeStr("FEATURES: ping status bootargs display usb touch battery wifi audio replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg gpu\r\n");
+        s.reply.writeStr("FEATURES: ping status bootargs display usb touch battery wifi wifi.log audio replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg gpu\r\n");
     } else if (strEq(raw, "wifi") || strEq(raw, "wlan")) {
         if (&ruan_wifi_status_str && ruan_wifi_status_str) {
             snprintf(buf, sizeof(buf), "[usb] WIFI: %s\r\n", ruan_wifi_status_str());
@@ -537,6 +545,11 @@ static void handleCommand(TerminalSession &s, const char *raw) {
             snprintf(buf, sizeof(buf), "[usb] WIFI: driver not linked\r\n");
         }
         s.reply.writeStr(buf);
+    } else if (strEq(raw, "wifi.log")) {
+        // the WPSS note, services, crash reason, firmware files, last scan, then the module's log ring (up to 261 lines, ~30 KiB)
+        unsigned i = 0;
+        for (; &ruan_wifi_log && ruan_wifi_log(i, buf, sizeof(buf)); ++i) s.reply.writeStr(buf);
+        if (!i) s.reply.writeStr("[usb] WIFI.LOG: not linked\r\n");
     } else if (strEq(raw, "audio") || strEq(raw, "sound")) {
         if (&ruan_audio_status_str && ruan_audio_status_str) {
             snprintf(buf, sizeof(buf), "[usb] AUDIO: %s\r\n", ruan_audio_status_str());
@@ -752,6 +765,18 @@ static void handleCommand(TerminalSession &s, const char *raw) {
             s.reply.writeStr("[usb] DPU: map failed\r\n");
         } else {
             auto r = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
+            {
+                const volatile uint32_t *sm = &native_ufs_dpu_smmu ? native_ufs_dpu_smmu : nullptr;
+                const volatile uint32_t *ck = &native_ufs_dpu_check ? native_ufs_dpu_check : nullptr;
+                snprintf(buf, sizeof(buf), "[usb] DPU smmu: state=%08x s0=%08x m=%08x smr=%08x s2cr=%08x cbar=%08x cba2r=%08x sctlr=%08x fsr=%08x chk=%08x %08x %08x %08x\r\n",
+                         &native_ufs_dpu_state ? native_ufs_dpu_state : 0xffffffffu, sm ? sm[0] : 0, sm ? sm[4] : 0, sm ? sm[5] : 0, sm ? sm[6] : 0,
+                         sm ? sm[7] : 0, sm ? sm[8] : 0, sm ? sm[9] : 0, sm ? sm[22] : 0, ck ? ck[0] : 0, ck ? ck[3] : 0, ck ? ck[4] : 0, ck ? ck[7] : 0);
+                s.reply.writeStr(buf);
+                const volatile uint32_t *dc = &native_legacy_direct ? native_legacy_direct : nullptr;
+                snprintf(buf, sizeof(buf), "[usb] DPU direct: flips=%u mapped=%u mapfail=%u slowlatch=%u maxlatch=%u slot6=%u slot7_fallback=%u toboot=%u fencewait=%u\r\n",
+                         dc ? dc[0] : 0, dc ? dc[1] : 0, dc ? dc[2] : 0, dc ? dc[3] : 0, dc ? dc[4] : 0, dc ? dc[6] : 0, dc ? dc[7] : 0, dc ? dc[8] : 0, dc ? dc[9] : 0);
+                s.reply.writeStr(buf);
+            }
             snprintf(buf, sizeof(buf), "[usb] DPU: hw=%08x ctl0 flush=%08x intf_active=%08x pipes_active=%08x\r\n",
                      r(mdp), r(mdp + 0x16018), r(mdp + 0x160f4), r(mdp + 0x160fc));
             s.reply.writeStr(buf);
@@ -770,6 +795,17 @@ static void handleCommand(TerminalSession &s, const char *raw) {
                      r(mdp + 0x360b0));
             s.reply.writeStr(buf);
         }
+    } else if (strEq(raw, "cpu")) {
+        char row[480];
+        for (unsigned i = 0; &armcpu_stats_row && i < 32 && armcpu_stats_row(i, row, sizeof(row)) != 0; i++) {
+            snprintf(buf, sizeof(buf), "[usb] %s\r\n", row);
+            s.reply.writeStr(buf);
+        }
+    } else if (strEq(raw, "cpufreq")) {
+        char row[160] = "not linked";
+        if (&ruan_cpufreq_report) ruan_cpufreq_report(row, sizeof(row));
+        snprintf(buf, sizeof(buf), "[usb] CPUFREQ: %s\r\n", row);
+        s.reply.writeStr(buf);
     } else if (strEq(raw, "dpu.flip")) {
         // Step b (docs/research/dpu-scanout-sm7435.md): point VIG0 at our own buffer (colour bars, below 4 GiB, contiguous) for
         // 3 s, then back to the boot buffer. Shows whether the display can scan out a buffer we own without a copy.
@@ -1036,7 +1072,7 @@ static bool bringUpController(TerminalSession &s) {
         // ruan-usbdbg-arena=1 (vildangil's dizi switch): skip the allocation and take the low-bank arena. dizi's allocation landed in
         // high memory and the host reset the port over and over (usb r1424 c0); the UFS-root variant frees DarwinBoot's window, so ruan's
         // allocation lands elsewhere too (build-ramroot.sh UFS=1 sets it).
-        uint32_t forceArena = 0;
+        uint32_t forceArena = 1;   // default on: the UFS-root build always needs it (saves 20 bytes of the 1000-byte command line)
         (void)PE_parse_boot_argn("ruan-usbdbg-arena", &forceArena, sizeof(forceArena));
         if (!forceArena) hw.dmaDesc = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
             kernel_task,

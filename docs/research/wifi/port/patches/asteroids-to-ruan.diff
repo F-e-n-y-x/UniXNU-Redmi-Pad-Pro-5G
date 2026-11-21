@@ -1,0 +1,537 @@
+--- asteroids/package/WpssProbe.cpp
++++ port/package/WpssProbe.cpp
+@@ -12,9 +12,17 @@
+ // client 24 signal 0 and channel IPCRTR (intents 0x800 x5, 0x2000 x3, 0x4400 x2). PAS id 6 and crash reason SMEM item 626 are Linux's
+ // sc7280 values (qcom_q6v5_pas.c), the closest upstream WPSS.
+ //
+-// wifi=1 surveys (SMEM partition and items, the WPSS's SMP2P state) and writes nothing; wifi=2 starts the WPSS and runs the IPC router
+-// on its edge so the services it announces show in the log. With wifi=5 the router link is handed to the WiFi module (asteroids_wpss_qrtr_*)
+-// instead. wifi-fw=PATH names the image (as sheng_fw_open takes it); otherwise the firmware partition's qca6750/wpss and wpss are tried.
++// ruan (Redmi Pad Pro 5G, SM7435 "parrot"): filipnavara/UniXNU-asteroids 9f07af3 package/WpssProbe.cpp, ported. Evidence is the live DT
++// macOS/hardware/private/ruan-live.dts (line numbers). Same as the 3a: SMP2P items 617/616, remote pid 13, IPCC 0x18 signal 2 (6394-6401),
++// entries master-kernel/slave-kernel/wlan/wlan_soc_wake/wlan_ep_power_save (6403-6446), GLINK IPCC 0x18 signal 0, channel IPCRTR, intents
++// 0x800x5 0x2000x3 0x4400x2 (7827-7839), firmware "qca6750/wpss.mdt" (7825), carveout size 0x1900000 (130), proxy cx/mx level 0x180
++// (7814-7817). Changed: the carveout base, the WL_EN pin, the boot-argument names, the stage at which the module takes the router link
++// (ruan-wifi=3, not 5) and a third image source (a merged wpss.mbn on Data, for a root without ShengUfs). The host thread is
++// RuanWifiWpss.cpp (no ADSP bring-up on ruan), which implements AsteroidsRemote.h.
++// ruan-wifi=1 surveys (SMEM partition and items, the WPSS's SMP2P state) and writes nothing; ruan-wifi=2 starts the WPSS and runs the IPC
++// router on its edge so the services it announces show in the log. With ruan-wifi>=3 the router link is handed to the WiFi module
++// (asteroids_wpss_qrtr_*) instead. ruan-wifi-fw=PATH names the image (as sheng_fw_open takes it); otherwise the firmware partition's
++// qca6750/wpss and wpss, then /private/var/firmware/qca6750/wpss.mbn (scripts/stage-wifi-firmware.py) are tried.
+ #include <IOKit/IOLib.h>
+ #include <IOKit/IODeviceMemory.h>
+ #include <IOKit/IOMemoryDescriptor.h>
+@@ -43,7 +51,7 @@
+ namespace R = asteroids_remote;
+ enum Stage {StPartition = 1, StSurveyed = 2, StSmp2p = 3, StLoadState = 4, StRails = 5, StStarted = 6, StReady = 7, StGlink = 8,
+             StChannel = 9, StHello = 10, StWlfw = 11};
+-constexpr uint64_t kWpssBase = 0x9bb00000, kWpssSize = 0x1900000;
++constexpr uint64_t kWpssBase = 0x85300000, kWpssSize = 0x1900000;   // ruan: wpss_region@85300000 reg <0 0x85300000 0 0x1900000> (DT 128-130)
+ constexpr uint32_t kPasWpss = 6, kRemotePid = 13, kItemIn = 617, kItemOut = 616, kItemCrash = 626;
+ constexpr uint32_t kItemGlinkDesc = 478, kItemGlinkTx = 479, kItemGlinkRx = 480, kGlinkFifo = 0x4000;
+ constexpr uint32_t kSignalGlink = 0, kSignalSmp2p = 2;
+@@ -182,7 +190,7 @@
+     if (up) {
+         if (native_wpss_stats[0] >= StGlink && native_wpss_stats[0] < StChannel) stage(StChannel);
+         if (gModuleRx) {if (gModuleState) gModuleState(gModuleContext, 1); return;}
+-        if (gMode >= 5) return;  // the module says hello when it attaches
++        if (gMode >= 3) return;  // the module says hello when it attaches (ruan: from ruan-wifi=3 on)
+         gQrtr.hello_sent = gQrtr.hello_received = 0;
+         gQrtr.remote_count = 0;
+         gQrtr.remote_node = QCOM_QRTR_NODE_BROADCAST;
+@@ -192,7 +200,7 @@
+     }
+ }
+ void channelReceive(void *, QcomGlinkChannel *, const uint8_t *data, uint32_t length) {
+-    if (!gModuleRx && gMode >= 5) {
++    if (!gModuleRx && gMode >= 3) {
+         uint8_t *copy = gBacklog && gHeld < kBacklog && length ? static_cast<uint8_t *>(IOMallocData(length)) : nullptr;
+         if (copy) {memcpy(copy, data, length); gBacklog[gHeld++] = {copy, length};}
+         native_wpss_stats[11] = native_wpss_stats[11] + 1;
+@@ -340,7 +348,8 @@
+ 
+ // ---- the bring-up ----
+ int openAndBoot(const char *chosen) {
+-    const char *sources[3] = {"modem:qca6750/wpss", "modem:wpss", nullptr};
++    // ruan: the third is a merged image on Data (scripts/stage-wifi-firmware.py), for the RAM root, which has no UFS driver to read modem_a.
++    const char *sources[4] = {"modem:qca6750/wpss", "modem:wpss", "/private/var/firmware/qca6750/wpss.mbn", nullptr};
+     if (chosen) {sources[0] = chosen; sources[1] = nullptr;}
+     static const uint32_t pauses[] = {1, 2, 4, 8, 16, 30, 30};
+     int rc = -1;
+@@ -365,11 +374,13 @@
+ // nothing does here, and with it low the firmware asserted in whal_wmac_transition_to_fw_ctrl at the first vdev. Driven high before the
+ // WPSS starts (wifi-wlen=0 leaves it). TLMM 0xf100000, 0x1000 per pin: config at +0 (bit 9 output enable), in/out at +4 (bit 1 the level).
+ // [0] config before | in/out before << 16, [1] config | in/out after << 16
++// ruan: pinctrl@f000000 reg <0xf000000 0x1000000> (DT 12335-12337) is the whole TLMM; its GPIO blocks start at +0x100000 (pinctrl-parrot's
++// REG_BASE), i.e. 0xf100000 as on the 3a. Proven on ruan: RuanTouch.c drives pins 10-13, 96, 98 at 0xf100000 + 0x1000 * n.
+ constexpr uint64_t kTlmm = 0xf100000;
+-constexpr unsigned kWlEnPin = 44;
++constexpr unsigned kWlEnPin = 36;   // ruan: bt_wcn6750 qcom,wl-reset-gpio = <&tlmm 0x24 0> (DT 26294; bt-reset 35, sw-ctrl 61 at 26292-26293)
+ void wlanEnable() {
+     unsigned want = 1;
+-    PE_parse_boot_argn("wifi-wlen", &want, sizeof want);
++    PE_parse_boot_argn("ruan-wifi-wlen", &want, sizeof want);
+     IODeviceMemory *memory = IODeviceMemory::withRange(kTlmm + kWlEnPin * 0x1000ull, 0x1000);
+     IOMemoryMap *map = memory ? memory->map(kIOMapAnywhere | kIOMapInhibitCache) : nullptr;
+     if (memory) memory->release();
+@@ -412,7 +423,7 @@
+     stage(StRails);
+ 
+     char chosen[80] = "";
+-    const bool have = PE_parse_boot_argn("wifi-fw", chosen, sizeof chosen) && chosen[0];
++    const bool have = PE_parse_boot_argn("ruan-wifi-fw", chosen, sizeof chosen) && chosen[0];
+     const uint64_t began = mach_absolute_time();
+     if ((rc = openAndBoot(have ? chosen : nullptr))) {
+         if (rc == -1) note("fw: ", "no wpss image");
+@@ -457,7 +468,7 @@
+ 
+ extern "C" void asteroids_wpss_run(void) {
+     gMode = 0;
+-    PE_parse_boot_argn("wifi", &gMode, sizeof gMode);
++    PE_parse_boot_argn("ruan-wifi", &gMode, sizeof gMode);
+     if (!gMode || native_wpss_stats[0]) return;
+     survey();
+     stage(StSurveyed);
+@@ -465,7 +476,7 @@
+     gLock = IOLockAlloc();
+     gQueue = static_cast<Packet *>(IOMallocData(sizeof(Packet) * kQueue));  // on the heap: the kernel's __DATA is tight
+     gIntents = static_cast<uint8_t *>(IOMallocData(kIntentSize * kIntents));
+-    if (gMode >= 5) gBacklog = static_cast<Held *>(IOMallocData(sizeof(Held) * kBacklog));
++    if (gMode >= 3) gBacklog = static_cast<Held *>(IOMallocData(sizeof(Held) * kBacklog));
+     if (!gLock || !gQueue || !gIntents) {fail(StSmp2p, -12); return;}
+     qcom_qrtr_init(&gQrtr, 1, routerSend, nullptr);
+     asteroids_wifi_sleep_clock();  // before the WPSS powers the WCN (wifi-sleepclk; see AsteroidsWifi.cpp)
+--- asteroids/package/AsteroidsWifi.cpp
++++ port/package/RuanWifi.cpp
+@@ -1,17 +1,29 @@
+ // SPDX-License-Identifier: BSD-2-Clause-Patent
+-// asteroids: the WiFi module (drivers/Ath11kWifi, Linux ath11k on the WCN6750's hybrid bus) on the Nothing Phone (3a). The WCN6750's WLAN
+-// firmware runs on the WPSS, which WpssProbe.cpp starts on the ADSP thread; this file runs the module on its own thread ("wifi") and gives it
+-// what ath11k_ahb gets from Linux: the WPSS's IPC router link (QRTR packets both ways, queued between the two threads), the chip's 32
+-// message interrupts (GIC SPIs 0x300-0x31f: the chip writes their numbers to 0x17110040), a DMA window the chip reaches through a
+-// pass-through stream of the apps SMMU, register windows by physical address, firmware files, a clock and a log. sheng's WifiProbe.cpp
+-// (UniXNU-sheng 516a780) is the model for the platform callbacks and the DMA window's allocator; the PCIe, MHI and PMIC parts have no
+-// counterpart here.
++// ruan: the WiFi module (drivers/Ath11kWifi, Linux ath11k on the WCN6750's hybrid bus) on the Redmi Pad Pro 5G. NOT BUILT, NOT BOOTED.
++// filipnavara/UniXNU-asteroids 9f07af3 package/AsteroidsWifi.cpp, ported (macOS/docs/research/wifi/port). The WPSS comes up on
++// RuanWifiWpss.cpp's thread (WpssProbe.cpp); this file runs the module on its own thread ("wifi") with the WPSS's router link, the chip's
++// message interrupts, a DMA window in a pass-through SMMU stream, register windows, firmware files, a clock and a log, as on the 3a.
+ //
+-// Devicetree facts (stock 3a devicetree, qcom,wcn6750 "icnss2"): reg msi_addr 0x17110040; interrupts SPI 0x300..0x31f rising edge;
+-// iommus <&apps_smmu 0x1400 0x1>; dma-coherent; the WLAN SMP2P "wlan" out state (WpssProbe.cpp).
++// ruan values, live DT macOS/hardware/private/ruan-live.dts (line), qcom,wcn6750 node 26315-26342:
++//   reg msi_addr 0x17210040 (26317) = GICD 0x17200000 (5087) + 0x10040, as the 3a's 0x17110040 is its GICD + 0x10040;
++//   iommus <&apps_smmu 0x1c00 0x1> (26320; apps-smmu@15000000 phandle 0x28 at 16951): streams 0x1c00 and 0x1c01;
++//   interrupts SPI 0x300-0x31f edge (26321), as the 3a; dma-coherent (26326);
++//   supplies (icnss2): vdd-cx-mx smpb7 880-1120 mV (26332-26333 -> 5214), vdd-1.8-xo smpe8 1872 mV (26334-26335 -> 5788), vdd-1.3-rfa smpb8
++//   1256 mV (26336-26337 -> 5228); the BT node's vdd-ipa-2p2 smpb9 2200 mV (26303/26311 -> 5242) and vdd-io ldob22 1800 mV (26296/26304 ->
++//   5625), RPMh VRMs where the 3a used a PMIC GPIO for the 2.2 V; qcom,vreg_ol_cpr "s7b" (26341): the CPR rail is smpb7, its PDC
++//   resource "s7b.v"; cmd-db aop_cmd_db_region@80860000 (67-70); RSC DRV 2 0x17a20000 / 0xd00 (5116-5119), TCS 2 (RuanWifiWpss.cpp header).
++//   DMA window: in mpss_region@8bc00000 + 0xe600000 (170-173), from 0x8c000000 (2 MiB aligned, below 4 GiB for ath11k's 32-bit mask).
++//   Sleep clock: the live DT has no pmk8350 pinctrl state for a WCN sleep clock (pmk8350 node 7860), so nothing is driven (the 3a's
++//   PMK8550 GPIO5 code is left out); see the README's risks.
++// Left out against the 3a: the PMIC GPIO writes (PA enable, sleep clock) and with them BootResetCore.h's SPMI arbiter code; the
++// board-class registration patch (OSKextRegisterBoardClasses): WifiNet's classes register with preModLoad/postModLoad, as ruan's
++// KeyStoreProbe.cpp and RuanBacklight.cpp do.
+ //
+-// wifi-aj=1 joins the network of join.txt (test builds only, see joinStep). wifi=5 runs it (with the WPSS of wifi>=2). wifi-power=0 leaves the chip's RF supplies as they are. wifi-irq=0 leaves the interrupt lines unattached (the module then polls them every millisecond). wifi-scan=0 skips the self-test scan the board otherwise asks for once the interface is up
+-// (its networks go to the log). wifi-dma=MIB sizes the DMA window (default 48).
++// ruan-wifi=3 starts the module and stops at firmware ready (radio off); 4 also turns the radio on and runs the self-test scan; 5 also
++// brings up en0 (WifiNet.cpp). ruan-wifi-power=0 leaves the WCN supplies as they are. ruan-wifi-irq=0 leaves the interrupt lines unattached
++// (the module then polls them every millisecond). ruan-wifi-scan=0 skips the self-test scan. ruan-wifi-dma=MIB sizes the DMA window
++// (default 48). ruan-wifi-bdf=PATH names the board data file in the firmware partition. wifi-aj=1 (WifiNet's own name, kept) joins the
++// network of join.txt (test builds only).
+ #include <IOKit/IOLib.h>
+ #include <IOKit/IOMemoryDescriptor.h>
+ #include <IOKit/IOBufferMemoryDescriptor.h>
+@@ -26,13 +38,11 @@
+ #include <sys/kern_control.h>
+ #include <sys/kpi_mbuf.h>
+ #include "nw_abi.h"
+-#include "BoardClasses.h"
+-#include <libkern/OSKextLib.h>
++#include <libkern/c++/OSMetaClass.h>
+ #include <mach/kmod.h>
+ #include "nw_control_endpoint.h"
+ #include "SmmuBypass.h"
+ #include "AsteroidsRemote.h"
+-#include "BootResetCore.h"
+ extern "C" {
+ #include "QcomRpmh.h"
+ }
+@@ -62,18 +72,19 @@
+ // The module's log: a ring of lines on the heap (the kernel's __DATA is tight), read by the boot log.
+ extern "C" {char *native_wlan_lines; volatile uint32_t native_wlan_lines_n;}
+ // The network side (WifiNet.cpp, sheng's): en0, the wireless framework's requests, DHCP. Its classes are registered late with the
+-// kernel's module (its static initializer, which the build takes out of __mod_init_func), then the interface is made once the
+-// station is up. It calls back here: native_wifi_logf, sheng_wifi_file (its join.txt), sheng_wifi_wake.
++// kernel's module (its static initializer, which build-ram-root-probe.py takes out of __mod_init_func, as RuanBacklightSvc's), then the
++// interface is made once the station is up. It calls back here: native_wifi_logf, sheng_wifi_file (its join.txt), sheng_wifi_wake.
+ extern kmod_info_t g_kernel_kmod_info;
+ extern "C" void native_wifi_net_static_init(void) __asm__("__GLOBAL__sub_I_WifiNet.cpp");
+ extern "C" void sheng_wifi_net_start(const uint8_t mac[6]);
+ 
+ namespace {
+-enum Stage {StThread = 1, StWpss = 2, StSmmu = 3, StDma = 4, StIrqs = 5, StStarted = 6, StInterface = 7, StScanned = 8};
++// ruan: StFwReady = the module came up (firmware ready, WMI, mac80211 registered) and ruan-wifi=3 leaves the radio off.
++enum Stage {StThread = 1, StWpss = 2, StSmmu = 3, StDma = 4, StIrqs = 5, StStarted = 6, StInterface = 7, StScanned = 8, StFwReady = 9};
+ constexpr uint64_t kSmmu = 0x15000000, kSmmuBytes = 0xd0000;
+-constexpr uint16_t kStreams[2] = {0x1400, 0x1401};  // iommus <&apps_smmu 0x1400 0x1>: the mask covers both
+-constexpr uint64_t kMsiAddr = 0x17110040;
+-constexpr uint32_t kMsiSpi = 0x300, kMsiCount = 32;
++constexpr uint16_t kStreams[2] = {0x1c00, 0x1c01};  // ruan: iommus <&apps_smmu 0x1c00 0x1> (DT 26320): the mask covers both
++constexpr uint64_t kMsiAddr = 0x17210040;   // ruan: reg msi_addr (DT 26317)
++constexpr uint32_t kMsiSpi = 0x300, kMsiCount = 32;   // ruan: SPI 0x300-0x31f (DT 26321)
+ constexpr int kIrqBase = 1000;
+ constexpr unsigned kLines = 256, kLineBytes = 112;
+ constexpr unsigned kRxQueue = 64;
+@@ -121,12 +132,13 @@
+ // whalRecvDmaLeakRecovery at the first scan. Translating the WLAN stream instead faulted: its boot-loader bank (70) is not the kernel's
+ // to program (an SError at the first context register write). wifi-dma-pa=ADDR moves the window; wifi-dma-pa=0 allocates it in XNU's
+ // memory.
+-constexpr uint64_t kLowWindow = 0x8ac00000, kLowWindowBytes = 230ull << 20;
++// ruan: mpss_region@8bc00000 + 0xe600000 (DT 170-173); its first 4 MiB hold RuanWifiWpss.cpp's PAS metadata fallback (0x8bc00000).
++constexpr uint64_t kLowWindow = 0x8c000000, kLowWindowBytes = 0x9a200000 - 0x8c000000;
+ bool arenaInit(size_t bytes) {
+     gArena.blocks = static_cast<Arena::Block *>(IOMallocData(kArenaBlocks * sizeof(Arena::Block)));
+     if (!gArena.blocks) return false;
+     uint64_t low = kLowWindow;
+-    PE_parse_boot_argn("wifi-dma-pa", &low, sizeof low);
++    PE_parse_boot_argn("ruan-wifi-dma-pa", &low, sizeof low);
+     if (low && (low & 0x1fffff || (low == kLowWindow && bytes > kLowWindowBytes) || low + bytes > 0x100000000ull)) return false;
+     if (low) {
+         gArena.pa = low;
+@@ -296,15 +308,14 @@
+     return (result & 1) != 0;
+ }
+ 
+-// ---- the chip's supplies: what icnss2 switches on before WLAN (stock devicetree, qcom,wcn6750: vdd-cx-mx smpb3 968-1040 mV,
+-// vdd-1.8-xo smpb1 1856-2040 mV, vdd-1.3-rfa smpb2 1256-1408 mV, all RPMh VRM; vdd-ipa-2p2 the fixed 2.2 V regulator pm3001a S1J, switched
+-// by PMR735B GPIO1, output-low by default). Without them the firmware asserted in whal_wmac_transition_to_fw_ctrl at the first vdev.
+-// The RPMh requests go through active TCS 2 with a fixed wait each (the ADSP thread owns TCS 1 and the RSC's done interrupt); the mode
++// ---- the chip's supplies: what icnss2 switches on before WLAN (header: smpb7, smpe8, smpb8 from the WLAN node, smpb9 and ldob22 from
++// the BT node, all RPMh VRMs). On the 3a, without them the firmware asserted in whal_wmac_transition_to_fw_ctrl at the first vdev.
++// The RPMh requests go through active TCS 2 with a fixed wait each (RuanTouch.c owns TCS 0, RuanWifiWpss.cpp TCS 1); the mode
+ // (7: HPM), the voltage in mV, then the enable, as sheng's WifiProbe.cpp sends them.
+-constexpr uint64_t kRscDrv = 0x17a20000, kRscTcs = 0xd00, kCmdDb = 0x81c60000, kCmdDbSize = 0x20000;
+-constexpr uint64_t kSpmiCore = 0xc400000, kSpmiObsrvr = 0xc440000, kSpmiChnls = 0xc500000, kSpmiCnfg = 0xc42d000;
++constexpr uint64_t kRscDrv = 0x17a20000, kRscTcs = 0xd00, kCmdDb = 0x80860000, kCmdDbSize = 0x20000;   // ruan: DT 5116-5119, 67-70
+ struct Vrm {const char *name; uint32_t millivolts;};
+-constexpr Vrm kVrms[] = {{"smpb3", 968}, {"smpb1", 1856}, {"smpb2", 1256}};
++// ruan: the DT minimum of each (icnss2 starts a rail at its minimum; smpb7 then follows the firmware's CPR value, applyCpr)
++constexpr Vrm kVrms[] = {{"smpb7", 880}, {"smpe8", 1872}, {"smpb8", 1256}, {"smpb9", 2200}, {"ldob22", 1800}};
+ volatile uint32_t *mapRegs(uint64_t base, uint64_t size, IOMemoryMap **keep) {
+     IODeviceMemory *memory = IODeviceMemory::withRange(base, size);
+     IOMemoryMap *map = memory ? memory->map(kIOMapAnywhere | kIOMapInhibitCache) : nullptr;
+@@ -347,63 +358,6 @@
+     if (rscMap) rscMap->release();
+     return voted;
+ }
+-// A PMIC5 GPIO over the SPMI arbiter: ppid = SID << 8 | peripheral (GPIOn at 0xb800 + (n-1) * 0x100 for PMK8550 / PMR735B's own base).
+-// Registers: 0x08 status, 0x40 mode (LV/MV: 0 input, 1 output), 0x41 voltage source, 0x42 pull (5 none), 0x44 output source (bits 3:0
+-// the function: 0 normal, 2 func1; bit 7 the level for normal), 0x46 enable (bit 7). Logs the registers before and after the writes
+-// (none: only read). Returns 0, or a negative error (no arbiter channel, a refused write).
+-struct PmicWrite {uint8_t reg, value;};
+-int pmicGpio(uint32_t ppid, const char *what, const PmicWrite *writes, unsigned count) {
+-    IOMemoryMap *core = nullptr, *cnfg = nullptr, *obs = nullptr, *chn = nullptr;
+-    br_arbiter arb = {mapRegs(kSpmiCore, 0x3000, &core), mapRegs(kSpmiCnfg, 0x4000, &cnfg), 0};
+-    int rc = -12;
+-    if (arb.core && arb.cnfg) {
+-        const uint32_t apids = arb.core[BR_FEATURES / 4] & BR_FEATURES_APIDS_MASK;
+-        volatile uint32_t *o = mapRegs(kSpmiObsrvr, ((uint64_t)BR_OBS_APID_STRIDE * apids + 0xfff) & ~0xfffull, &obs);
+-        volatile uint32_t *c = mapRegs(kSpmiChnls, (uint64_t)BR_CHNL_APID_STRIDE * apids, &chn);
+-        int apid = -1, owner = -1;
+-        for (uint32_t i = 0; i < apids && i < 1024; ++i) {
+-            const uint32_t map = arb.core[(BR_APID_MAP + 4 * i) / 4];
+-            if (!map || ((map >> 8) & 0xfff) != ppid) continue;
+-            const int o2 = (int)(arb.cnfg[(BR_CNFG_OWNER + 4 * i) / 4] & 7u);
+-            if (apid < 0 || o2 == arb.ee) {apid = (int)i; owner = o2;}
+-        }
+-        if (o && c && apid >= 0) {
+-            constexpr uint8_t regs[6] = {0x08, 0x40, 0x41, 0x42, 0x44, 0x46};
+-            uint8_t before[6] = {}, after[6] = {};
+-            for (unsigned i = 0; i < 6; ++i) br_read8(o, &arb, apid, regs[i], &before[i]);
+-            rc = 0;
+-            for (unsigned i = 0; i < count && !rc; ++i) rc = br_write8(c, apid, writes[i].reg, writes[i].value);
+-            if (count) IOSleep(2);
+-            for (unsigned i = 0; i < 6; ++i) br_read8(o, &arb, apid, regs[i], &after[i]);
+-            // two lines: the log keeps 100 characters of each
+-            logf(6, "wifi: %s: ppid %03x apid %d owner %d", what, ppid, apid, owner);
+-            logf(6, "wifi: ppid %03x sts/mode/vin/pull/out/en %02x %02x %02x %02x %02x %02x -> %02x %02x %02x %02x %02x %02x rc %d", ppid,
+-                 before[0], before[1], before[2], before[3], before[4], before[5], after[0], after[1], after[2], after[3], after[4], after[5], rc);
+-        } else {
+-            logf(3, "wifi: %s: no arbiter channel for ppid %03x (apid %d)", what, ppid, apid);
+-        }
+-    }
+-    IOMemoryMap *const maps[4] = {core, cnfg, obs, chn};
+-    for (IOMemoryMap *m : maps) if (m) m->release();
+-    return rc;
+-}
+-// PMR735B (SPMI SID 5) GPIO1 high: the enable of S1J (output, normal function, level high, enabled).
+-int enablePaSupply() {
+-    constexpr PmicWrite w[] = {{0x40, 0x01}, {0x44, 0x80}, {0x46, 0x80}};
+-    return pmicGpio(0x588, "S1J enable (pmr735b gpio1)", w, 3);
+-}
+-// PMK8550 (SPMI SID 0) GPIO5: the 32 kHz sleep clock to the WCN's LF_CLK_IN. The stock devicetree's pmk8550_gpios default pinctrl
+-// (alt_sleep_clk_default: gpio5 func1, output, input disabled, no pull, power source 0), which Android applies at boot and UEFI does
+-// not. Without it the Fairphone 6 (same SoC, WCN6755 on ath11k) asserted in whal_wmac_transition_to_fw_control:1734 like ours
+-// (Luca Weiss's fix). Before the WPSS starts: wifi-sleepclk=0 leaves it, 2 only reads it.
+-int sleepClock() {
+-    unsigned mode = 1;
+-    PE_parse_boot_argn("wifi-sleepclk", &mode, sizeof mode);
+-    if (!mode) return 0;
+-    constexpr PmicWrite w[] = {{0x40, 0x01}, {0x41, 0x00}, {0x42, 0x05}, {0x44, 0x02}, {0x46, 0x80}};
+-    return pmicGpio(0x0bc, mode == 2 ? "sleep clock (pmk8550 gpio5), read only" : "sleep clock (pmk8550 gpio5)", w, mode == 2 ? 0 : 5);
+-}
+-
+ // ---- interrupts: the chip's message interrupts are GIC SPIs, one per vector ----
+ volatile uint32_t gPending, gWake;
+ bool gIrqs;
+@@ -541,8 +495,10 @@
+ }
+ 
+ // Firmware files by name, each read once and kept for the boot. ath11k asks for board-2.bin, then bdwlan.b<board id> (the vendor's name,
+-// in image/qca6750/ of the firmware partition), board.bin and regdb.bin; ath11k sends an ELF as such. wifi-bdf=PATH names the board data file in
+-// the firmware partition; an owner-installed file below /private/var/firmware/ath11k/WCN6750/hw1.0 wins over both.
++// in image/qca6750/ of the firmware partition), board.bin and regdb.bin; ath11k sends an ELF as such. ruan-wifi-bdf=PATH names the board data
++// file in the firmware partition; an owner-installed file below /private/var/firmware/ath11k/WCN6750/hw1.0 wins over both. ruan: modem_a's
++// image/qca6750 has bdwlan.elf and bdwlan.e01-e17 (ELF board data by board id, the "e" form of icnss2's bdwlan.bNN) and Xiaomi's region
++// files bd83u{in,gl,cn,ce,fcc,jp}.elf (the stock cmdline's icnss2.hwc=India picks one; ruan-wifi-bdf=image/qca6750/bd83uin.elf selects it).
+ struct FwCache {char name[24]; uint8_t *data; size_t size; bool tried;} gFw[8];
+ int readVfs(const char *name, uint8_t **data, size_t *size);
+ int pFwGet(const char *path, const uint8_t **data, size_t *size) {
+@@ -568,8 +524,13 @@
+             const char *candidates[4] = {nullptr, nullptr, nullptr, nullptr};
+             static char vendor[48];
+             if (!strncmp(base, "bdwlan.", 7)) {  // the vendor's board data by board id (the module's copy of core.c asks for it first)
+-                if (PE_parse_boot_argn("wifi-bdf", chosen, sizeof chosen) && chosen[0]) candidates[0] = chosen;
+-                else {snprintf(vendor, sizeof vendor, "image/qca6750/%s", base); candidates[0] = vendor;}
++                static char elf[48];
++                if (PE_parse_boot_argn("ruan-wifi-bdf", chosen, sizeof chosen) && chosen[0]) candidates[0] = chosen;
++                else {
++                    snprintf(elf, sizeof elf, "image/qca6750/bdwlan.e%s", base + 8);   // bdwlan.bNN -> bdwlan.eNN (ruan's names)
++                    snprintf(vendor, sizeof vendor, "image/qca6750/%s", base);
++                    candidates[0] = elf; candidates[1] = vendor;
++                }
+             } else if (!strcmp(base, "board.bin")) {
+                 candidates[0] = "image/qca6750/bdwlan.elf"; candidates[1] = "image/qca6750/bdwlan.bin"; candidates[2] = "image/bdwlan.elf";
+             } else if (!strcmp(base, "regdb.bin")) {
+@@ -607,11 +568,11 @@
+ // nw_board.cpr_voltage, long before the worker loop runs again) and again from the loop.
+ unsigned gSupplies = 1;
+ void applyCpr() {
+-    // icnss2's qcom,vreg_ol_cpr: smpb3 at the open-loop voltage the firmware reports, before the radio's MAC comes up.
++    // icnss2's qcom,vreg_ol_cpr: smpb7 (ruan) at the open-loop voltage the firmware reports, before the radio's MAC comes up.
+     static uint32_t cprApplied;
+     if (gSupplies && nw_wifi_cpr_mv && nw_wifi_cpr_mv != cprApplied && nw_wifi_cpr_mv >= 600 && nw_wifi_cpr_mv <= 1100) {
+         cprApplied = nw_wifi_cpr_mv;
+-        const Vrm cx = {"smpb3", cprApplied};
++        const Vrm cx = {"smpb7", cprApplied};   // ruan: qcom,vreg_ol_cpr = "s7b" (DT 26341)
+         voteVrms(&cx, 1);
+     }
+     // icnss2 does not vote that rail itself: it gives the voltage to the AOP's WLAN power domain controller, whose wake sequence
+@@ -621,11 +582,11 @@
+     static uint64_t pdcAt;
+     if (nw_wifi_cpr_mv && nw_wifi_cpr_mv != pdcSent && nw_wifi_cpr_mv >= 600 && nw_wifi_cpr_mv <= 1100) {
+         unsigned pdc = 1;
+-        PE_parse_boot_argn("wifi-pdc", &pdc, sizeof pdc);
++        PE_parse_boot_argn("ruan-wifi-pdc", &pdc, sizeof pdc);
+         pdcSent = nw_wifi_cpr_mv;
+         if (pdc) {
+             char message[64];
+-            snprintf(message, sizeof message, "{class: wlan_pdc, res: s3b.v, upval: %u}", pdcSent > 950 ? pdcSent : 950);
++            snprintf(message, sizeof message, "{class: wlan_pdc, res: s7b.v, upval: %u}", pdcSent > 950 ? pdcSent : 950);   // ruan: "s7b"
+             const int rc = asteroids_wpss_aop(message);
+             logf(rc ? 3 : 6, "wifi: AOP %s: queued %d", message, rc);
+             pdcAt = pNow() + 1500;
+@@ -758,7 +719,10 @@
+ void netStart() {
+     struct nw_wifi_status status;
+     nw_wifi_status_get(&status);
+-    if (const OSReturn r = OSKextRegisterBoardClasses(g_kernel_kmod_info.name, native_wifi_net_static_init)) {
++    void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);   // ruan: as KeyStoreProbe.cpp / RuanBacklight.cpp
++    if (!handle) {logf(3, "wifi: network classes: preModLoad failed"); return;}
++    native_wifi_net_static_init();
++    if (const OSReturn r = OSMetaClass::postModLoad(handle)) {
+         logf(3, "wifi: network classes not registered: %d", (int)r);
+         return;
+     }
+@@ -843,6 +807,7 @@
+     IOFreeData(bss, sizeof(struct nw_bss_info));
+ }
+ 
++unsigned gMode;   // ruan-wifi
+ void wifiThread(void *, wait_result_t) {
+     thread_set_thread_name(current_thread(), "wifi");
+     stage(StThread);
+@@ -859,7 +824,7 @@
+     if (attached) {fail(StWpss, attached); return;}
+     stage(StWpss);
+     uint32_t dmaMiB = 48;
+-    PE_parse_boot_argn("wifi-dma", &dmaMiB, sizeof dmaMiB);
++    PE_parse_boot_argn("ruan-wifi-dma", &dmaMiB, sizeof dmaMiB);
+     if (dmaMiB < 8 || dmaMiB > 256) dmaMiB = 48;
+     if (!arenaInit((size_t)dmaMiB << 20)) {fail(StDma, -12); return;}
+     logf(6, "wifi: DMA window %llx + %u MiB, write-combined (%s)", gArena.pa, dmaMiB, gArena.memory ? "XNU memory" : "below 4 GiB");
+@@ -869,10 +834,9 @@
+     if (!setupSmmu()) {fail(StSmmu, native_wlan_stats[9]); return;}
+     stage(StSmmu);
+     stage(StDma);
+-    PE_parse_boot_argn("wifi-power", &gSupplies, sizeof gSupplies);
++    PE_parse_boot_argn("ruan-wifi-power", &gSupplies, sizeof gSupplies);
+     if (gSupplies) {
+-        const int rails = voteVrms(kVrms, sizeof kVrms / sizeof kVrms[0]), pa = enablePaSupply();
+-        native_wlan_stats[1] = rails | (pa ? 0x100 : 0);
++        native_wlan_stats[1] = voteVrms(kVrms, sizeof kVrms / sizeof kVrms[0]);   // a bit per rail voted (0x1f: all five)
+     }
+     stage(StIrqs);
+ 
+@@ -891,12 +855,12 @@
+     board.smp2p_wlan = pSmp2pWlan;
+     board.cpr_voltage = pCprVoltage;
+     unsigned wmiMem = 1;  // wifi-wmi-mem=0: only log the firmware's host memory requests
+-    PE_parse_boot_argn("wifi-wmi-mem", &wmiMem, sizeof wmiMem);
++    PE_parse_boot_argn("ruan-wifi-wmi-mem", &wmiMem, sizeof wmiMem);
+     nw_wifi_wmi_mem = wmiMem;
+     unsigned idlePs = 1;  // wifi-idle-ps=0: the firmware never enters IMPS between scans (WMI_PDEV_PARAM_IDLE_PS_CONFIG 0)
+-    PE_parse_boot_argn("wifi-idle-ps", &idlePs, sizeof idlePs);
++    PE_parse_boot_argn("ruan-wifi-idle-ps", &idlePs, sizeof idlePs);
+     nw_wifi_idle_ps = idlePs;
+-    PE_parse_boot_argn("wifi-debug", &board.debug_mask, sizeof board.debug_mask);  // ath11k's ATH11K_DBG_* bits
++    PE_parse_boot_argn("ruan-wifi-debug", &board.debug_mask, sizeof board.debug_mask);  // ath11k's ATH11K_DBG_* bits
+     static const struct nw_wifi_events events = {scanDone, connectDone, nullptr, nullptr, nullptr, nullptr, nullptr};
+     nw_wifi_set_events(&events);
+     controlStart();
+@@ -908,8 +872,8 @@
+     // ~1000/s to 6-150/s); wifi-irq=0 leaves them unattached and the module polls its interrupt lines every millisecond.
+     // wifi-irq-poll=MS: with interrupts, still give every handler a turn every MS ms (default 20; 0 never).
+     unsigned wantIrqs = 1, irqPoll = 20;
+-    PE_parse_boot_argn("wifi-irq", &wantIrqs, sizeof wantIrqs);
+-    PE_parse_boot_argn("wifi-irq-poll", &irqPoll, sizeof irqPoll);
++    PE_parse_boot_argn("ruan-wifi-irq", &wantIrqs, sizeof wantIrqs);
++    PE_parse_boot_argn("ruan-wifi-irq-poll", &irqPoll, sizeof irqPoll);
+     const uint32_t irqVectors = nw_wifi_irq_vectors();
+     const int irqs = wantIrqs ? attachIrqs(irqVectors) : -1;
+     if (irqs) logf(6, "wifi: interrupts %s (%d, vectors %x, attached %x): polling", wantIrqs ? "not attached" : "not asked for", irqs, irqVectors, gIrqMask);
+@@ -918,7 +882,7 @@
+     nw_wifi_irq_mode(gIrqs);
+ 
+     unsigned selfScan = 1, autoJoin = 0;
+-    PE_parse_boot_argn("wifi-scan", &selfScan, sizeof selfScan);
++    PE_parse_boot_argn("ruan-wifi-scan", &selfScan, sizeof selfScan);
+     PE_parse_boot_argn("wifi-aj", &autoJoin, sizeof autoJoin);
+     bool powered = false, scanAsked = false;
+     uint64_t scanAt = 0;
+@@ -936,13 +900,17 @@
+         }
+         applyCpr();
+         const int busy = nw_wifi_step();
+-        if (!powered && nw_wifi_stats.stage >= 4) {
++        if (!powered && nw_wifi_stats.stage >= 4 && gMode < 4 && native_wlan_stats[0] != StFwReady) {
++            stage(StFwReady);
++            logf(6, "wifi: firmware ready, mac80211 registered; radio left off (ruan-wifi=3)");
++        }
++        if (!powered && nw_wifi_stats.stage >= 4 && gMode >= 4) {
+             // As icnss2 around every ring pointer write of the vendor host (hal_srng delayed register writes: prevent L1, i.e. leave the
+             // WPSS-chip link's power save, and a SoC wake vote): asked once and held (wifi-awake=0 skips). Without them the firmware
+             // asserted in whalRecvDmaLeakRecovery/Detect at the first scan. Giving both back after each access, as icnss2 does, kept the
+             // MAC from leaving IMPS (whal_wmac_transition_to_fw_control:1734).
+             unsigned awake = 1;
+-            PE_parse_boot_argn("wifi-awake", &awake, sizeof awake);
++            PE_parse_boot_argn("ruan-wifi-awake", &awake, sizeof awake);
+             if (awake) {
+                 const int32_t ep = asteroids_wpss_smp2p_send(2, 7);
+                 logf(6, "wifi: ep power save exit %x", ep);
+@@ -952,8 +920,8 @@
+             stage(StInterface);
+             nw_wifi_power(1);
+             // wifi-net=0: no network side (the board's own join test, wifi-aj, then runs as before).
+-            unsigned net = 1;
+-            PE_parse_boot_argn("wifi-net", &net, sizeof net);
++            unsigned net = gMode >= 5;
++            PE_parse_boot_argn("ruan-wifi-net", &net, sizeof net);
+             if (net) netStart();
+             scanAt = pNow() + 2000;   // the self-test scan 2 s after radio on
+         }
+@@ -1033,12 +1001,14 @@
+ int readVfs(const char *name, uint8_t **data, size_t *size) {return asteroids_wifi_vfs_read(name, data, size);}
+ }
+ 
+-// The WPSS start (WpssProbe.cpp asteroids_wpss_run) sets the WCN's sleep clock first.
+-extern "C" int asteroids_wifi_sleep_clock(void) {return sleepClock();}
+-
+-extern "C" void asteroids_wifi_probe(void) {
+-    unsigned mode = 0;
+-    if (!PE_parse_boot_argn("wifi", &mode, sizeof mode) || mode < 5 || native_wlan_stats[0]) return;
++// WifiNet.cpp's diagnostics hooks (BootUiTraceProbe.c on the 3a, absent on ruan): "not found" answers; weak, so a real one wins.
++extern "C" __attribute__((weak)) int boot_kthread_report(const char *, char *out, unsigned size) {if (size) out[0] = 0; return 1;}
++extern "C" __attribute__((weak)) unsigned boot_cpu_kick(char *out, unsigned size) {if (size) out[0] = 0; return 0;}
++
++// RuanWifiWpss.cpp, once the WPSS is ready, with ruan-wifi>=3 (the asteroids name was asteroids_wifi_probe, from its late probe).
++extern "C" void ruan_wifi_module_start(unsigned mode) {
++    if (mode < 3 || native_wlan_stats[0]) return;
++    gMode = mode;
+     native_wlan_lines = static_cast<char *>(IOMallocData(kLines * kLineBytes));
+     if (native_wlan_lines) bzero(native_wlan_lines, kLines * kLineBytes);
+     thread_t thread = nullptr;
+--- asteroids/package/AsteroidsWifiFiles.c
++++ port/package/AsteroidsWifiFiles.c
+@@ -1,7 +1,9 @@
+ /* SPDX-License-Identifier: BSD-2-Clause-Patent */
+ /* asteroids: WiFi firmware files an owner installed on the Data volume, below /private/var/firmware/ath11k/WCN6750/hw1.0 (ath11k's own
+  * directory name), read through VFS on the WiFi worker. Built with kern_exec's BSD flags, as AdspFirmware.c. sheng's WifiFirmware.c
+- * reader with this board's directory and without its file-name list. */
++ * reader with this board's directory and without its file-name list.
++ * ruan (macOS/docs/research/wifi/port): unchanged but for join.txt below; ruan has no Data add-on (native_gpu_addon_stage), so the
++ * file is read from the Data volume directly (/private/var/wifi-test/join.txt, staged with build-ramroot.sh DATA_OVERLAY). */
+ #include <sys/param.h>
+ #include <sys/systm.h>
+ #include <sys/proc.h>
+@@ -50,9 +52,8 @@
+     return 0;
+ }
+ 
+-/* The unattended join test's file (AsteroidsWifi.cpp joinStep), in the Data add-on's wifi-test directory (build-wifi-userspace.py, only
+- * with UNIXNU_WIFI_JOIN). EAGAIN until the add-on is installed. */
+-extern volatile int native_gpu_addon_stage;
++/* The unattended join test's file (RuanWifi.cpp joinStep, WifiNet's auto-join). ruan: on Data, mounted before launchd (ram-data=1 or
++ * the UFS variant), so by the time the radio is up a missing file is really missing. Never in git or a release: it holds a network key. */
+ int asteroids_wifi_join_read(uint8_t **data, size_t *size);
+ static int read_path(const char *path, uint8_t **data, size_t *size)
+ {
+@@ -84,6 +85,5 @@
+ }
+ int asteroids_wifi_join_read(uint8_t **data, size_t *size)
+ {
+-    if (native_gpu_addon_stage < 1) return EAGAIN;
+-    return read_path("/private/var/ngpu/wifi-test/join.txt", data, size);
++    return read_path("/private/var/wifi-test/join.txt", data, size);
+ }
+--- asteroids/scripts/build-ath11k-wifi.py
++++ port/scripts/build-ath11k-wifi.py
+@@ -2,11 +2,15 @@
+ """Compile the WiFi module (drivers/Ath11kWifi: ath11k on the WCN6750's hybrid bus) to kernel objects for the board build.
+ Usage: build-ath11k-wifi.py <module dir> <output dir>
+ Prints one line "OBJ <path>" per object. sheng's build-ath12k-wifi.py (UniXNU-sheng 516a780) for the ath11k tree: the module fetches its pinned
+-public sources with tools/fetch-sources.sh and lays out its generated include trees with tools/prepare.sh and tools/prepare-ath11k.sh first."""
++public sources with tools/fetch-sources.sh and lays out its generated include trees with tools/prepare.sh and tools/prepare-ath11k.sh first.
++ruan (macOS/docs/research/wifi/port): filipnavara/UniXNU-asteroids 9f07af3 scripts/build-ath11k-wifi.py with Linux tools: llvm-nm and
++llvm-objcopy from PATH instead of Homebrew's, and kernel_target from the UniXNU tree (the archive step's working directory), whose TRIPLE
++is the kernel's (arm64-apple-ios17.0 for ruan)."""
+ import hashlib, json, shlex, shutil, subprocess, sys
+ from concurrent.futures import ThreadPoolExecutor
+ from pathlib import Path
+ sys.path.insert(0, str(Path(__file__).resolve().parent))
++sys.path.insert(0, str(Path('scripts').resolve()))   # ruan: UniXNU's scripts/kernel_target.py (cwd = the UniXNU tree)
+ from kernel_target import TRIPLE
+ 
+ module = Path(sys.argv[1]).resolve()
+@@ -87,7 +91,7 @@
+ keep = set(KEEP)
+ objs = [o for _, o, _ in jobs]
+ names = set()
+-llvm = Path(subprocess.run(['brew', '--prefix', 'llvm'], check=True, capture_output=True, text=True).stdout.strip()) / 'bin'
++llvm = Path(shutil.which('llvm-nm') or '/usr/bin/llvm-nm').parent   # ruan: Linux host, no Homebrew
+ for o in raw_objects:
+     r = subprocess.run([str(llvm / 'llvm-nm'), '-g', '--defined-only', str(o)], check=True, capture_output=True, text=True)
+     for line in r.stdout.splitlines():
