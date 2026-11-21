@@ -35,7 +35,10 @@ extern "C" int ruan_backlight_set_level(uint32_t level) __attribute__((weak_impo
 extern "C" int ruan_backlight_reg(uint8_t reg, int value) __attribute__((weak_import));
 extern "C" struct ruan_backlight_state g_ruan_backlight __attribute__((weak_import));
 extern "C" char ruan_bl_mirror_status[96] __attribute__((weak_import));
-extern "C" volatile int32_t ruan_panel120_stats[16] __attribute__((weak_import));   // RuanPanel120.c, USB `panel120`   // RuanBacklight.cpp, the second SY7758
+extern "C" volatile uint32_t ruan_touch_multi __attribute__((weak_import));   // RuanInput.c / novatek: multi-finger reports
+extern "C" volatile uint32_t ruan_touch_maxfingers __attribute__((weak_import));
+extern "C" volatile uint32_t ruan_touch_lastmulti[4] __attribute__((weak_import));
+extern "C" volatile int32_t ruan_panel120_stats[32] __attribute__((weak_import));   // RuanPanel120.c, USB `panel120`   // RuanBacklight.cpp, the second SY7758
 
 extern "C" {
 #include "SmmuBypass.h"
@@ -759,6 +762,11 @@ static void handleCommand(TerminalSession &s, const char *raw) {
                  &ruan_button_events ? ruan_button_events : 0u,
                  &ruan_input_row ? ruan_input_row : "");
         s.reply.writeStr(buf);
+        if (&ruan_touch_multi) {
+            snprintf(buf, sizeof(buf), "[usb] INPUT: multi-finger reports %u, most fingers %u, last ids %#x at %08x %08x %08x\r\n",
+                     ruan_touch_multi, ruan_touch_maxfingers, ruan_touch_lastmulti[0], ruan_touch_lastmulti[1], ruan_touch_lastmulti[2], ruan_touch_lastmulti[3]);
+            s.reply.writeStr(buf);
+        }
     } else if (strEq(raw, "dpu")) {
         // Read-only DPU probe (docs/research/dpu-scanout-sm7435.md step a): which pipe scans out the boot buffer, its format and
         // stride, the CTL's active pipes/flush, and INTF1's frame counter. MDP block 0xae00000 + 0x84000 from the live DT.
@@ -812,6 +820,11 @@ static void handleCommand(TerminalSession &s, const char *raw) {
             snprintf(buf, sizeof(buf), "[usb] PANEL120: result %#x hsync %#x vper %u->%u dsi_total %#x->%#x activeV %#x cfg %#x prog %#x mHz %d->%d line %d underrun %d->%d dsi_err %#x st %#x\r\n",
                      (unsigned)p[0], (unsigned)p[1], (unsigned)p[2], (unsigned)p[9], (unsigned)p[3], (unsigned)p[10], (unsigned)p[4], (unsigned)p[5],
                      (unsigned)p[6], (int)p[7], (int)p[8], (int)p[11], (int)p[12], (int)p[13], (unsigned)p[14], (unsigned)p[15]);
+            s.reply.writeStr(buf);
+            // [16..31] perf step (docs/research/120hz/underrun.md)
+            snprintf(buf, sizeof(buf), "[usb] PANEL120: mdp kHz %d->%d pll0 %#x rcg %#x vig0 qos %#x danger %#x safe %#x creq %#x %#x cdp %#x perf %d intr %#x upos %d fifo %#x phy %#x tmo %#x\r\n",
+                     (int)p[16], (int)p[17], (unsigned)p[18], (unsigned)p[19], (unsigned)p[20], (unsigned)p[21], (unsigned)p[22], (unsigned)p[23],
+                     (unsigned)p[24], (unsigned)p[25], (int)p[26], (unsigned)p[27], (int)p[28], (unsigned)p[29], (unsigned)p[30], (unsigned)p[31]);
         } else snprintf(buf, sizeof(buf), "[usb] PANEL120: not linked\r\n");
         s.reply.writeStr(buf);
     } else if (strEq(raw, "cpufreq")) {

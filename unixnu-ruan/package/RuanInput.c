@@ -16,6 +16,7 @@ volatile uint32_t native_touch_seq, native_touch_count, native_touch_hid_reports
 volatile int native_touch_xs[12], native_touch_ys[12], native_touch_ids[12];
 volatile uint32_t ruan_touch_events, ruan_button_events, ruan_buttons_mask, ruan_input_lines;
 volatile uint32_t ruan_touch_raw_x, ruan_touch_raw_y, ruan_touch_max_x, ruan_touch_max_y, ruan_touch_norm_x, ruan_touch_norm_y;
+volatile uint32_t ruan_touch_multi, ruan_touch_maxfingers, ruan_touch_lastmulti[4];   /* reports with >= 2 fingers, the most at once, last such report: ids and two positions */
 char ruan_input_row[96];
 char ruan_buttons_row[96];   /* RuanButtons.c's last log line (it prints through loader_log_putc; RuanTouch.c uses loader_log_line) */
 

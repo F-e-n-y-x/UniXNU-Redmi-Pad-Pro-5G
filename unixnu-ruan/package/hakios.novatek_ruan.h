@@ -541,6 +541,18 @@ novatek_poll(void)
 			focaltech_contact_update(id - 1, 0, x, y, nvt_max_x, nvt_max_y);
 		}
 	}
+	{	/* ruan: multi-finger reports (USB `touch`): a phantom second contact turns the iPadOS keyboard into a trackpad */
+		extern volatile uint32_t ruan_touch_multi, ruan_touch_maxfingers, ruan_touch_lastmulti[4];
+		uint32_t n = 0, ids = 0;
+		for (int i = 0; i < NVT_POINTS; i++) if (active[i]) {n++; ids |= 1u << i;}
+		if (n > ruan_touch_maxfingers) ruan_touch_maxfingers = n;
+		if (n >= 2) {
+			ruan_touch_multi++;
+			ruan_touch_lastmulti[0] = ids;
+			unsigned k = 1;
+			for (int i = 0; i < NVT_POINTS && k < 4; i++) if (active[i]) ruan_touch_lastmulti[k++] = (focaltech_contact[i].x << 16) | (focaltech_contact[i].y & 0xffff);
+		}
+	}
 	for (int i = 0; i < NVT_POINTS; i++) {
 		if (!active[i] && focaltech_contact[i].down) {
 			focaltech_contact[i].down = false;

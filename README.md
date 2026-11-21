@@ -36,7 +36,7 @@
 
 ## What works
 
-Status on 2026-11-21 (builds rbu166p–rbu169p). ✅ tested on the tablet · 🧪 built, being tested · ⚠️ known problem · ❌ not started
+Status on 2026-11-21 (builds rbu166p–rbu176u). ✅ tested on the tablet · 🧪 built, being tested · ⚠️ known problem · ❌ not started
 
 | Area | Status | Details |
 |---|---|---|
@@ -47,13 +47,15 @@ Status on 2026-11-21 (builds rbu166p–rbu169p). ✅ tested on the tablet · �
 | Display | ✅ | **Zero-copy scanout**: the display engine reads the GPU's frames directly, 60 Hz |
 | Smoothness | ✅/⚠️ | **Fixed 2026-11-21:** the UI no longer updates only once every 5 s. Measured 16 ms frames (60 fps) in light scenes, 33 ms (30 fps) in heavier ones |
 | Touch | ✅ | Every touch reaches iOS; interrupt-driven |
-| Brightness | 🧪 | Backlight service with AppleARMBacklight conformance; I2C start-up fix in rbu169p |
+| Brightness | ✅ | Both SY7758 backlight chips (one per half of the LED strings) follow the slider; AppleARMBacklight conformance and full CoreBrightness calibration |
 | Buttons, battery, USB debug | ✅ | |
 | Crashes | ⚠️ | SpringBoard occasionally resprings (an assertion in FrontBoardServices, reached from the accessibility server); Turnip alignment fault (SIGBUS) in some GPU writes |
 | App switching | ⚠️ | Closing Settings takes over 5 s and is then killed, so the switcher animation ghosts; widgets and app snapshots draw as blank boxes |
-| 120 Hz | 🧪 | Read-only check passes (`ruan-120hz=2` → `0x60`); switching (`ruan-120hz=1`) next |
-| Wi-Fi | 🧪 | **Native:** Settings → Wi-Fi turns on and lists nearby networks (WCN6750 through WPSS, ath11k, `ruan-wifi=5 no-lc=1`). Joining a network is being tested |
-| Audio, cameras, sensors, cellular, Bluetooth | ❌ | |
+| 120 Hz | 🧪 | The panel switches and measures 121.7 Hz (`ruan-120hz=1`), but the display engine starves at the first line, so the top of the screen corrupts. Bandwidth vote with automatic fallback to 60 Hz being tested |
+| Wi-Fi | ✅/🧪 | **Native:** Settings → Wi-Fi turns on and lists nearby networks through iPadOS's own wifid (WCN6750 through WPSS, ath11k, `ruan-wifi=5 no-lc=1`). Joining a network is being tested |
+| Keyboard | ⚠️ | Draws correctly, but tapping `.?123` makes it redraw 16 pt to the right, so taps miss keys. Being researched (screen-size vs device-identity mismatch suspected) |
+| Audio, Bluetooth, video decode | 🧪 | Research and staged ports in progress (`docs/research/{audio,bluetooth,video}`); hardware video decode follows UniXNU-sheng's iris VPU driver |
+| Cameras, sensors, cellular | ❌ | |
 
 
 ### 2026-11-21: the 5-second frame stall
