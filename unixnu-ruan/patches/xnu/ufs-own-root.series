@@ -7,3 +7,7 @@ ruan-memlimit-floor.patch
 # GPU sandbox grant from the provider chain + miss log (rbu118u denies).
 ruan-grant-provider.patch
 ruan-memlimit-floor-memstat.patch
+ruan-owner-dataprotect.patch
+ruan-exit-reason-log.patch
+ruan-default-bootargs.patch
+ruan-slow-wait-log.patch

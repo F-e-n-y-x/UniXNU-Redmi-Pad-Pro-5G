@@ -6,9 +6,14 @@
 </p>
 
 <p align="center">
-  <img src="docs/img/ipados-control-center-rbu127u.png" alt="Control Center on the tablet (rbu127u)" width="30%">
-  <img src="docs/img/usb-homescreen-full.png" alt="Home screen" width="30%">
-  <img src="docs/img/usb-settings-about-full.png" alt="Settings, About" width="30%">
+  <img src="docs/img/cam-rbu168p-home-portrait.jpg" alt="Home screen" width="24%">
+  <img src="docs/img/cam-rbu168p-control-center.jpg" alt="Control Center" width="24%">
+  <img src="docs/img/cam-rbu168p-safari.jpg" alt="Safari" width="24%">
+  <img src="docs/img/cam-rbu168p-about.jpg" alt="Settings, About: iPadOS 17.7.11" width="24%">
+</p>
+<p align="center"><sub>Photos of the real panel, 2026-11-21 (rbu168p): home screen, Control Center, Safari (no network yet), Settings → About.</sub></p>
+<p align="center">
+  <img src="docs/img/cam-rbu168p-lockscreen.jpg" alt="Lock screen" width="60%">
 </p>
 
 > **Branches:** `agy-15-11-26` (this one) is the **iPadOS build**. `macos` is the **macOS build** for the same tablet.
@@ -26,22 +31,45 @@
 
 ## What works
 
-Status on 2026-11-21 (builds rbu13x). ✅ tested on the tablet · 🧪 built, being tested · ⚠️ known problem · ❌ not started
+Status on 2026-11-21 (builds rbu166p–rbu169p). ✅ tested on the tablet · 🧪 built, being tested · ⚠️ known problem · ❌ not started
 
 | Area | Status | Details |
 |---|---|---|
-| Boot | ✅ | Lock screen, home screen, Settings, Control Center (~5 min from power-on) |
-| Storage | ✅ | iPadOS root on the internal UFS partition `sda22` (`unixnu`, 32 GiB) |
-| CPU | ✅ | 4× Cortex-A78 + 4× A55; load governor, L3 vote, touch boost. Thermal cap 🧪 |
-| GPU | ✅ | Metal on Adreno 710 through Turnip (Vulkan) and AdrenoMetal |
-| GPU speed | 🧪 | 734 MHz, multi-level clocks with matching memory bandwidth, governor up to 816 MHz |
+| Boot | ✅ | Lock screen, home screen, Settings, Control Center |
+| Storage | ✅ | iPadOS root on the internal UFS partition `sda22` (`unixnu`, 32 GiB); persistent Data volume |
+| CPU | ✅ | 4× Cortex-A78 + 4× A55; load governor (A78s at 2.4 GHz under load), L3 vote, touch boost, thermal cap |
+| GPU | ✅ | Metal on Adreno 710 through Turnip (Vulkan) and AdrenoMetal; multi-level clocks and governor |
 | Display | ✅ | **Zero-copy scanout**: the display engine reads the GPU's frames directly, 60 Hz |
-| Smoothness | 🧪 | Fixed 60 Hz pacing, frames released at flip |
-| Touch | ✅ | Every touch reaches iOS; 1 ms polling on the correct interrupt pin |
+| Smoothness | ✅/⚠️ | **Fixed 2026-11-21:** the UI no longer updates only once every 5 s. Measured 16 ms frames (60 fps) in light scenes, 33 ms (30 fps) in heavier ones |
+| Touch | ✅ | Every touch reaches iOS; interrupt-driven |
+| Brightness | 🧪 | Backlight service with AppleARMBacklight conformance; I2C start-up fix in rbu169p |
 | Buttons, battery, USB debug | ✅ | |
-| Lock-screen wallpaper | ⚠️ | Wallpaper extensions are killed every ~5 s, and touching the lock screen can then crash SpringBoard. Fix being tested |
-| Data volume | ⚠️ | 1 GB RAM disk that resets on reboot. Persistent 16 GB storage is built, not yet tested |
-| Wi-Fi, audio, cameras, sensors, cellular | ❌ | |
+| Crashes | ⚠️ | SpringBoard occasionally resprings (an assertion in FrontBoardServices, reached from the accessibility server); Turnip alignment fault (SIGBUS) in some GPU writes |
+| App switching | ⚠️ | Closing Settings takes over 5 s and is then killed, so the switcher animation ghosts; widgets and app snapshots draw as blank boxes |
+| 120 Hz | 🧪 | Panel timing code built (`ruan-120hz`), not switched on yet |
+| Wi-Fi | 🧪 | WPSS boot, firmware, ath11k driver and network interface ported (`ruan-wifi=1..4`), first boot test in rbu169p. Joining a network (`ruan-wifi=5`) needs the root overlay build |
+| Audio, cameras, sensors, cellular, Bluetooth | ❌ | |
+
+<p align="center">
+  <img src="docs/img/cam-rbu168p-settings.jpg" alt="Settings closing with a ghosted transition (rbu168p)" width="45%"><br>
+  <sub>Known problem: closing Settings ghosts the old and new frames (rbu168p).</sub>
+</p>
+
+### 2026-11-21: the 5-second frame stall
+
+From rbu114u on, backboardd presented one frame every ~5.0 s, whatever the display or GPU settings. A kernel probe
+(`patches/xnu/ruan-slow-wait-log.patch`) logs every user thread whose wait times out after 4 s or more, with its user return
+addresses. It showed backboardd timing out in `mach_msg` after exactly 5000 ms, called from QuartzCore through
+`EDRGetDefaultMinScalingFactor` in **libEDR**.
+
+libEDR's server lives inside backboardd and starts only when CoreBrightness accepts a backlight that conforms to
+`AppleARMBacklight`. The old backlight (`package/RuanBacklight.cpp`) set `backlight-control` without that conformance, so
+every frame waited for a reply that never came (the same failure UniXNU recorded for sheng as int-236). The fix is the conforming
+service `package/RuanBacklightSvc.cpp`, now the default (`ruan-bl-svc=0` returns to the old path). Its I2C start-up check was
+relaxed in `package/GeniI2c.c` so the brightness slider works too.
+
+Ruled out on the way: display mode, GPU clocks and governor, GPU interrupt, frame pacing, wallpaper extensions, GPU sandbox
+denials, and cross-core IPIs. Turning on `armcpu-spi-ipi` / `armcpu-self-ipi` hangs boot at the display start.
 
 ## How it works
 
@@ -105,11 +133,11 @@ The kernel exposes a USB serial debug port. Use `tools/ruan-usbdbg.py`:
 
 ## Roadmap
 
-1. Fix the lock-screen wallpaper crash (no GPU for wallpaper extensions, HEIC→PNG wallpapers, data protection).
-2. GPU speed: clock steps to 940 MHz with the governor and thermal cap; shader pipeline pack; on-chip tile rendering.
-3. Persistent 16 GB Data volume on `sda22`.
-4. 120 Hz panel mode.
-5. Wi-Fi, audio.
+1. Crashes: the SpringBoard FrontBoardServices assertion; the Turnip alignment fault (build Turnip with `-mstrict-align`).
+2. Smoothness: shader pipeline pack from a warm cache (cold shader compiles slow app launches); 120 Hz panel mode.
+3. App switching: widget renderer and app snapshots (blank boxes); apps that take over 5 s to exit.
+4. Wi-Fi: verify stages 1–4 on the tablet, then join a network (supplicant through the root overlay).
+5. Audio.
 
 ## Credits
 

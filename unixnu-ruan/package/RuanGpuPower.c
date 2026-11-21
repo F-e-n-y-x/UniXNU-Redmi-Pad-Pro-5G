@@ -2087,7 +2087,7 @@ static int dcvs_vote(unsigned l)
 static void dcvs_thread(void *arg, int wres)
 {
 	(void)arg; (void)wres;
-	unsigned hi = 7 /* 816 MHz until the speed bin is read; ruan-gpu-max-level=9 allows 940 */, cur = ruan_gpu_dcvs[1] ? (unsigned)ruan_gpu_dcvs[1] : perf_level, cap, down = 0, fails = 0, n = 0, busy_sum = 0;
+	unsigned hi = 9 /* 940 MHz, thermal cap above 85 C; ruan-gpu-max-level lowers it */, cur = ruan_gpu_dcvs[1] ? (unsigned)ruan_gpu_dcvs[1] : perf_level, cap, down = 0, fails = 0, n = 0, busy_sum = 0;
 	PE_parse_boot_argn("ruan-gpu-max-level", &hi, sizeof hi);
 	if (hi > RUAN_GPU_OPPS) hi = RUAN_GPU_OPPS;
 	if (hi < DCVS_FLOOR) hi = DCVS_FLOOR;

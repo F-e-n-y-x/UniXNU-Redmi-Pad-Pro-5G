@@ -8,7 +8,7 @@
 //  - on top of the kit's own behaviour this file refuses any SMMU write that would disable a route or a bank's GR1 entry
 //    (SMR without VALID, CBAR type 0): Gunyah answers CBAR 0 with an SEA (rbu6b). Nothing here tears the context down;
 //  - no GMU bring-up (ShengGmuColdStart): RuanGpuPower.c's GMU boot, OOB GPU_SET and GX vote stay in charge;
-//  - no zap shader / CP_SET_SECURE_MODE, no IRQ (SPI 300) and no preemption (A710: gpu-preempt=0): fences are polled;
+//  - no zap shader / CP_SET_SECURE_MODE, no preemption (A710: gpu-preempt=0); GPU IRQ (SPI 300) only with ruan-gpu-irq=1, else polled;
 //  - the power-up list is the a7xx-common one with empty IFPC and dynamic parts (A710 runs without IFPC);
 //  - CP_BV_RB_RPTR_ADDR is 0xa98 on the A710 (RuanA710Regs.h), not the A740 offset.
 #include <IOKit/IOLib.h>
@@ -16,9 +16,12 @@
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <kern/clock.h>
+#include <kern/thread.h>
+#include <kern/thread_call.h>
 #include <mach/mach_time.h>
 #include <string.h>
 #include "RuanAdrenoGlue.h"
+#include "RuanA710Regs.h"   // RUAN_RBBM_INT_* and the gen7 interrupt masks (attachIrq)
 #include "RuanZap.h"
 #include "RuanZapFw.h"   // build/ruan-adreno: a710_zap.mbn as ruan_zap_firmware[] (scripts/build-ruan-adreno.py)
 extern "C" boolean_t PE_parse_boot_argn(const char *, void *, int);
@@ -128,7 +131,26 @@ uint64_t nowUs(void *)
 	absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
 	return ns / 1000;
 }
-int idle(void *) {IODelay(20); return 0;}
+// ruan-gpu-irq=1 (attachIrq, after publish): SPI 300's handler bumps irqCount and wakes this event. A pause that may block then sleeps
+// until the next GPU interrupt or 1 ms, whichever is first (sheng GpuPowerProbe.cpp ringIdle); the 1 ms cap covers an interrupt that
+// came between the caller's fence check and the sleep. Before the attach, or where it may not block, it spins 20 us as before.
+volatile bool irqOn;
+volatile uint32_t irqCount;
+extern "C" int get_preemption_level(void);
+extern "C" boolean_t ml_get_interrupts_enabled(void);
+extern "C" boolean_t ml_at_interrupt_context(void);
+extern "C" {volatile uint32_t ruan_gpu_irq[10];}   // see attachIrq
+int idle(void *)
+{
+	if (irqOn && ml_get_interrupts_enabled() && !ml_at_interrupt_context() && get_preemption_level() == 0) {
+		assert_wait_timeout(event_t(&irqCount), THREAD_UNINT, 1000, NSEC_PER_USEC);
+		if (thread_block(THREAD_CONTINUE_NULL) == THREAD_TIMED_OUT) ruan_gpu_irq[7] = ruan_gpu_irq[7] + 1;
+		ruan_gpu_irq[6] = ruan_gpu_irq[6] + 1;
+		return 0;
+	}
+	IODelay(20);
+	return 0;
+}
 
 const NativeAdrenoRingIo ringIo{nullptr, gpuWr, gpuRd, barrier, nullptr, nullptr};
 const NativeAdrenoRingCache ringCache{nullptr, publishWords, acquireWords};
@@ -430,6 +452,76 @@ void hangWatch(void *, int)
 	}
 }
 
+// ruan-gpu-irq=1: the GPU line (kgsl_3d0_irq = GIC SPI 300, level, ruan-live.dts) into the driver's completion pass, as sheng's
+// GpuPowerProbe.cpp gpuIrq/irqAndTimer do: NativeAdrenoPublish.cpp native_adreno_gpu_interrupt then lets fence waiters sleep until the
+// pass wakes them (gpu-fence-wake=0 keeps them on idle() above). RBBM_INT_0_MASK already carries CACHE_FLUSH_TS (bit 20) from
+// RuanGpuPower.c s3_cp (RUAN_A710_GEN7_INT_MASK), and every ring fence is a CP_EVENT_WRITE7 with its IRQ bit (NativeAdrenoRing.cpp).
+// ruan_gpu_irq: [0] attach IOReturn (0xdead no armcpu_spi_attach, 0xbad no mapping), [1] GICD readback (group | enabled << 1 |
+// edge << 2 | priority << 8), [2] interrupts, [3] OR of the statuses cleared, [4] the last one, [5] RBBM_INT_0_MASK at attach,
+// [6] idle() pauses that slept, [7] of those, timed out, [8] storms, [9] OR of the error bits (RUAN_A710_INT_ERRORS) cleared here.
+extern "C" IOReturn armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint32_t *, uint64_t *) __attribute__((weak_import));
+extern "C" IOReturn armcpu_spi_mask(uint32_t, bool) __attribute__((weak_import));
+extern "C" void native_adreno_gpu_interrupt(uint32_t status);   // NativeAdrenoPublish.cpp
+extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+constexpr uint32_t GpuIntid = 300 + 32, StormEmpty = 100000;
+constexpr uint64_t GpuRegBase = 0x03d00000ull;   // kgsl_3d0_reg_memory (RuanGpuPowerBoard.h GPB_GPU_BASE)
+volatile uint32_t *rbbm;   // its first 4 KiB, raw: the handler must not go through RuanGpuPower.c's accessors (USB trace)
+volatile uint32_t irqEmpty;
+thread_call_t stormCall;
+// After a storm the line is masked, but the driver's waiters already sleep on the completion pass (g.interrupts stays set): a
+// synthetic CACHE_FLUSH_TS every 1 ms keeps them moving.
+// shortcut: a 1 ms software tick for the rest of the boot; if a storm is ever seen, find the source that never clears instead.
+void stormTick(thread_call_param_t, thread_call_param_t)
+{
+	native_adreno_gpu_interrupt(1u << 20);
+	thread_wakeup(event_t(&irqCount));
+	uint64_t deadline = 0;
+	clock_interval_to_deadline(1, kMillisecondScale, &deadline);
+	thread_call_enter_delayed(stormCall, deadline);
+}
+// a6xx_irq / gen7 KGSL: read RBBM_INT_0_STATUS and write it back to RBBM_INT_CLEAR_CMD before anything else, so the level line drops
+// before the EOI. Interrupt context: no locks, no allocation, no USB.
+void gpuIrq(void *)
+{
+	const uint32_t status = rbbm[RUAN_RBBM_INT_0_STATUS];
+	if (status) {rbbm[RUAN_RBBM_INT_CLEAR_CMD] = status; __asm__ volatile("dsb sy" ::: "memory");}
+	ruan_gpu_irq[2] = ruan_gpu_irq[2] + 1;
+	ruan_gpu_irq[3] = ruan_gpu_irq[3] | status;
+	ruan_gpu_irq[4] = status;
+	ruan_gpu_irq[9] = ruan_gpu_irq[9] | (status & RUAN_A710_INT_ERRORS);
+	irqEmpty = status ? 0 : irqEmpty + 1;
+	if (irqEmpty > StormEmpty && irqOn) {   // a line with nothing to clear: mask it, back to the spin plus the 1 ms tick
+		irqOn = false;
+		(void)armcpu_spi_mask(GpuIntid, true);
+		ruan_gpu_irq[8] = ruan_gpu_irq[8] + 1;
+		if (stormCall) thread_call_enter(stormCall);
+	}
+	irqCount = irqCount + 1;
+	native_adreno_gpu_interrupt(status);   // bit 20 (CP_CACHE_FLUSH_TS) or 8 (CP_SW) asks for the completion pass
+	thread_wakeup(event_t(&irqCount));
+}
+void attachIrq()
+{
+	unsigned on = 0;
+	PE_parse_boot_argn("ruan-gpu-irq", &on, sizeof on);
+	if (!on) return;
+	uint32_t *q = const_cast<uint32_t *>(ruan_gpu_irq);
+	rbbm = reinterpret_cast<volatile uint32_t *>(ml_io_map(vm_offset_t(GpuRegBase), 0x1000));
+	stormCall = thread_call_allocate(stormTick, nullptr);
+	if (!rbbm || !stormCall) {q[0] = 0xbad; line("gpu irq: no RBBM mapping"); return;}
+	(void)gpuRd(nullptr, RUAN_RBBM_INT_0_MASK, &q[5]);
+	if (!(q[5] & (1u << 20))) (void)gpuWr(nullptr, RUAN_RBBM_INT_0_MASK, RUAN_A710_GEN7_INT_MASK);   // a restart that lost it
+	uint64_t router = ~0ull;
+	irqOn = true;   // before the attach: a fence left from CP init fires as soon as the line is enabled
+	q[0] = armcpu_spi_attach ? uint32_t(armcpu_spi_attach(GpuIntid, false, gpuIrq, nullptr, &q[1], &router)) : 0xdeadu;
+	if (q[0]) irqOn = false;
+	IOSleep(20);
+	char s[128];
+	snprintf(s, sizeof s, "gpu irq: attach %x gicd %x router %llx mask %x irqs %u status %x", q[0], q[1], (unsigned long long)router,
+	         q[5], q[2], q[3]);
+	line(s);
+}
+
 // publishAndWrapperTest() of the reference without the wrapper rounds, the coherence probe, preemption and the CP aperture
 // (bank 2 is not the SCM aperture's bank 0: the CPU switches TTBR0, table mode 1).
 void publish()
@@ -450,6 +542,7 @@ void publish()
 	                                      ctxReport.output_bits ? ctxReport.output_bits : 40));
 	if (!r[8]) {
 		r[0] = 10; published = true;
+		attachIrq();   // after publish: native_adreno_gpu_interrupt needs the driver's fence thread call
 		thread_t watcher = nullptr;
 		if (kernel_thread_start(hangWatch, nullptr, &watcher) == KERN_SUCCESS) thread_deallocate(watcher);
 	}

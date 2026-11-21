@@ -155,6 +155,34 @@ compile_cxx_like('iokit/DEVELOPMENT/IOPlatformExpert.cpo.json', ramblock / 'Nati
 subprocess.run(['python3', ROOT / 'scripts/build-ufs-original-bindings.py', '--component', 'NativeRamBlock',
                 '--objects-dir', ramblock, '--candidate', ROOT / 'build/xnu-prelink/ruan-candidate.macho'], check=True)
 
+# Qualcomm WCN6750 Wi-Fi (macOS/docs/research/wifi/port; filipnavara/UniXNU-asteroids 9f07af3's stack): ruan-wifi=1|2 (WPSS survey, boot +
+# the board's QRTR router) is always built (small, no network). The module (default on; RUAN_WIFI_MODULE=0 leaves it out) adds ruan-wifi=3-5: drivers/Ath11kWifi (Linux ath11k +
+# mac80211 + cfg80211, several MB of kernel code; fetched into .cache/Ath11kWifi by scripts/fetch-ath11k-wifi.sh, its own tools fetch the
+# pinned Linux sources), RuanWifi.cpp (the board worker) and WifiNet.cpp (en0; its classes staged late as RuanBacklightSvc's).
+WIFI_MODULE = os.environ.get('RUAN_WIFI_MODULE', '1') == '1'
+IOKIT_RECORD = 'iokit/DEVELOPMENT/IOPlatformExpert.cpo.json'
+
+
+def wifi_module_objects():
+    if not WIFI_MODULE:
+        return []
+    ath = Path(os.environ.get('ATH11K_WIFI_DIR', DEVICE / '.cache/Ath11kWifi'))
+    if not (ath / 'include/nw_abi.h').is_file():
+        subprocess.run(['bash', DEVICE / 'scripts/fetch-ath11k-wifi.sh', ath], check=True)
+    include = ['-I', str(ath / 'include')]
+    compile_cxx_like(IOKIT_RECORD, DEVICE / 'package/WifiNet.cpp', OUT / 'WifiNet.o', include)
+    subprocess.run(['llvm-objcopy', '--remove-section=__DATA,__mod_init_func', '--globalize-symbol=__GLOBAL__sub_I_WifiNet.cpp',
+                    OUT / 'WifiNet.o', OUT / 'WifiNet.late.o'], check=True)
+    built = subprocess.run(['python3', DEVICE / 'scripts/build-ath11k-wifi.py', ath, OUT / 'ath11k-wifi'], check=True,
+                           capture_output=True, text=True).stdout
+    module = [Path(line[4:]) for line in built.splitlines() if line.startswith('OBJ ')]
+    if not module:
+        raise SystemExit('build-ath11k-wifi.py built no objects')
+    return [compile_cxx_like(IOKIT_RECORD, DEVICE / 'package/RuanWifi.cpp', OUT / 'RuanWifi.o', include), OUT / 'WifiNet.late.o',
+            compile_like('bsd/DEVELOPMENT/kern_exec.o.json', DEVICE / 'package/AsteroidsWifiFiles.c', OUT / 'AsteroidsWifiFiles.o'),
+            *module]
+
+
 # HakiOS's C is warning-clean under its own flags, not under -Wextra -Werror; its firmware headers live outside git.
 HAKIOS_C = ['-I', str(DEVICE / '.cache/hakios-fw'), '-Wno-error', '-Wno-unused-function', '-Wno-unused-parameter',
             '-Wno-unused-variable', '-Wno-unused-but-set-variable', '-Wno-sign-compare', '-Wno-missing-prototypes']
@@ -187,12 +215,24 @@ objects = [ramblock / 'NativeRamBlock.o', ramblock / 'original-bindings.o',
            OUT / 'RuanBacklightSvc.late.o',
            # ruan-cpufreq: EPSS frequency vote (package/RuanCpuFreq.c, layout from UniXNU-Dizi-Ruan CpuFreqProbe.cpp)
            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanCpuFreq.c', OUT / 'RuanCpuFreq.o'),
+           # ruan-120hz=1|2: panel 60 -> 120 Hz by the vertical front porch (docs/research/120hz/plan.md)
+           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanPanel120.c', OUT / 'RuanPanel120.o'),
            # Adreno 710 bring-up stage S1 (gpu-dev): gated GCC/GPUCC reads, CX GDSC power-up, GPU SMMU survey (ruan-gpu=<1-3>)
            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanGpuPower.c', OUT / 'RuanGpuPower.o'),
            # HFI queue table for gpu 6 (UniXNU kits/AdrenoFirmware/AdrenoHfi.c, copied into package/)
            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/AdrenoHfi.c', OUT / 'AdrenoHfi.o'),
-           # Qualcomm WCN6750 Wi-Fi subsystem (icnss2 / ath11k & 12M MSA)
-           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanWifiProbe.c', OUT / 'RuanWifiProbe.o'),
+           # Qualcomm WCN6750 Wi-Fi (see WIFI_MODULE above): the WPSS host thread and WpssProbe (asteroids', ported), the Qcom* helpers and
+           # the firmware reader (asteroids', unchanged); RuanWifiWpss.o is pulled by BootProgress.c's ruan_wifi_start. Replaces the
+           # unused RuanWifiProbe.c (same ruan_wifi_init / ruan_wifi_status_str names).
+           compile_cxx_like(IOKIT_RECORD, DEVICE / 'package/RuanWifiWpss.cpp', OUT / 'RuanWifiWpss.o',
+                            ['-DRUAN_WIFI_MODULE=1'] if WIFI_MODULE else []),
+           compile_cxx_like(IOKIT_RECORD, DEVICE / 'package/WpssProbe.cpp', OUT / 'WpssProbe.o'),
+           *[compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / f'package/{n}.c', OUT / f'{n}.o')
+             for n in ('QcomGlink', 'QcomMdt', 'QcomQmp', 'QcomQrtr', 'QcomRpmh', 'QcomSmem', 'QcomSmp2p', 'FatVolume')],
+           # clang 24's -Wunused-but-set-global flags asteroids' unchanged gPart (kept for the partition's lifetime)
+           compile_like('bsd/DEVELOPMENT/kern_exec.o.json', DEVICE / 'package/AdspFirmware.c', OUT / 'AdspFirmware.o',
+                        ['-Wno-unused-but-set-global']),
+           *wifi_module_objects(),
            # Qualcomm LPASS Quad WSA883x Smart Amplifiers Audio subsystem
            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanAudioProbe.c', OUT / 'RuanAudioProbe.o')]
 archive = OUT / 'libRamRootProbe.a'

@@ -396,8 +396,12 @@ static bool ruan_bl_svc_probe(void) {
 
 extern "C" bool ruan_backlight_start(void) {
     if (s_backlight || s_svc) return true;
-    unsigned svc = 0;
-    if (PE_parse_boot_argn("ruan-bl-svc", &svc, sizeof svc) && svc == 1) return ruan_bl_svc_probe();
+    // Default on (rbu167p): the conforming service. This path sets backlight-control without AppleARMBacklight conformance, so
+    // CoreBrightness never starts libEDR and QuartzCore's EDRGetDefaultMinScalingFactor waits out 5 s per frame (sheng int-236,
+    // rbu114u-rbu166p: one frame every 5.0 s). ruan-bl-svc=0 gets this path back.
+    unsigned svc = 1;
+    PE_parse_boot_argn("ruan-bl-svc", &svc, sizeof svc);
+    if (svc == 1) return ruan_bl_svc_probe();
 
     IOService *platform = IOService::getPlatform();
     if (!platform) return false;
