@@ -12,6 +12,10 @@
   <img src="docs/img/usb-rbu172p-safari.png" alt="Safari" width="19%">
   <img src="docs/img/usb-rbu172p-about.png" alt="Settings, About: iPadOS 17.7.11" width="19%">
 </p>
+<p align="center">
+  <img src="docs/img/usb-rbu173-wifi.png" alt="Native Wi-Fi in Settings, networks listed (names blurred)" width="30%"><br>
+  <sub>Native Wi-Fi (rbu173): Settings turns Wi-Fi on and lists nearby networks through iPadOS's own wifid. Network names blurred.</sub>
+</p>
 <p align="center"><sub>Native screenshots from the tablet (rbu172p, 2026-11-21): home screen, Control Center, app switcher, Safari, Settings → About.</sub></p>
 
 > **Branches:** `agy-15-11-26` (this one) is the **iPadOS build**. `macos` is the **macOS build** for the same tablet.
@@ -47,8 +51,8 @@ Status on 2026-11-21 (builds rbu166p–rbu169p). ✅ tested on the tablet · �
 | Buttons, battery, USB debug | ✅ | |
 | Crashes | ⚠️ | SpringBoard occasionally resprings (an assertion in FrontBoardServices, reached from the accessibility server); Turnip alignment fault (SIGBUS) in some GPU writes |
 | App switching | ⚠️ | Closing Settings takes over 5 s and is then killed, so the switcher animation ghosts; widgets and app snapshots draw as blank boxes |
-| 120 Hz | 🧪 | Panel timing code built (`ruan-120hz`), not switched on yet |
-| Wi-Fi | 🧪 | WPSS boot, firmware, ath11k driver and network interface ported (`ruan-wifi=1..4`), first boot test in rbu169p. Joining a network (`ruan-wifi=5`) needs the root overlay build |
+| 120 Hz | 🧪 | Read-only check passes (`ruan-120hz=2` → `0x60`); switching (`ruan-120hz=1`) next |
+| Wi-Fi | 🧪 | **Native:** Settings → Wi-Fi turns on and lists nearby networks (WCN6750 through WPSS, ath11k, `ruan-wifi=5 no-lc=1`). Joining a network is being tested |
 | Audio, cameras, sensors, cellular, Bluetooth | ❌ | |
 
 
