@@ -36,4 +36,6 @@ new = ('    if git(directory, "rev-parse", "HEAD") != source["commit"] and not c
 assert s.count(old) == 1
 open(p, 'w').write(s.replace(old, new))
 EOF
+# ruan: the supplicant side's changes (scan-done ends external scans, TKIP, debug file): scripts/patch-ath11k-userspace.py.
+python3 "$DEVICE/scripts/patch-ath11k-userspace.py" "$DEST"
 echo "$DEST (filipnavara/UniXNU-asteroids $PIN drivers/Ath11kWifi, NW_IOS_TARGET patch)"

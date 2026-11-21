@@ -80,9 +80,22 @@ enum {
   kCardCaps = 12, kState = 13, kPhyMode = 14, kOpMode = 15, kRssi = 16, kNoise = 17, kPower = 19, kAssociate = 20, kAssociateResult = 21,
   kDisassociate = 22, kSupportedChannels = 27, kLocale = 28, kDeauth = 29, kDriverVersion = 43, kHardwareVersion = 44, kCountryCode = 51,
   kRadioInfo = 54, kScanReqMultiple = 86, kScanCacheClear = 90, kCurrentNetwork = 103, kChannelsInfo = 207, kHwSupportedChannels = 254,
+  // ruan (iPadOS 17.7.11, rbu173): wifid's only scan request, a 4104-byte set every 10-15 s while Settings is open; it never sent 10
+  // or 86, and refusing 383 (EOPNOTSUPP) left the list to wifid's slow fallbacks. Taken as a broadcast scan of every channel; its
+  // layout is not known (the first bytes go to the log). Inferred from that log, not from Apple's headers.
+  kScanReq383 = 383,
+  // ruan (rbu182): right after the association-done event wifid asks type 390 with a 1228-byte buffer, the size of its BSS record (types
+  // 11 and 103), and got EOPNOTSUPP: it then kept the join as not connected (Settings "Not Connected", no status-bar Wi-Fi, configd made
+  // no primary service although DHCP had an address). Sent by CoreWiFi (+0x3192c in 21H461); answered as the current network, the
+  // joined BSS's record. Inferred from the log and the buffer size, not from Apple's headers.
+  kCurrentNetwork390 = 390,
 };
 // events
-enum { kEvPowerChanged = 1, kEvSsidChanged = 2, kEvBssidChanged = 3, kEvLinkChanged = 4, kEvAssocDone = 9, kEvScanDone = 10 };
+enum { kEvPowerChanged = 1, kEvSsidChanged = 2, kEvBssidChanged = 3, kEvLinkChanged = 4, kEvAssocDone = 9, kEvScanDone = 10,
+       // ruan (rbu183): APPLE80211_M_RSN_HANDSHAKE_DONE, the 20th name of IO80211's event-name table in 21H461 (POWER_CHANGED = 1 ...
+       // IBSS_PEER_LEFT = 19, then RSN_HANDSHAKE_DONE). Apple's drivers run the WPA 4-way handshake themselves and post it; without it
+       // wifid gave up about 26 s after a WPA2 join that the supplicant had completed (Disassociate, Settings "Unable to join").
+       kEvRsnHandshakeDone = 20 };
 // results of an association, as the framework numbers them
 enum { kAssocPending = 0, kAssocOk = 1, kAssocFailed = 2, kAssocTimeout = 9, kAssocBadKey = 21 };
 
@@ -116,6 +129,15 @@ struct assoc_request27 {                                                        
   uint32_t version; uint16_t mode, unused; uint32_t auth_lower, auth_upper;
   assoc_parameters network; uint8_t rest[0x290 - 0x8c];
 };
+// ruan: iPadOS 17.7.11 (21H461) IO80211.framework _performAssociation (IO80211 +0x1c374..+0x1dde8, read in the shared cache): an
+// 856-byte request, memset from +4 for 0x354; version 1 at +0, AP_MODE at +4, the authentication types as 16-bit values at +6 and +8, the
+// SSID length at +0x0c (1-32 checked) with the SSID after it, the BSSID at +0x30, the key length at +0x3c, its cipher at +0x40 (10: a
+// passphrase of 1-63 bytes copied to +0x48; a 64-hex or derived PMK: 32 bytes at +0x48), the PMK again at +0x1d8 with its length at
+// +0x1d4, RSN IE and flags further on. So the network prefix is the legacy one at +0x0c; only the tail is longer.
+struct assoc_request17 {                                                                          // 856 bytes
+  uint32_t version; uint16_t mode, auth_lower, auth_upper, unused;
+  assoc_parameters network; uint8_t rest[0x358 - 0x88];
+};
 struct link_event { uint8_t down, unused0[3]; int32_t rssi; uint16_t snr, noise; uint8_t unused1[4]; uint8_t involuntary, unused2[3]; uint32_t reason, subreason; uint8_t unused3[4]; };
 static_assert(sizeof(scan_result) == 1164 && __builtin_offsetof(scan_result, ssid_length) == 0x60 && __builtin_offsetof(scan_result, age_ms) == 0x84 &&
               __builtin_offsetof(scan_result, elements) == 0x8c, "scan result layout");
@@ -124,6 +146,10 @@ static_assert(sizeof(assoc_parameters) == 0x7c && __builtin_offsetof(assoc_param
               __builtin_offsetof(assoc_parameters, key_cipher) == 0x34, "association network prefix");
 static_assert(sizeof(assoc_request) == 592 && __builtin_offsetof(assoc_request, network) == 0x0c, "legacy association layout");
 static_assert(sizeof(assoc_request27) == 656 && __builtin_offsetof(assoc_request27, network) == 0x10, "24A446 association layout");
+static_assert(sizeof(assoc_request17) == 856 && __builtin_offsetof(assoc_request17, network) == 0x0c &&
+              __builtin_offsetof(assoc_request17, network) + __builtin_offsetof(assoc_parameters, bssid) == 0x30 &&
+              __builtin_offsetof(assoc_request17, network) + __builtin_offsetof(assoc_parameters, key_length) == 0x3c &&
+              __builtin_offsetof(assoc_request17, network) + __builtin_offsetof(assoc_parameters, key) == 0x48, "21H461 association layout");
 static_assert(sizeof(channels_list) == 4824, "channel list layout");
 static_assert(sizeof(link_event) == 32, "link event layout");
 
@@ -168,7 +194,9 @@ void post_event(uint32_t code, const void *payload, size_t length) {
   msg.dv[0].data_length = sizeof name; msg.dv[0].data_ptr = name;
   msg.dv[1].data_length = static_cast<uint32_t>(length); msg.dv[1].data_ptr = const_cast<void *>(payload);
   const int error = sheng_kev_post(&msg);
-  if (code != kEvScanDone || error) log(6, "wifi-net: event %u bytes %u -> %d", code, static_cast<unsigned>(length), error);
+  static unsigned posted;   // (numbered: the log drops a line identical to a recent one)
+  ++posted;
+  if (code != kEvScanDone || error) log(6, "wifi-net: event %u bytes %u -> %d (#%u)", code, static_cast<unsigned>(length), error, posted);
 }
 // link state for the network configuration: the interface's flags and the stack's own link events
 void post_link(bool up) {
@@ -203,7 +231,12 @@ void post_association_result() {
 void disconnect_user() {
   const bool pending = __atomic_exchange_n(&gJoinPending, false, __ATOMIC_ACQ_REL);
   gUserJoin = true; gLinkSuppressed = true; gAssocResult = kAssocFailed;
-  nw_wifi_disconnect();
+  // ruan (rbu183/185): wifid leaves (type 22) right before every join, also when nothing is joined. Each request the module carries out
+  // closes and reopens the interface; the join's cycle, right after the leave's, took about 20 s, past wifid's join window. Nothing
+  // joined and no join under way: nothing to tear down, so the module is not asked (the events below still go out).
+  nw_wifi_status physical; nw_wifi_status_get(&physical);
+  if (pending || physical.state >= NW_STA_AUTH) nw_wifi_disconnect();
+  else log(6, "wifi-net: leave while idle: the module is not asked");
   sheng_wifi_wake();
   // A requested disconnect suppresses the station's link_lost callback. Notify
   // both BSD and Apple80211 here, before asynchronous firmware teardown completes.
@@ -232,10 +265,22 @@ void visible_status(nw_wifi_status &st) {
 }
 
 // ---- what the module tells us ----
-void on_scan_done() { __atomic_store_n(&gScanning, 0u, __ATOMIC_RELEASE); gScanCursor = 0; post_event(kEvScanDone, nullptr, 0); }
-// A scan answered from the cache finishes after the time a short scan takes: answered at once, the daemon asks again straight away.
+// gAirScan: a scan of the module (the supplicant's) is under way, since gAirScanAt (ms); its completion clears it. One that never
+// reports (no supplicant) counts as over after 15 s, past the module's own 12 s deadline.
+unsigned gAirScan;
+uint64_t gAirScanAt;
+uint64_t now_ms() { uint64_t ns = 0; absolutetime_to_nanoseconds(mach_absolute_time(), &ns); return ns / 1000000; }
+bool air_scan_running() { return __atomic_load_n(&gAirScan, __ATOMIC_ACQUIRE) && now_ms() - gAirScanAt < 15000; }
+void scan_done_post(const char *how) {
+  __atomic_store_n(&gScanning, 0u, __ATOMIC_RELEASE); gScanCursor = 0; post_event(kEvScanDone, nullptr, 0);
+  static unsigned said; if (++said <= 16 || said % 64 == 0) log(6, "wifi-net: scan done (%s): %d networks held", how, nw_wifi_bss_count());
+}
+void on_scan_done() { __atomic_store_n(&gAirScan, 0u, __ATOMIC_RELEASE); scan_done_post("air"); }
+// A scan answered from the held results: its done event follows shortly (answered in the same call, the daemon asks again straight
+// away). ruan: also while not joined, so the Settings list shows the held networks at once; the scan on the air (if none runs) then
+// refreshes them with a second done event.
 thread_call_t gCachedScan;
-void cached_scan_done(thread_call_param_t, thread_call_param_t) { on_scan_done(); }
+void cached_scan_done(thread_call_param_t, thread_call_param_t) { scan_done_post("held"); }
 void on_connect_done(int result) {
   if (!gPower || gLinkSuppressed) {
     log(6, "wifi-net: ignore join completion after explicit disconnect: %d", result);
@@ -250,6 +295,7 @@ void on_connect_done(int result) {
   log(6, "wifi-net: join finished: module result %d", result);
   post_link(result == NW_RES_OK);
   if (pending) post_association_result();
+  if (result == NW_RES_OK && gKeyed) post_event(kEvRsnHandshakeDone, nullptr, 0);   // the supplicant's keys are installed by now
   if (result == NW_RES_OK) {
     post_event(kEvSsidChanged, nullptr, 0); post_event(kEvBssidChanged, nullptr, 0);
     nw_wifi_status st; nw_wifi_status_get(&st);
@@ -519,14 +565,27 @@ int copy_in(const apple80211req &rq, void *dst, size_t size) {
 }
 int copy_association(const apple80211req &rq, assoc_parameters &out) {
   // Select only an observed wire layout, never infer it from credential contents.
-  if (rq.req_len != sizeof(assoc_request) && rq.req_len != sizeof(assoc_request27)) {
-    log(4, "wifi-net: unsupported association layout: %u bytes", rq.req_len);
+  if (rq.req_len != sizeof(assoc_request) && rq.req_len != sizeof(assoc_request27) && rq.req_len != sizeof(assoc_request17)) {
+    // the first 64 bytes: version, mode, authentication, SSID, BSSID and the key's length and cipher (a key starts at 0x48 in every
+    // layout seen), so a new layout can be placed from one log
+    uint8_t head[64]; char hex[3 * 64 + 1] = "";
+    if (!copy_in(rq, head, sizeof head)) for (unsigned i = 0; i < 64; i++) snprintf(hex + 3 * i, 4, "%02x ", head[i]);
+    memset(head, 0, sizeof head);
+    log(4, "wifi-net: unsupported association layout: %u bytes: %s", rq.req_len, hex);
     return EINVAL;
   }
-  union { assoc_request legacy; assoc_request27 current; } wire;
+  union { assoc_request legacy; assoc_request27 current; assoc_request17 ios17; } wire;
   int error = copy_in(rq, &wire, sizeof wire);
   if (!error) {
-    if (rq.req_len == sizeof(assoc_request27)) {
+    if (rq.req_len == sizeof(assoc_request17)) {
+      if (wire.ios17.version != 1) error = EINVAL;
+      else {
+        out = wire.ios17.network;
+        log(6, "wifi-net: join (21H461 layout): mode %u auth lower %x upper %x, ssid %u bytes \"%.*s\", key cipher %u length %u (not logged)",
+            wire.ios17.mode, wire.ios17.auth_lower, wire.ios17.auth_upper, out.ssid_length, out.ssid_length <= 32 ? static_cast<int>(out.ssid_length) : 0,
+            reinterpret_cast<const char *>(out.ssid), out.key_cipher, out.key_length);
+      }
+    } else if (rq.req_len == sizeof(assoc_request27)) {
       if (wire.current.version != 1) error = EINVAL;
       else { out = wire.current.network; log(6, "wifi-net: join auth lower %x upper %x", wire.current.auth_lower, wire.current.auth_upper); }
     } else {
@@ -564,7 +623,7 @@ int apple80211(bool set, apple80211req &rq) {
   if (set) {
     switch (type) {
     case kPower: { uint32_t in[6]; if (copy_in(rq, in, sizeof in)) return EFAULT; gUserJoin = true; gPower = in[2] != 0; log(6, "wifi-net: power set %u", in[2]); if (!gPower) disconnect_user(); nw_wifi_power(gPower); sheng_wifi_wake(); post_event(kEvPowerChanged, nullptr, 0); return 0; }
-    case kScanReq: case kScanReqMultiple: {
+    case kScanReq: case kScanReqMultiple: case kScanReq383: {
       if (!gPower) return ENETDOWN;
       if (gLinkSuppressed) {
         nw_wifi_status current; nw_wifi_status_get(&current);
@@ -572,15 +631,28 @@ int apple80211(bool set, apple80211req &rq) {
       }
       uint8_t buf[0x80]; if (copy_in(rq, buf, sizeof buf)) return EFAULT;
       uint32_t ssidLength; memcpy(&ssidLength, buf + 16, 4); const uint8_t *ssid = buf + 20;
-      // joining or joined: a scan takes the radio off channel for seconds and the access point's beacons and handshake frames are missed, so
-      // the daemon gets the last results instead
-      if (st.state >= NW_STA_AUTH && nw_wifi_bss_count() > 0) {
+      if (type == kScanReq383) {
+        ssidLength = 0;   // layout unknown: every network
+        static unsigned said; if (++said <= 4) {
+          char hex[3 * 48 + 1]; for (unsigned i = 0; i < 48; i++) snprintf(hex + 3 * i, 4, "%02x ", buf[i]);
+          log(6, "wifi-net: request 383 (%u bytes) starts %s", rq.req_len, hex); }
+      }
+      const bool held = nw_wifi_bss_count() > 0;
+      if (held) {   // the held results go out at once (done event in 50 ms; 2 s while joined, as before)
         if (!gCachedScan) gCachedScan = thread_call_allocate(cached_scan_done, nullptr);
-        static unsigned answered; if (++answered <= 8 || answered % 64 == 0) log(6, "wifi-net: scan %u while joined: answered from the cache", answered);
-        gScanning = 1; gScanCursor = 0; gResultsShown = 24; uint64_t at; clock_interval_to_deadline(2000, kMillisecondScale, &at); thread_call_enter_delayed(gCachedScan, at); return 0; }
-      gScanning = 1; gScanCursor = 0; gResultsShown = 0;
+        gScanning = 1; gScanCursor = 0; gResultsShown = 24; uint64_t at;
+        clock_interval_to_deadline(st.state >= NW_STA_AUTH ? 2000 : 50, kMillisecondScale, &at); thread_call_enter_delayed(gCachedScan, at);
+      }
+      // joining or joined: a scan takes the radio off channel for seconds and the access point's beacons and handshake frames are missed, so
+      // the daemon gets the held results only. A scan already on the air is not asked for again: its done event refreshes the list.
+      const bool running = air_scan_running();
+      if ((st.state >= NW_STA_AUTH && held) || running) {
+        static unsigned answered; if (++answered <= 8 || answered % 64 == 0) log(6, "wifi-net: scan %u answered from the %d held networks%s", answered, nw_wifi_bss_count(), st.state >= NW_STA_AUTH ? " (joined)" : " (a scan runs)");
+        return 0; }
+      if (!held) { gScanning = 1; gScanCursor = 0; gResultsShown = 0; }
+      gAirScanAt = now_ms(); __atomic_store_n(&gAirScan, 1u, __ATOMIC_RELEASE);
       int result = nw_wifi_scan(ssidLength && ssidLength <= 32 ? ssid : nullptr, ssidLength <= 32 ? ssidLength : 0);
-      if (result) { __atomic_store_n(&gScanning, 0u, __ATOMIC_RELEASE); return ENETDOWN; }
+      if (result) { __atomic_store_n(&gAirScan, 0u, __ATOMIC_RELEASE); if (!held) __atomic_store_n(&gScanning, 0u, __ATOMIC_RELEASE); return held ? 0 : ENETDOWN; }
       sheng_wifi_wake(); return 0; }
     case kAssociate: {
       assoc_parameters a{};
@@ -619,6 +691,7 @@ int apple80211(bool set, apple80211req &rq) {
       return r ? EINVAL : 0; }
     case kDisassociate: case kDeauth: log(6, "wifi-net: leave"); disconnect_user(); return 0;
     case kScanCacheClear: case kLocale: case kCountryCode: case kPowerSave: case kAuthType: case kCipherKey: return 0;
+    case 365: case 470: case 471: return 0;   // ruan: 365 (by value, 1) right after a join too   // ruan (rbu182/183): one-byte settings wifid sends after a join (WiFiAnalytics sends 470); taken, no effect
     default: return EOPNOTSUPP;
     }
   }
@@ -656,7 +729,12 @@ int apple80211(bool set, apple80211req &rq) {
     gScanCursor++; fill_result(out.res, b);
     if (gResultsShown < 24) { ++gResultsShown; log(6, "wifi-net: scan result %u: %u MHz, %d dBm, %.*s", gScanCursor, b.freq_mhz, b.signal_dbm, b.ssid_len, reinterpret_cast<const char *>(b.ssid)); }
     return copy_out(rq, &out.res, sizeof out.res); }
-  case kCurrentNetwork: {
+  // ruan (rbu183): requests wifid makes after a join that a Broadcom driver always answers. 6 (12 bytes) is the protection mode
+  // {version, mode, threshold}: off. 18, 57, 353 and 423 are asked by value (no buffer): 0. Their meanings are inferred (old
+  // Apple80211 numbering: 6 PROTMODE, 18 INT_MIT); 346, 386 and 387 (analytics and link-quality records) stay refused.
+  case 6: w[0] = 1; return copy_out(rq, w, 12);
+  case 18: case 57: case 353: case 423: return answer_value(rq, 0);
+  case kCurrentNetwork: case kCurrentNetwork390: {
     if (st.state < NW_STA_ASSOC) return ENOENT;
     nw_bss_info b; const int count = nw_wifi_bss_count();
     for (int i = 0; i < count; i++) if (!nw_wifi_bss_get(i, &b) && !memcmp(b.bssid, st.bssid, 6)) {
@@ -664,7 +742,12 @@ int apple80211(bool set, apple80211req &rq) {
       out.res.snr = st.signal_dbm > -95 && st.signal_dbm < 0 ? st.signal_dbm + 95 : 0;
       return copy_out(rq, &out.res, sizeof out.res);
     }
-    return ENOENT; }
+    // ruan: the joined BSS aged out of the held list: its record from the station's own state
+    out.res.version = 1; fill_channel(out.res.ch, st.freq_mhz); out.res.rssi = st.signal_dbm; out.res.noise = -95;
+    out.res.snr = st.signal_dbm > -95 && st.signal_dbm < 0 ? st.signal_dbm + 95 : 0;
+    out.res.capability = 0x11; out.res.beacon_interval = 100; memcpy(out.res.bssid, st.bssid, 6);
+    out.res.ssid_length = st.ssid_len <= 32 ? st.ssid_len : 32; memcpy(out.res.ssid, st.ssid, out.res.ssid_length);
+    return copy_out(rq, &out.res, sizeof out.res); }
   default: return EOPNOTSUPP;
   }
 }
@@ -688,7 +771,9 @@ errno_t if_ioctl(ifnet_t ifp, unsigned long cmd, void *data) {
           cmd == SIOCSA80211 ? 'S' : 'G', e, current.state,
           __atomic_load_n(&gJoinPending, __ATOMIC_ACQUIRE), gAssocResult, current.signal_dbm);
     }
-    if (shown < 300 || first || joinState) { ++shown; log(6, "wifi-net: request %u: type %d %s len %u val %d -> %d (len %u val %d)", shown, type, cmd == SIOCSA80211 ? "set" : "get", len, val, e, rq->req_len, rq->req_val); }
+    // ruan: a type's first 8 and every 64th after (the first 300 alone hid everything wifid did later, rbu173)
+    static uint16_t perType[512]; const unsigned seen = type >= 0 && type < 512 ? ++perType[type] : 1;
+    if (first || joinState || seen <= 8 || seen % 64 == 0) { ++shown; log(6, "wifi-net: request %u: type %d %s len %u val %d -> %d (len %u val %d)", shown, type, cmd == SIOCSA80211 ? "set" : "get", len, val, e, rq->req_len, rq->req_val); }
     return e;
   }
   case SIOCGIFMEDIA: {

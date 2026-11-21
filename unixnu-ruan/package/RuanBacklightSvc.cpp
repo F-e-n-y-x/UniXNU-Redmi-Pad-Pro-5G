@@ -32,6 +32,7 @@
 // [15] transfers done
 extern "C" {volatile int32_t ruan_bl_svc_stats[16];}
 extern "C" void ruan_bl_mirror_level(uint32_t);
+extern "C" void ruan_screen_set(int);   // RuanInput.c: the display power state the governors and input threads follow
 extern "C" int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint32_t *, uint64_t *) __attribute__((weak_import));
 
 namespace {
@@ -59,8 +60,11 @@ uint32_t ioRead(void *ctx, uint32_t reg) {return rd(static_cast<volatile uint32_
 void ioWrite(void *ctx, uint32_t reg, uint32_t value) {wr(static_cast<volatile uint32_t *>(ctx), reg, value);}
 void bump(int index) {ruan_bl_svc_stats[index] = ruan_bl_svc_stats[index] + 1;}
 uint32_t hwLevel(uint32_t level) {
+    // 0 is CoreBrightness turning the display off (the power button): backlight off, else the boot console behind the stopped
+    // scanout shows (rbu177). The slider's lowest step is 1, so every slider value keeps the floor and is never fully dark.
+    if (level == 0) return 0;
     const uint32_t hw = (uint32_t)((uint64_t)level * gHwMax / kMaxLevel);
-    return hw < kFloor ? kFloor : hw;   // never fully dark: no way back
+    return hw < kFloor ? kFloor : hw;
 }
 
 // Interrupt context: read and clear the engine's status, keep it for the work loop and signal it. Nothing else.
@@ -110,6 +114,7 @@ class RuanBacklightSvc : public IOService {
         else if (written != (int32_t)hwLevel(target)) {
             sendingLevel = target; sending = hwLevel(target); step = StepWriteLsb;
             ruan_bl_mirror_level(sending);   // the second SY7758 (RuanBacklight.cpp): the other half of the LED strings
+            ruan_screen_set(target == 0);
             rc = geni_i2c_start_write(&bus, kBrtL, (uint8_t)(sending & 0xff));   // low then high, as sy7758.c
         }
         else if (!ctlDone) {step = StepWriteCtl; rc = geni_i2c_start_write(&bus, kDevCtl, kDevCtlRegisterMode);}

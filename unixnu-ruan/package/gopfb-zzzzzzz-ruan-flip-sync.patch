@@ -1,0 +1,80 @@
+--- a/NativeLegacyDisplay.cpp
++++ b/NativeLegacyDisplay.cpp
+@@ -59,6 +59,7 @@
+ // [9] swaps held back until the GPU had written the frame (the compositor submits the swap when the command buffer is scheduled), [10] total
+ // and [11] longest wait (us), [12] waits that reached 250 ms, [13] waits of 8 ms or more (longer than a refresh at 120 Hz: the frame missed a flip).
+ extern "C" {volatile uint32_t native_legacy_direct[14];}
++extern "C" boolean_t ml_set_interrupts_enabled(boolean_t enable);
+ extern "C" bool native_adreno_fences(uint32_t *submitted,uint32_t *retired) __attribute__((weak_import));
+ extern "C" bool native_adreno_fences_detail(uint32_t *,uint32_t *,uint32_t *) __attribute__((weak_import));
+ // The swap lifecycle: native_legacy_ring holds the newest native_legacy_ring_cap events (allocated at start: a static array of this size no longer fits the kernel's data segment), {[0] microseconds since boot (64 bit), [1] event << 56 | slot + 1 << 48 |
+@@ -343,6 +344,33 @@
+         mdp[kCtlFlush/4]=kCtlFlushMask;
+         __asm__ volatile("dsb sy" ::: "memory");
+     }
++    // ruan flip sync (dpu-flip-sync=1; default on with ruan-120hz=1): docs/research/120hz/tearing.md. The flush only marks VIG0's
++    // double-buffered SRC registers to latch at the next frame boundary, so a flip at any line cannot tear the scan by itself; but with
++    // retire at the flip the released frame stays on screen until that latch (up to a whole 1/120 s), and the compositor draws into it.
++    // So: flush only in the last kFlipLead lines of the active area (the latch follows within ~1 ms) and retire at the latch.
++    static constexpr uint32_t kIntf1=0x35000,kFlipLead=256,kFlipGuard=8;   // INTF_1 0xae36000 in the 0xae01000 map; lines
++    const OriginalLegacySwapRequest *syncReady=nullptr;   // GPU already done for this request, waiting only for the window
++    static bool flipSync() {
++        static int on=-1;
++        if(on<0){unsigned v=0,hz120=0;PE_parse_boot_argn("ruan-120hz",&hz120,sizeof hz120);if(!PE_parse_boot_argn("dpu-flip-sync",&v,sizeof v))v=hz120==1;on=v==1;}
++        return on;
++    }
++    // 0: flipped now. Otherwise the microseconds until the window opens (the caller comes back then).
++    uint32_t syncedFlip(uint32_t iova,uint32_t stride) {
++        volatile uint32_t *intf=mdp+kIntf1/4;
++        const uint32_t htotal=intf[0x08/4]>>16,vtotal=htotal?intf[0x0c/4]/htotal:0,vEnd=htotal?intf[0x24/4]/htotal:0;
++        if(!flipSync() || vEnd<=kFlipLead || vEnd>=vtotal){flip(iova,stride);return 0;}   // off, or timing unreadable: as before
++        const boolean_t irq=ml_set_interrupts_enabled(FALSE);
++        const uint32_t line=intf[0xb0/4]&0xffff;
++        const bool open=line+kFlipLead>=vEnd && line+kFlipGuard<=vEnd;
++        if(open)flip(iova,stride);
++        ml_set_interrupts_enabled(irq);
++        if(open)return 0;
++        const uint32_t lines=line>=vtotal?kFlipLead:line+kFlipLead<vEnd?vEnd-kFlipLead-line:vtotal-line+vEnd-kFlipLead;
++        unsigned hz=native_legacy_refresh_hz();if(!hz || hz>240)hz=60;
++        const uint64_t us=uint64_t(lines)*1000000ull/(uint64_t(hz)*vtotal);
++        return us<50?50:uint32_t(us);
++    }
+     // The slot that holds this surface, mapping it into a free one (never the one on screen or the one waiting to latch) the first time.
+     int directSlot(OSObject *surface,IOMemoryDescriptor *memory) {
+         ++directClock;
+@@ -518,7 +546,7 @@
+     void stop(IOService *provider) override {
+         stopVsync();
+         transferred=false;for(auto &entry: validated)entry=nullptr;gpuRequest=nullptr;gpuRetired=false;
+-        directToBoot();latchRequest=nullptr;latchRetired=false;pendingSlot=-1;
++        directToBoot();latchRequest=nullptr;latchRetired=false;syncReady=nullptr;pendingSlot=-1;
+         if(fenceTimer){fenceTimer->cancelTimeout();if(IOWorkLoop *loop=getWorkLoop())loop->removeEventSource(fenceTimer);OSSafeReleaseNULL(fenceTimer);}
+         if(latchTimer){latchTimer->cancelTimeout();if(IOWorkLoop *loop=getWorkLoop())loop->removeEventSource(latchTimer);OSSafeReleaseNULL(latchTimer);}
+         directOn=false;
+@@ -712,11 +740,15 @@
+         if(!directOn && directRetries<600){directRetries++;startDirect();}
+         if(directOn && !half && !gpuBypass && latchRequest)stat(5);
+         if(directOn && !half && !gpuBypass && !latchRequest) {
+-            if(!gpuWrote(request)) {transferred=true;return;}
++            if(syncReady!=request && !gpuWrote(request)) {transferred=true;return;}
++            syncReady=request;
+             const int slot=directSlot(surface,memory);
+             if(slot>=0) {
++                // fenceTick brings this request back (as for the GPU wait) when the window opens.
++                if(const uint32_t waitUs=syncedFlip(directSlots[slot].iova,uint32_t(sourceStride))){transferred=true;fenceTimer->setTimeoutUS(waitUs);return;}
++                syncReady=nullptr;
+                 native_legacy_swap_stage(1);
+-                flip(directSlots[slot].iova,uint32_t(sourceStride));directBoot=false;
++                directBoot=false;
+                 native_legacy_direct[0]=native_legacy_direct[0]+1;countFormat(5);
+                 stat(9);note(4,slot,request);noteFlipDelay(request);
+                 shadowValid=false;pendingSlot=slot;latchRequest=request;transferred=true;
+@@ -726,7 +758,7 @@
+                 // releases the frame still on screen until the latch: the compositor may draw into it early (a torn frame), hence opt-in.
+                 static int retireAtFlip=-1;
+                 if(retireAtFlip<0){unsigned v=0;PE_parse_boot_argn("dpu-retire-flip",&v,sizeof v);retireAtFlip=v==1;}
+-                latchRetired=retireAtFlip && retireSwap(request,true);
++                latchRetired=retireAtFlip && !flipSync() && retireSwap(request,true);
+                 return;
+             }
+             native_legacy_direct[7]=native_legacy_direct[7]+1;

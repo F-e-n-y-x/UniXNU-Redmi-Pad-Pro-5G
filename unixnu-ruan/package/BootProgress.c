@@ -720,6 +720,10 @@ extern void ram_data_describe(char *, size_t) __attribute__((weak_import));
 struct ruan_msgbuf { int msg_magic, msg_size, msg_bufx, msg_bufr; char *msg_bufc; };
 extern struct ruan_msgbuf *msgbufp;
 extern unsigned int vm_page_free_count;
+/* The [hb] memory picture in 4 KiB pages: jetsam reads avail (memorystatus_available_pages, CONFIG_JETSAM), pageout holds free near tgt. */
+extern unsigned int vm_page_free_target, vm_page_wire_count, vm_page_active_count, vm_page_inactive_count, vm_page_speculative_count;
+extern unsigned int memorystatus_available_pages;
+extern uint32_t c_segment_pages_compressed;
 extern volatile uint64_t native_ufs_block_reads __attribute__((weak_import));
 extern volatile uint64_t native_ufs_block_failures __attribute__((weak_import));
 extern volatile uint64_t native_ufs_irqs __attribute__((weak_import));
@@ -748,9 +752,11 @@ zone_follow_kernel_log(unsigned tick)
 		zone_put(chunk, n);
 	}
 	if (tick % 10 == 0) {
-		char line[128];
+		char line[256];
 		uint64_t t = ms();
-		int n = snprintf(line, sizeof(line), "\n[hb] %llu.%03llu free=%u ufs=%llu/%llu irq=%llu\n", t / 1000, t % 1000, vm_page_free_count,
+		int n = snprintf(line, sizeof(line), "\n[hb] %llu.%03llu free=%u tgt=%u avail=%u wire=%u act=%u inact=%u spec=%u cmp=%u ufs=%llu/%llu irq=%llu\n",
+		    t / 1000, t % 1000, vm_page_free_count, vm_page_free_target, memorystatus_available_pages, vm_page_wire_count,
+		    vm_page_active_count, vm_page_inactive_count, vm_page_speculative_count, c_segment_pages_compressed,
 		    &native_ufs_block_reads ? native_ufs_block_reads : 0ULL, &native_ufs_block_failures ? native_ufs_block_failures : 0ULL,
 		    &native_ufs_irqs ? native_ufs_irqs : 0ULL);
 		zone_put(line, n > 0 && (unsigned)n < sizeof(line) ? (unsigned)n : 0);
@@ -911,6 +917,10 @@ autoreset_thread(void *arg __unused, wait_result_t wr __unused)
 
 extern void ruan_cpufreq_start(void);   /* package/RuanCpuFreq.c, ruan-cpufreq=<n>; strong: a weak import would not pull it from the archive */
 extern void ruan_wifi_start(void);      /* package/RuanWifiWpss.cpp, ruan-wifi=<1-5>; strong for the same reason (it waits ruan-wifi-delay) */
+extern void ruan_bt_start(void);        /* package/RuanBluetooth.cpp, ruan-bt=<1-4>; strong for the same reason (it waits ruan-bt-delay) */
+#if RUAN_VIDEO
+extern void ruan_video_start(void);     /* package/RuanVideo.cpp, ruan-video=<1-5>; strong, it pulls the VPU code out of the archive */
+#endif
 
 void
 boot_progress_start(void)
@@ -918,6 +928,10 @@ boot_progress_start(void)
 	thread_t thread;
 	ruan_cpufreq_start();
 	ruan_wifi_start();   /* nothing without ruan-wifi; LegacyDisplayProbe's late probe calls ruan_wifi_init as the second chance */
+	ruan_bt_start();     /* nothing without ruan-bt; the late probe's ruan_bt_init is the second chance */
+#if RUAN_VIDEO
+	ruan_video_start();  /* nothing without ruan-video; it waits ruan-video-delay (30 s), the late probe calls ruan_video_init */
+#endif
 	extern void ruan_gpu_survey(void);
 	ruan_gpu_survey();   /* package/RuanGpuPower.c: ruan-gpu=<1-3> (gpu-dev stage S1), ruan-gpu-survey=1 = mode 1; nothing otherwise */
 	if (enabled) {

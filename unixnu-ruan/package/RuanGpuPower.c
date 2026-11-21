@@ -2037,6 +2037,7 @@ extern void absolutetime_to_nanoseconds(uint64_t, uint64_t *);
 #define DCVS_TSENS0_TM 0x0c263000u
 #define GMU_IO(dw) (*(volatile uint32_t *)(va[W_GMU] + GMU_REG(dw)))
 static volatile uint32_t dcvs_stop, dcvs_running;
+extern volatile uint32_t ruan_screen_off;   /* RuanInput.c: backlight at 0; the ceiling is then the floor (power/plan.md) */
 /* Diagnostics: [0] running, [1] level, [2] thermal ceiling, [3] level changes, [4] failed votes, [5] busy per mille (1 s average),
  * [6] hottest GPU sensor in deci-C (INT32_MIN: no valid reading), [7] seconds, [8] windows without a valid tsens reading */
 volatile int32_t ruan_gpu_dcvs[9];
@@ -2118,8 +2119,9 @@ static void dcvs_thread(void *arg, int wres)
 		if (ncap != cap) kprintf("ruan-gpu: dcvs thermal ceiling L%u -> L%u at %d dC\n", cap, ncap, dc);
 		cap = ncap;
 
-		unsigned want = dcvs_want(cur, busy, DCVS_FLOOR, cap);
-		if (want < cur && cur <= cap) want = ++down >= 4 ? cur - 1 : cur;   /* calm: one step after 4 windows */
+		const unsigned top = ruan_screen_off ? DCVS_FLOOR : cap;
+		unsigned want = dcvs_want(cur, busy, DCVS_FLOOR, top);
+		if (want < cur && cur <= top) want = ++down >= 4 ? cur - 1 : cur;   /* calm: one step after 4 windows */
 		else down = 0;
 		if (want != cur) {
 			down = 0;
@@ -2135,7 +2137,7 @@ static void dcvs_thread(void *arg, int wres)
 			}
 		}
 		ruan_gpu_dcvs[1] = (int32_t)cur;
-		ruan_gpu_dcvs[2] = (int32_t)cap;
+		ruan_gpu_dcvs[2] = (int32_t)top;
 		busy_sum += busy;
 		if (++n == 62) {   /* ~1 s */
 			ruan_gpu_dcvs[5] = (int32_t)(busy_sum / n);

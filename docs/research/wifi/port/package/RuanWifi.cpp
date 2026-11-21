@@ -646,10 +646,11 @@ errno_t controlConnect(kern_ctl_ref, sockaddr_ctl *address, void **information) 
     auto *owner = static_cast<ControlClient *>(IOMalloc(sizeof(ControlClient)));
     if (!owner) return ENOMEM;
     const int status = nw_wifi_control_attach(&owner->session);
-    if (status) {IOFree(owner, sizeof(*owner)); return controlError(status);}
+    if (status) {IOFree(owner, sizeof(*owner)); logf(4, "wifi: supplicant connection refused: %d", status); return controlError(status);}
     owner->unit = address->sc_unit;
     IOLockLock(gControlLock); gControlClient = owner; IOLockUnlock(gControlLock);
     gControlOpens = gControlOpens + 1;
+    logf(4, "wifi: supplicant connected to %s (connection %u)", NW_CONTROL_NAME, gControlOpens);   // ruan: level 4: also in dmesg
     *information = owner;
     return 0;
 }
@@ -657,6 +658,7 @@ errno_t controlDisconnect(kern_ctl_ref, uint32_t, void *information) {
     if (!information) return 0;  // XNU calls disconnect after a failed connect, with no client context
     auto *owner = static_cast<ControlClient *>(information);
     nw_wifi_control_detach(owner->session);
+    logf(4, "wifi: supplicant disconnected");
     IOLockLock(gControlLock); if (gControlClient == owner) gControlClient = nullptr; IOLockUnlock(gControlLock);
     IOFree(owner, sizeof(*owner));
     return 0;

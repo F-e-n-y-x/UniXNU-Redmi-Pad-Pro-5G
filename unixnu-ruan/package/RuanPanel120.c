@@ -33,7 +33,9 @@
 // [20] VIG0 QOS_CTRL [21] DANGER_LUT [22] SAFE_LUT [23] CREQ_LUT_0 [24] CREQ_LUT_1 [25] CDP_CNTL [26] perf rc (bit 0 BCMs voted,
 // bit 1 MDP clock raised, negative = step that failed) [27] MDP INTR_STATUS after the 1 s check [28] underrun pos after the check
 // [29] DSI_FIFO_STATUS [30] DSI_DLN0_PHY_ERR [31] DSI_TIMEOUT_STATUS (separately: rbu174u's 0x88888 was the OR of three)
-volatile int32_t ruan_panel120_stats[32];
+// [32] DSI_FIFO_STATUS [33] DSI_DLN0_PHY_ERR before the switch (sticky since boot; both are then cleared, so [29]/[30] only hold what
+// the switch caused) [34] prog-fetch lines before the frame end used at 120 Hz [35] DSI_TIMING_DB_MODE before. docs/research/120hz/link.md
+volatile int32_t ruan_panel120_stats[36];
 
 // Hardware (live DT ruan-live.dts :20959 dsi_ctrl reg, sde-intf-off, sde-ctl-off) [V]
 #define RP_DSI0  0x0ae94000ULL
@@ -107,7 +109,7 @@ struct rp_plan {uint32_t vtotal, vsync_period, dsi_total, prog_fetch;};
 // we expect or the new front porch would be < 1 line.
 static int
 rp_compute(uint32_t hsync_ctl, uint32_t vsync_period, uint32_t dsi_total, uint32_t dsi_active_v, uint32_t intf_config,
-    uint32_t prog_fetch, uint32_t hz, struct rp_plan *out)
+    uint32_t prog_fetch, uint32_t hz, uint32_t fetch_lines, struct rp_plan *out)
 {
 	uint32_t htotal = hsync_ctl >> 16;
 	if (!htotal || vsync_period % htotal || vsync_period / htotal != RP_VTOTAL60) return -1;
@@ -119,16 +121,22 @@ rp_compute(uint32_t hsync_ctl, uint32_t vsync_period, uint32_t dsi_total, uint32
 	out->vtotal = vt;
 	out->vsync_period = vt * htotal;
 	out->dsi_total = ((vt - 1) << 16) | (dsi_total & 0xffffu);
-	// Programmable fetch starts N lines before the frame end, inside the front porch. Android caps N at the front porch
-	// (sde_encoder_phys_vid programmable_fetch_get_num_lines: actual_vfp_lines = min(v_front_porch, needed)) and programs
-	// (vtotal - N) * htotal + 1. UEFI's 60 Hz N is 2783 of a 2784-line porch (rbu172p read 0x18c56b), so at 120 Hz it becomes the
-	// whole 26-line porch: keeping N refused the switch (rc -6, rbu172p).
+	// Programmable fetch starts N lines before the frame end, inside the front porch: (vtotal - N) * htotal + 1. Parrot sets
+	// delay_prg_fetch_start (sde_hw_catalog.c), so Android adds one htotal: "throttle the fetch to start from the second line after
+	// the active region" (sde_encoder_phys_vid.c programmable_fetch_config). So N <= vfp - 1. UEFI obeys it at 60 Hz (N 2783 of a
+	// 2784-line porch, rbu172p read 0x18c56b = line 2733). rbu174u/176u capped N at the whole 26-line porch = line 2732, the FIRST
+	// line after the active area, and underran at the first active line. [V rule, I cause] fetch_lines (ruan-120hz-fetch, 0 = default
+	// vfp - 1) overrides N; Android's own 120 Hz value is 1 (2 lines minus the delay line).
 	out->prog_fetch = prog_fetch;
 	if (intf_config & (1u << 31)) {
 		const uint32_t vfp = vt - (RP_VPW + RP_VBP + RP_VACTIVE);
-		if (!prog_fetch || prog_fetch - 1 > RP_VTOTAL60 * htotal) return -6;
+		if (!prog_fetch || prog_fetch - 1 > RP_VTOTAL60 * htotal || vfp < 2) return -6;
 		uint32_t lines = (RP_VTOTAL60 * htotal - (prog_fetch - 1)) / htotal;
-		if (lines > vfp) lines = vfp;
+		if (lines > vfp - 1) lines = vfp - 1;
+		if (fetch_lines) {
+			if (fetch_lines > vfp - 1) return -7;
+			lines = fetch_lines;
+		}
 		out->prog_fetch = (vt - lines) * htotal + 1;
 	}
 	return 0;
@@ -186,16 +194,23 @@ main(void)
 {
 	struct rp_plan p;
 	// htotal 1660 is the uncompressed figure; the INTF value is the DSC one, the arithmetic does not care.
-	assert(rp_compute(1660u << 16 | 10, 1660u * 5516, 5515u << 16 | 1659, 2732u << 16 | 172, 0, 0, 120, &p) == 0);
+	assert(rp_compute(1660u << 16 | 10, 1660u * 5516, 5515u << 16 | 1659, 2732u << 16 | 172, 0, 0, 120, 0, &p) == 0);
 	assert(p.vtotal == 2758 && p.vsync_period == 1660u * 2758 && p.dsi_total == (2757u << 16 | 1659) && p.prog_fetch == 0);
 	assert(p.vtotal - 2732 == 26);                                           // DT dfps VFP at 120 Hz
-	assert(rp_compute(1660u << 16, 1660u * 5516, 5515u << 16, 2732u << 16, 1u << 31, 5515u * 1660 + 1, 120, &p) == 0);
+	assert(rp_compute(1660u << 16, 1660u * 5516, 5515u << 16, 2732u << 16, 1u << 31, 5515u * 1660 + 1, 120, 0, &p) == 0);
 	assert(p.prog_fetch == 2757u * 1660 + 1);                                // still one line before the end
 	// rbu172p's live values: htotal 594 (INTF HSYNC 0x252000a), PROG_FETCH 0x18c56b = (5516 - 2783) * 594 + 1
-	assert(rp_compute(0x252000au, 594u * 5516, 5515u << 16 | 0x251, 2732u << 16 | 0xac, 1u << 31, 0x18c56bu, 120, &p) == 0);
-	assert(p.prog_fetch == (2758u - 26) * 594 + 1);                          // capped at the 26-line porch
-	assert(rp_compute(1660u << 16, 1660u * 5515, 5515u << 16, 2732u << 16, 0, 0, 120, &p) == -1);   // not UEFI's 60 Hz mode
-	assert(rp_compute(1660u << 16, 1660u * 5516, 5515u << 16, 2732u << 16, 0, 0, 60, &p) == 0 && p.vtotal == 5516);
+	assert(rp_compute(0x252000au, 594u * 5516, 5515u << 16 | 0x251, 2732u << 16 | 0xac, 1u << 31, 0x18c56bu, 120, 0, &p) == 0);
+	assert(p.prog_fetch == (2758u - 25) * 594 + 1);                          // porch - 1: line 2733, second line after active
+	assert(p.prog_fetch == 0x18c56bu);                                       // = UEFI's own value: line 2733 at both rates
+	assert(rp_compute(0x252000au, 594u * 5516, 5515u << 16 | 0x251, 2732u << 16 | 0xac, 1u << 31, 0x18c56bu, 120, 1, &p) == 0);
+	assert(p.prog_fetch == 2757u * 594 + 1);                                 // Android: (2758 - 2) * 594 + 1 + 594
+	assert(rp_compute(0x252000au, 594u * 5516, 5515u << 16 | 0x251, 2732u << 16 | 0xac, 1u << 31, 0x18c56bu, 120, 26, &p) == -7);
+	// 60 Hz back through the same rule keeps UEFI's value exactly
+	assert(rp_compute(0x252000au, 594u * 5516, 5515u << 16 | 0x251, 2732u << 16 | 0xac, 1u << 31, 0x18c56bu, 60, 0, &p) == 0);
+	assert(p.prog_fetch == 0x18c56bu);
+	assert(rp_compute(1660u << 16, 1660u * 5515, 5515u << 16, 2732u << 16, 0, 0, 120, 0, &p) == -1);   // not UEFI's 60 Hz mode
+	assert(rp_compute(1660u << 16, 1660u * 5516, 5515u << 16, 2732u << 16, 0, 0, 60, 0, &p) == 0 && p.vtotal == 5516);
 	// MDP clock readout: dispcc-parrot's boot PLL0 config (L 0x1f, alpha 0x4000 = 600 MHz) through hid 5 = 200 MHz
 	assert(rp_mdp_khz(0x1f, 0x4000, 1u << 8 | 5) == 200000);
 	assert(rp_mdp_khz(95, 0, 1u << 8 | 5) == 608000 && rp_mdp_khz(0, 0, 0) == 19200 && rp_mdp_khz(95, 0, 4u << 8 | 5) == 0);
@@ -430,8 +445,12 @@ ruan_panel_set_120hz(void)
 	if (before < 55000 || before > 65000) {s[0] = -12; return;}   // not the 60 Hz scanout we expect
 
 	struct rp_plan p;
-	int rc = rp_compute(hs, vp, tot, av, cfg, pf, 120, &p);
+	unsigned fetch = 0;   // ruan-120hz-fetch=N: prog-fetch lines before the frame end (1..25), 0 = 25
+	PE_parse_boot_argn("ruan-120hz-fetch", &fetch, sizeof(fetch));
+	int rc = rp_compute(hs, vp, tot, av, cfg, pf, 120, fetch, &p);
 	if (rc) {s[0] = -20 + rc; return;}
+	s[34] = (cfg >> 31) ? (int32_t)(p.vtotal - (p.prog_fetch - 1) / (hs >> 16)) : 0;
+	s[35] = (int32_t)rd(rp_dsi, DSI_TIMING_DB_MODE);
 	// The active area must end inside the new frame (DISPLAY_V_END does not move with VFP).
 	if (rd(rp_intf, INTF_DISPLAY_V_END_F0) >= p.vsync_period) {s[0] = -13; return;}
 	// Read-only part of the perf step also runs for the dry run, so `panel120` shows the MDP clock and VIG0 QoS either way.
@@ -439,6 +458,10 @@ ruan_panel_set_120hz(void)
 	s[26] = rp_perf_up(s, 0);
 	if (s[26] < 0) {s[0] = -40; return;}   // a failed vote or clock step: stay at 60 Hz
 
+	// Sticky DSI error bits since boot, then clear them (write-1-to-clear, as mainline dsi_host.c dsi_fifo_status/dsi_dln0_phy_err),
+	// so [29]/[30] show only what the switch caused.
+	s[32] = (int32_t)rd(rp_dsi, DSI_FIFO_STATUS); s[33] = (int32_t)rd(rp_dsi, DSI_DLN0_PHY_ERR);
+	wr(rp_dsi, DSI_FIFO_STATUS, (uint32_t)s[32]); wr(rp_dsi, DSI_DLN0_PHY_ERR, (uint32_t)s[33]);
 	const int prog = (cfg >> 31) & 1;
 	if (rp_write(p.dsi_total, p.vsync_period, p.prog_fetch, prog)) {s[0] = -30; return;}
 	delay_for_interval(100, NSEC_PER_MSEC);

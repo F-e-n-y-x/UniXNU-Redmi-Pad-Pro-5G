@@ -11,3 +11,7 @@ ruan-owner-dataprotect.patch
 ruan-exit-reason-log.patch
 ruan-default-bootargs.patch
 ruan-slow-wait-log.patch
+# Pageout free-page caps scaled to 4 KiB pages (ruan-vm-free-scale=<n>, default 4 = the iPad's 32 MB target; 1 = stock).
+ruan-vm-free-target.patch
+# CPU placement hints, off by default: ruan-pcores=1, ruan-cpu0-park=1, ruan-cpu-report=N (docs/research/memory-cpu/plan.md).
+ruan-cpu-placement.patch

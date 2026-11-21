@@ -16,6 +16,9 @@
 // bits 11:0 signed deci-C, bit 21 valid, as tsens-v2.c). Over 90 C domain 1 is held at or below its middle level (at once, also
 // during a touch boost) until the hottest of them is back under 85 C. No valid reading = no cap (the EPSS dcvsh clamp still applies).
 // ruan_cpufreq_temp_dc is the last hottest reading, ruan_cpufreq_capped counts windows spent capped.
+// Screen off (RuanInput.c ruan_screen_off, the backlight at 0): both domains at most their second-lowest level, no touch boost;
+// asleep (ruan-sleep=1, ruan_sleeping) the lowest. The L3 follows them down. Load is recount's per-CPU idle time, which already
+// counts the idle thread's spin (noidle WFI-less idle) as idle: processor_idle marks the CPU idle before its loop.
 #include <stdint.h>
 #ifndef RUAN_CPUFREQ_HOST
 #include <kern/thread.h>
@@ -122,6 +125,8 @@ int main(void)
 static unsigned mode;
 static volatile uint32_t *dom[2];       // the domain windows, for mode 3
 extern volatile uint32_t ruan_touch_events;     // RuanInput.c: one per touch report
+extern volatile uint32_t ruan_screen_off, ruan_sleeping;        // RuanInput.c: backlight at 0, ruan-sleep=1 with it
+static volatile uint32_t busy_last[2], boosting;        // mode 3: last window's busiest CPU per domain (per mille), touch boost on
 volatile int32_t ruan_cpufreq_temp_dc = INT32_MIN;      // mode 3: hottest big-core tsens reading, deci-C
 volatile uint32_t ruan_cpufreq_capped;                  // mode 3: windows with domain 1 thermally capped
 
@@ -235,7 +240,9 @@ governor(void)
 				printf("ruan-cpufreq: d1 thermal cap %s at %d dC\n", capped ? "off" : "on", dc);
 			}
 		}
-		if (last && boost_abs && ruan_touch_events != touches) {
+		const unsigned off_cap = ruan_sleeping ? 0 : ruan_screen_off ? 1 : ~0u;   // level index cap while the screen is off
+		busy_last[0] = busy[0], busy_last[1] = busy[1];
+		if (last && boost_abs && ruan_touch_events != touches && !ruan_screen_off) {
 			touches = ruan_touch_events;
 			boost_end = t + boost_abs;
 		}
@@ -243,15 +250,16 @@ governor(void)
 			if (!n[d] || !win[d]) {
 				continue;
 			}
-			unsigned want;
+			unsigned want, l = lim[d];
 			if (d < 2) {
-				want = t < boost_end ? n[d] - 1 : ruan_cpufreq_want(mhz[d], n[d], cur[d], busy[d]);
+				want = t < boost_end && !ruan_screen_off ? n[d] - 1 : ruan_cpufreq_want(mhz[d], n[d], cur[d], busy[d]);
+				l = l < off_cap ? l : off_cap;
 			} else {
 				for (want = 0; want + 1 < n[2] && (uint32_t)mhz[2][want] * 1000 < (uint32_t)mhz[2][n[2] - 1] * frac; want++) {
 				}
 			}
-			want = want < lim[d] ? want : lim[d];
-			if (want > cur[d] || (want < cur[d] && (cur[d] > lim[d] || ++down[d] >= 4))) {
+			want = want < l ? want : l;
+			if (want > cur[d] || (want < cur[d] && (cur[d] > l || ++down[d] >= 4))) {
 				cur[d] = want;
 				down[d] = 0;
 				if (d < 2) {
@@ -267,6 +275,7 @@ governor(void)
 				frac = f > frac ? f : frac;
 			}
 		}
+		boosting = t < boost_end && !ruan_screen_off;
 		last = t;
 		assert_wait_timeout((event_t)&mode, THREAD_UNINT, 16, NSEC_PER_MSEC);
 		thread_block(THREAD_CONTINUE_NULL);
@@ -285,13 +294,15 @@ run(void *arg __unused, wait_result_t wr __unused)
 
 volatile uint32_t ruan_cpufreq_started;   // 1 once the thread runs; USB `cpufreq` reads it
 
-// USB `cpufreq` (UsbDebugCdc.cpp): mode, start state, both domains' live state/vote, hottest big core, capped windows.
+// USB `cpufreq` (UsbDebugCdc.cpp): mode, start state, both domains' live state/vote, hottest big core, capped windows, then the
+// last window's busiest CPU per domain (per mille), touch boost, screen off and asleep (RuanInput.c).
 void
 ruan_cpufreq_report(char *out, unsigned len)
 {
 	unsigned s0 = dom[0] ? (dom[0][kState / 4] & 0xff) * 192 / 10 : 0, s1 = dom[1] ? (dom[1][kState / 4] & 0xff) * 192 / 10 : 0;
-	snprintf(out, len, "mode %u started %u d0 %u MHz d1 %u MHz temp %d dC capped %u", mode, ruan_cpufreq_started, s0, s1,
-	    ruan_cpufreq_temp_dc, ruan_cpufreq_capped);
+	snprintf(out, len, "mode %u started %u d0 %u MHz d1 %u MHz temp %d dC capped %u busy %u/%u boost %u screen-off %u sleep %u", mode,
+	    ruan_cpufreq_started, s0, s1, ruan_cpufreq_temp_dc, ruan_cpufreq_capped, busy_last[0], busy_last[1], boosting, ruan_screen_off,
+	    ruan_sleeping);
 }
 
 void

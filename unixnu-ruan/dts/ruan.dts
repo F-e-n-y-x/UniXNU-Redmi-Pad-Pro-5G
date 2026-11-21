@@ -34,6 +34,18 @@
         unixnu,adt-name = "wlan";
         status = "okay";
     };
+
+    // ruan-bt=4 (macOS/docs/research/bluetooth/port, as asteroids.dts): an H4 UART (transport-encoding 1) at 3.2 Mbaud, which
+    // bluetoothd reads ("DeviceTree transport/speed"). RuanBluetooth.cpp checks both, fills local-mac-address and publishes a matching
+    // IOService before userland. Harmless without ruan-bt=4: nothing publishes the service.
+    bluetooth {
+        device_type = "bluetooth";
+        compatible = "qcom,wcn6750-bt";
+        unixnu,adt-name = "bluetooth";
+        transport-encoding = <1>;
+        transport-speed = <3200000>;
+        status = "okay";
+    };
 };
 
 &cpu0 { unixnu,die-cluster-id = <0>; unixnu,cluster-core-id = <0>; };

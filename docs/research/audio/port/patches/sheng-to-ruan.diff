@@ -1,0 +1,111 @@
+--- /root/unixnu-work/vg/UniXNU-sheng/package/ShengAudioReach.h	2026-11-19 15:33:17.699184158 +0530
++++ package/ShengAudioReach.h	2026-11-21 14:32:22.677639800 +0530
+@@ -35,6 +35,7 @@
+ #define AR_MOD_PCM_DEC 0x07001005u
+ #define AR_MOD_I2S_SINK 0x0700100Au
+ #define AR_MOD_CODEC_DMA_SOURCE 0x07001024u
++#define AR_MOD_CODEC_DMA_SINK 0x07001023u      /* ruan */
+ 
+ #define AR_SG_PLAY 0x4001u
+ #define AR_SG_SPEAKER 0x4005u
+@@ -45,6 +46,7 @@
+ #define AR_IID_PLAY_CNV 0x6003u
+ #define AR_IID_SPEAKER_I2S 0x6051u
+ #define AR_IID_MIC_DMA 0x6070u
++#define AR_IID_SPEAKER_DMA 0x6052u               /* ruan: codec DMA RX sink (instance id of our own choosing) */
+ #define AR_IID_CAP_CNV 0x6022u
+ #define AR_IID_CAP_ENC 0x6023u
+ #define AR_IID_CAP_SHMEM 0x6024u
+@@ -62,6 +64,13 @@
+ uint32_t ar_open_playback_stream(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token);
+ uint32_t ar_config_playback_stream(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token, const ArFormat *f);
+ uint32_t ar_config_playback_shmem(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token, const ArFormat *f);
++/* ruan: the speaker device graph is a codec DMA sink (LPAIF_RXTX RX-1 on parrot, PAL's CODEC_DMA-LPAIF_RXTX-RX-1), and the playback
++ * stream links to whatever sink instance the device graph has. intf_index: AudioReach CODEC_RX0 = 1, RX1 = 2, ...; channel_mask: bit 0
++ * first channel. */
++uint32_t ar_open_codec_rx_device(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token);
++uint32_t ar_config_codec_rx_device(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token, const ArFormat *f, uint32_t intf_index,
++                                   uint32_t channel_mask);
++uint32_t ar_open_playback_stream_to(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token, uint32_t sink_iid);
+ uint32_t ar_open_mic_device(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token);
+ /* channel_mask: codec DMA channels in use (bit 0 first channel). */
+ uint32_t ar_config_mic_device(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token, const ArFormat *f, uint32_t channel_mask);
+--- /root/unixnu-work/vg/UniXNU-sheng/package/ShengAudioReach.c	2026-11-19 15:33:17.699184158 +0530
++++ package/ShengAudioReach.c	2026-11-21 14:32:22.677980200 +0530
+@@ -133,14 +133,29 @@
+ 
+ uint32_t ar_open_playback_stream(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token)
+ {
++    return ar_open_playback_stream_to(out, capacity, port, token, AR_IID_SPEAKER_I2S);
++}
++
++/* ruan: the same stream graph, linked to the given device graph sink. */
++uint32_t ar_open_playback_stream_to(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token, uint32_t sink_iid)
++{
+     static const Sg sg = {AR_SG_PLAY, PERF_LOW_LATENCY, DIR_RX, SCENARIO_PLAYBACK};
+     static const Container c = {AR_SG_PLAY, POS_STREAM};
+     static const Module m[] = {{AR_MOD_WR_SHMEM, AR_IID_PLAY_SHMEM, 0, 1}, {AR_MOD_PCM_DEC, AR_IID_PLAY_DEC, 1, 1},
+                                {AR_MOD_PCM_CNV, AR_IID_PLAY_CNV, 1, 1}};
+-    static const Link l[] = {{AR_IID_PLAY_SHMEM, AR_IID_PLAY_DEC}, {AR_IID_PLAY_DEC, AR_IID_PLAY_CNV}, {AR_IID_PLAY_CNV, AR_IID_SPEAKER_I2S}};
++    const Link l[] = {{AR_IID_PLAY_SHMEM, AR_IID_PLAY_DEC}, {AR_IID_PLAY_DEC, AR_IID_PLAY_CNV}, {AR_IID_PLAY_CNV, sink_iid}};
+     return graph_open(out, capacity, port, token, &sg, &c, m, 3, l, 3);
+ }
+ 
++/* ruan: device subgraph 0x4005 with one codec DMA sink (as the mic device graph, mirrored: one input, no output). */
++uint32_t ar_open_codec_rx_device(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token)
++{
++    static const Sg sg = {AR_SG_SPEAKER, PERF_LOW_LATENCY, DIR_RX, SCENARIO_PLAYBACK};
++    static const Container c = {AR_SG_SPEAKER, POS_GLOBAL_DEV};
++    static const Module m[] = {{AR_MOD_CODEC_DMA_SINK, AR_IID_SPEAKER_DMA, 1, 0}};
++    return graph_open(out, capacity, port, token, &sg, &c, m, 1, 0, 0);
++}
++
+ uint32_t ar_open_mic_device(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token)
+ {
+     static const Sg sg = {AR_SG_MIC, PERF_LOW_LATENCY, DIR_TX, SCENARIO_RECORD};
+@@ -201,6 +216,25 @@
+     put32(&w, 0);
+     param_end(&w, at);
+     cmd_payload_end(&w, cmd);
++    return finish(&w);
++}
++
++/* ruan: media format, frame size factor, codec DMA interface (LPAIF_RXTX, intf_index, channels) and power mode of the RX sink. */
++uint32_t ar_config_codec_rx_device(uint8_t *out, uint32_t capacity, uint32_t port, uint32_t token, const ArFormat *f, uint32_t intf_index,
++                                   uint32_t channel_mask)
++{
++    W w;
++    begin(&w, out, capacity, port, AR_APM_IID, token, AR_OP_SET_CFG);
++    const uint32_t cmd = cmd_payload_start(&w);
++    hw_ep_mf(&w, AR_IID_SPEAKER_DMA, f);
++    frame_size_factor(&w, AR_IID_SPEAKER_DMA);
++    uint32_t at = param_begin(&w, AR_IID_SPEAKER_DMA, PARAM_CODEC_DMA_INTF);
++    put32(&w, LPAIF_RXTX); put32(&w, intf_index); put32(&w, channel_mask);
++    param_end(&w, at);
++    at = param_begin(&w, AR_IID_SPEAKER_DMA, PARAM_HW_EP_POWER_MODE);
++    put32(&w, 0);
++    param_end(&w, at);
++    cmd_payload_end(&w, cmd);
+     return finish(&w);
+ }
+ 
+--- /root/unixnu-work/vg/UniXNU-sheng/package/tests/audioreach_host.c	2026-11-19 15:33:17.705006918 +0530
++++ package/tests/audioreach_host.c	2026-11-21 14:32:42.000849700 +0530
+@@ -118,6 +118,17 @@
+     n = ar_read(b, sizeof b, 1, 19, 0xa000ull, 0x56, 1920);
+     CHECK(n == 24 + 32 && gpr_decode(b, n, &p) == GprOk && p.dst_port == AR_IID_CAP_SHMEM);
+ 
++    /* ruan: codec DMA RX sink device graph (LPAIF_RXTX RX-1 = interface index 2, stereo), and the stream linked to it. */
++    n = ar_open_codec_rx_device(b, sizeof b, 1, 30);
++    CHECK(n && blocks(b, n, iid, id, off, 8) == 5 && le32(b + off[2] + 16) == AR_MOD_CODEC_DMA_SINK && le32(b + off[2] + 20) == AR_IID_SPEAKER_DMA);
++    CHECK(le32(b + off[3] + 20) == 1 && le32(b + off[3] + 24) == 0);             /* one input, no output */
++    n = ar_open_playback_stream_to(b, sizeof b, 1, 31, AR_IID_SPEAKER_DMA);
++    CHECK(n && blocks(b, n, iid, id, off, 8) == 5 && le32(b + off[4] + 36) == AR_IID_PLAY_CNV && le32(b + off[4] + 44) == AR_IID_SPEAKER_DMA);
++    n = ar_config_codec_rx_device(b, sizeof b, 1, 32, &stereo, 2, 3);
++    CHECK(n && blocks(b, n, iid, id, off, 8) == 4 && iid[0] == AR_IID_SPEAKER_DMA && id[2] == 0x08001063);
++    CHECK(le32(b + off[0]) == 48000 && le16(b + off[0] + 6) == 2);
++    CHECK(le32(b + off[2]) == 1 && le32(b + off[2] + 4) == 2 && le32(b + off[2] + 8) == 3 && id[3] == 0x08001176);
++
+     /* Too small a buffer refuses. */
+     CHECK(ar_open_playback_stream(b, 100, 1, 1) == 0);
+ 

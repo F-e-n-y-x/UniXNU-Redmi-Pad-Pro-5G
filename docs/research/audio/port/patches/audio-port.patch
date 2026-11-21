@@ -1,0 +1,17 @@
+--- a/scripts/build-ram-root-probe.py	2026-11-21 14:36:46.236081495 +0530
++++ b/scripts/build-ram-root-probe.py	2026-11-21 14:36:46.245290842 +0530
+@@ -233,8 +233,12 @@
+            compile_like('bsd/DEVELOPMENT/kern_exec.o.json', DEVICE / 'package/AdspFirmware.c', OUT / 'AdspFirmware.o',
+                         ['-Wno-unused-but-set-global']),
+            *wifi_module_objects(),
+-           # Qualcomm LPASS Quad WSA883x Smart Amplifiers Audio subsystem
+-           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanAudioProbe.c', OUT / 'RuanAudioProbe.o')]
++           # ruan-audio=N: speaker path stages (docs/research/audio): the ADSP host (UniXNU-sheng AdspProbe.cpp, ported), GPR and AudioReach
++           # packets (sheng's, + codec DMA RX), the staged bring-up. Same ruan_audio_init / ruan_audio_status_str names as the old
++           # RuanAudioProbe.c status stub it replaces (the stub's files can be deleted). Exclusive with ruan-wifi >= 2 (one IPCC/QMP/TCS owner).
++           compile_cxx_like(IOKIT_RECORD, DEVICE / 'package/RuanAudio.cpp', OUT / 'RuanAudio.o'),
++           compile_cxx_like(IOKIT_RECORD, DEVICE / 'package/RuanAdsp.cpp', OUT / 'RuanAdsp.o'),
++           *[compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / f'package/{n}.c', OUT / f'{n}.o') for n in ('ShengGpr', 'ShengAudioReach')]]
+ archive = OUT / 'libRamRootProbe.a'
+ archive.unlink(missing_ok=True)
+ subprocess.run(['xcrun', 'ar', 'rcs', archive, *objects], check=True)

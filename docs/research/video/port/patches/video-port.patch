@@ -1,0 +1,128 @@
+diff -ru a/package/BootProgress.c b/package/BootProgress.c
+--- a/package/BootProgress.c	2026-11-21 14:44:41.176792452 +0530
++++ b/package/BootProgress.c	2026-11-21 14:45:02.107691540 +0530
+@@ -911,6 +911,9 @@
+ 
+ extern void ruan_cpufreq_start(void);   /* package/RuanCpuFreq.c, ruan-cpufreq=<n>; strong: a weak import would not pull it from the archive */
+ extern void ruan_wifi_start(void);      /* package/RuanWifiWpss.cpp, ruan-wifi=<1-5>; strong for the same reason (it waits ruan-wifi-delay) */
++#if RUAN_VIDEO
++extern void ruan_video_start(void);     /* package/RuanVideo.cpp, ruan-video=<1-5>; strong, it pulls the VPU code out of the archive */
++#endif
+ 
+ void
+ boot_progress_start(void)
+@@ -918,6 +921,9 @@
+ 	thread_t thread;
+ 	ruan_cpufreq_start();
+ 	ruan_wifi_start();   /* nothing without ruan-wifi; LegacyDisplayProbe's late probe calls ruan_wifi_init as the second chance */
++#if RUAN_VIDEO
++	ruan_video_start();  /* nothing without ruan-video; it waits ruan-video-delay (30 s), the late probe calls ruan_video_init */
++#endif
+ 	extern void ruan_gpu_survey(void);
+ 	ruan_gpu_survey();   /* package/RuanGpuPower.c: ruan-gpu=<1-3> (gpu-dev stage S1), ruan-gpu-survey=1 = mode 1; nothing otherwise */
+ 	if (enabled) {
+diff -ru a/package/LegacyDisplayProbe.cpp b/package/LegacyDisplayProbe.cpp
+--- a/package/LegacyDisplayProbe.cpp	2026-11-21 14:44:41.177012811 +0530
++++ b/package/LegacyDisplayProbe.cpp	2026-11-21 14:45:02.107791480 +0530
+@@ -806,6 +806,9 @@
+ 		boot_progress_stage("late_probe: ruan_wifi_init");
+ 		extern void ruan_wifi_init(void) __attribute__((weak_import));
+ 		if (&ruan_wifi_init) ruan_wifi_init();
++		boot_progress_stage("late_probe: ruan_video_init");
++		extern void ruan_video_init(void) __attribute__((weak_import));
++		if (&ruan_video_init) ruan_video_init();
+ 		boot_progress_stage("late_probe: ruan_audio_init");
+ 		extern void ruan_audio_init(void) __attribute__((weak_import));
+ 		if (&ruan_audio_init) ruan_audio_init();
+diff -ru a/package/UsbDebugCdc.cpp b/package/UsbDebugCdc.cpp
+--- a/package/UsbDebugCdc.cpp	2026-11-21 14:44:41.177229010 +0530
++++ b/package/UsbDebugCdc.cpp	2026-11-21 14:45:02.108335457 +0530
+@@ -100,6 +100,8 @@
+ extern const char *ruan_wifi_status_str(void) __attribute__((weak_import));
+ extern unsigned ruan_wifi_log(unsigned i, char *out, unsigned len) __attribute__((weak_import));   // RuanWifiWpss.cpp, USB `wifi.log`
+ extern const char *ruan_audio_status_str(void) __attribute__((weak_import));
++extern const char *ruan_video_status_str(void) __attribute__((weak_import));                      // RuanVideo.cpp, USB `video`
++extern unsigned ruan_video_log(unsigned i, char *out, unsigned len) __attribute__((weak_import));  // RuanVideo.cpp, USB `video.log`
+ 
+ // The boot-progress banner prints this (package/BootProgress.c defines it weak; this definition wins when linked).
+ char ruan_usb_short[48] = "usb: off";
+@@ -545,7 +547,7 @@
+     if (strEq(raw, "ping")) {
+         s.reply.writeStr("[usb] PONG ruan\r\n");
+     } else if (strEq(raw, "features") || strEq(raw, "help")) {
+-        s.reply.writeStr("FEATURES: ping status bootargs display usb touch battery wifi wifi.log audio replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg gpu\r\n");
++        s.reply.writeStr("FEATURES: ping status bootargs display usb touch battery wifi wifi.log video video.log audio replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg gpu\r\n");
+     } else if (strEq(raw, "wifi") || strEq(raw, "wlan")) {
+         if (&ruan_wifi_status_str && ruan_wifi_status_str) {
+             snprintf(buf, sizeof(buf), "[usb] WIFI: %s\r\n", ruan_wifi_status_str());
+@@ -558,6 +560,13 @@
+         unsigned i = 0;
+         for (; &ruan_wifi_log && ruan_wifi_log(i, buf, sizeof(buf)); ++i) s.reply.writeStr(buf);
+         if (!i) s.reply.writeStr("[usb] WIFI.LOG: not linked\r\n");
++    } else if (strEq(raw, "video") || strEq(raw, "vpu")) {
++        snprintf(buf, sizeof(buf), "[usb] VIDEO: %s\r\n", &ruan_video_status_str ? ruan_video_status_str() : "driver not linked");
++        s.reply.writeStr(buf);
++    } else if (strEq(raw, "video.log")) {
++        unsigned i = 0;
++        for (; &ruan_video_log && ruan_video_log(i, buf, sizeof(buf)); ++i) s.reply.writeStr(buf);
++        if (!i) s.reply.writeStr("[usb] VIDEO.LOG: not linked\r\n");
+     } else if (strEq(raw, "audio") || strEq(raw, "sound")) {
+         if (&ruan_audio_status_str && ruan_audio_status_str) {
+             snprintf(buf, sizeof(buf), "[usb] AUDIO: %s\r\n", ruan_audio_status_str());
+diff -ru a/scripts/build-ram-root-probe.py b/scripts/build-ram-root-probe.py
+--- a/scripts/build-ram-root-probe.py	2026-11-21 14:44:41.178366754 +0530
++++ b/scripts/build-ram-root-probe.py	2026-11-21 14:45:02.108529996 +0530
+@@ -183,6 +183,35 @@
+             *module]
+ 
+ 
++# The iris2 VPU (macOS/docs/research/video/port): ruan-video=1-4 (survey, power, firmware boot, one decoder session); default built,
++# RUAN_VIDEO=0 leaves it out. drivers/QcomIris of UniXNU-sheng (GPL-2.0-only) is fetched into .cache/QcomIris by scripts/fetch-qcom-iris.sh
++# with patches/qcom-iris-ruan.patch; its own tools fetch the pinned Linux iris files. The ArmSmmu4K kit objects come from build-ruan-adreno.
++# RuanVideo.o is pulled by BootProgress.c's ruan_video_start (built with -DRUAN_VIDEO=1).
++VIDEO = os.environ.get('RUAN_VIDEO', '1') == '1'
++
++
++def video_objects():
++    if not VIDEO:
++        return []
++    iris = Path(os.environ.get('QCOM_IRIS_DIR', DEVICE / '.cache/QcomIris'))
++    if not (iris / 'include/QcomIrisCore.h').is_file():
++        subprocess.run(['bash', DEVICE / 'scripts/fetch-qcom-iris.sh', iris], check=True)
++    subprocess.run(['python3', iris / 'tools/fetch-sources.py'], check=True, stdout=subprocess.DEVNULL)
++    linux = iris / 'deps/linux/drivers/media/platform/qcom/iris'
++    kit = ROOT / 'kits/ArmSmmu4K'
++    common = ['-I', str(iris / 'include'), '-I', str(iris / 'shim'), '-I', str(linux), '-I', str(kit)]
++    out = OUT / 'video'
++    out.mkdir(exist_ok=True)
++    # sheng's build-qcom-iris.py flags: -Os (text room), unused parameters of the Linux-shaped ops allowed; ruan's UBWC bank bit 14
++    iris_flags = ['-Os', '-Wno-unused-parameter', '-DQCOM_IRIS_UBWC_HBB=14', *common, '-I', str(iris / 'src'),
++                  '-I', str(ROOT / '.cache/xnu-work/osfmk')]
++    return [compile_cxx_like(IOKIT_RECORD, DEVICE / 'package/RuanVideo.cpp', out / 'RuanVideo.o', common),
++            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanVideoCc.c', out / 'RuanVideoCc.o'),
++            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/Sm8550AppsSmmu.c', out / 'Sm8550AppsSmmu.o'),
++            *[compile_like('osfmk/DEVELOPMENT/startup.o.json', s, out / (s.stem + '.o'), iris_flags)
++              for s in [*sorted((iris / 'src').glob('*.c')), linux / 'iris_vpu_buffer.c']]]
++
++
+ # HakiOS's C is warning-clean under its own flags, not under -Wextra -Werror; its firmware headers live outside git.
+ HAKIOS_C = ['-I', str(DEVICE / '.cache/hakios-fw'), '-Wno-error', '-Wno-unused-function', '-Wno-unused-parameter',
+             '-Wno-unused-variable', '-Wno-unused-but-set-variable', '-Wno-sign-compare', '-Wno-missing-prototypes']
+@@ -194,7 +223,8 @@
+            OUT / 'NativeKeyStoreEvents.late.o',
+            compile_like('bsd/DEVELOPMENT/kern_trustcache.o.json', DEVICE / 'package/RamRestoreTrust.c', OUT / 'RamRestoreTrust.o'),
+            # the boot_progress_* hooks (patches/xnu/ruan-boot-progress.patch), with the flags of the startup.c that calls them
+-           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/BootProgress.c', OUT / 'BootProgress.o'),
++           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/BootProgress.c', OUT / 'BootProgress.o',
++                        [f'-DRUAN_VIDEO={int(VIDEO)}']),
+            # ruan-autoreset's reboot into fastboot (package/BootReset.c, from UniXNU-Dizi-Ruan)
+            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/BootReset.c', OUT / 'BootReset.o'),
+            # EL0 fault records and the SIGABRT reason scan for the crash banner (package/BootFaultProbe.c, from UniXNU-fuxi)
+@@ -233,6 +263,7 @@
+            compile_like('bsd/DEVELOPMENT/kern_exec.o.json', DEVICE / 'package/AdspFirmware.c', OUT / 'AdspFirmware.o',
+                         ['-Wno-unused-but-set-global']),
+            *wifi_module_objects(),
++           *video_objects(),
+            # Qualcomm LPASS Quad WSA883x Smart Amplifiers Audio subsystem
+            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanAudioProbe.c', OUT / 'RuanAudioProbe.o')]
+ archive = OUT / 'libRamRootProbe.a'
