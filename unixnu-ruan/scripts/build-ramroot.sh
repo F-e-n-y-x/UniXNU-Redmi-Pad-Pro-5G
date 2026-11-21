@@ -155,7 +155,7 @@ trust_arg=--trust-cache; [ -f $OUT/root-usb.cdhash ] && trust_arg=--owner-trust-
 # blob, so the FAT stays at 56 MiB and the mini root has to fit next to the kernel inside it.
 X=$OUT/xnup-$NAME; rm -rf $X; mkdir -p $X/src
 (cd $X/src && 7z x -y $O/payload/payload.img >/dev/null)
-truncate -s 56M $X/fat.img
+truncate -s 58M $X/fat.img   # rbu169p: Wi-Fi made the kernel 54 MB; 58 MiB (60.8 MB) stays under ABL's ~62 MB
 /usr/sbin/mkfs.vfat -F 32 -n RUAN $X/fat.img >/dev/null
 MTOOLS_SKIP_CHECK=1 mcopy -s -i $X/fat.img $X/src/EFI ::/
 # every file must read back identical from the FAT the tablet will see

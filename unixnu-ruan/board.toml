@@ -37,6 +37,8 @@ archives = [
   # Required for an included component; nothing links its unbound archive: build-ram-root-probe.py builds and binds its own.
   "component:RamBlock",
   # RAM-root diagnostic (package/RamRootProbe.c) and the key store stand-in; linked through CONFIG_XNU_EXTRA_LD_ARCHIVES.
+  # Also the WCN6750 Wi-Fi (ruan-wifi=1|2 always; unless RUAN_WIFI_MODULE=0 in the build environment, ruan-wifi=3-5 and
+  # drivers/Ath11kWifi, which is not in UniXNU's component catalog and so not a [components] entry: scripts/fetch-ath11k-wifi.sh).
   "build-ram-root-probe.py",
   # gpu 17/18 (ruan-adreno=1): UniXNU's Adreno740 driver + ArmSmmu4K/AdrenoPM4 kits (patches/adreno/) + package/RuanAdrenoGlue.cpp,
   # force-loaded through CONFIG_XNU_EXTRA_LD_ARCHIVES (macOS/docs/research/GPU-METAL-PORT.md steps 2-3).

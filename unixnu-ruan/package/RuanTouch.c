@@ -1691,6 +1691,26 @@ goodix_thread(__unused void *parameter, __unused wait_result_t result)
 	unsigned idle = 0, idle_looks;
 	uint32_t poll_us = 8000, reads = 0, fast = 0, edges = 0;
 	uint64_t before = 0, reading = 0, deadline = mach_absolute_time(), period, last_read = 0;
+	/* touch_irq=1: sleep on the TLMM summary interrupt (hakios.novatek_ruan.h nvt_irq_arm), the tick below until it attaches.
+	 * touch_burst_us=N: without the interrupt, tick every N us for 20 ms after a read (reports come in trains). */
+	uint32_t want_irq = 0, irq_tries = 0, irq_seen = 0, burst_us = 0, lat_n = 0;
+	uint64_t burst = 0, last_try = 0, lat_sum = 0, lat_max = 0;
+	bool irq_armed = false;
+
+	PE_parse_boot_argn("touch_irq", &want_irq, sizeof(want_irq));
+	if (want_irq) {
+		nvt_pin_int = 54;       /* the DT's 0x36; the latch and the interrupt both need the right pin */
+	}
+	PE_parse_boot_argn("touch_burst_us", &burst_us, sizeof(burst_us));
+	if (burst_us >= 100 && burst_us < 1000) {
+		nanoseconds_to_absolutetime((uint64_t)burst_us * NSEC_PER_USEC, &burst);
+	}
+	{
+		uint32_t active = 0;
+
+		PE_parse_boot_argn("touch_active", &active, sizeof(active));
+		nvt_active = active != 0;
+	}
 
 	/* touch_fast=1: NT36532 report line on GPIO 54 (the DT's 0x36), a 1 ms SYS_CRITICAL tick, and while a finger is down a
 	 * blind read only when nothing was read for 5 ms (one 240 Hz report period; the old pin missed most reports) */
@@ -1739,8 +1759,54 @@ goodix_thread(__unused void *parameter, __unused wait_result_t result)
 			goodix_command(GOODIX_CMD_HIGH_RATE, 1);
 		}
 	}
+	if (touch_chip == TOUCH_NOVATEK) {
+		nvt_send_active();
+	} else {
+		want_irq = 0;   /* the interrupt path is the NT36532's (GPIO 54) only */
+	}
 	for (unsigned tick = 1;; tick++) {
 		uint64_t looked = micros_now(), read_at;
+
+		if (want_irq && !irq_armed && irq_tries < 30 && looked - last_try >= 1000000) {
+			int rc = nvt_irq_arm();
+
+			last_try = looked;
+			irq_tries++;
+			irq_armed = rc == 0;
+			if (irq_armed || irq_tries == 30) {
+				nvt_log("touch_irq: attach result, tries", (uint32_t)rc, irq_tries);
+			}
+		}
+		if (irq_armed) {
+			uint32_t ev = __atomic_load_n(&nvt_irq_events, __ATOMIC_ACQUIRE);
+
+			if (ev != irq_seen) {
+				uint64_t at = nvt_irq_at, done, ns;
+
+				irq_seen = ev;
+				chip_poll();    /* the read and the post to NativeHidInput (its sink runs on this thread) */
+				done = mach_absolute_time();
+				reads++;
+				last_read = micros_now();
+				absolutetime_to_nanoseconds(done - at, &ns);
+				lat_sum += ns / 1000;
+				lat_max = ns / 1000 > lat_max ? ns / 1000 : lat_max;
+				if (++lat_n == 1024) {
+					/* interrupt -> report delivered, us: mean, worst; then interrupts and summary hits for other pins */
+					nvt_log("touch_irq: irq->hid us mean, max", (uint32_t)(lat_sum / lat_n), (uint32_t)lat_max);
+					nvt_log("touch_irq: irqs, spurious", ev, nvt_irq_spurious);
+					lat_n = 0, lat_sum = 0, lat_max = 0;
+				}
+				continue;
+			}
+			/* nothing pending: sleep until the line fires; with a finger down look after 20 ms anyway, to see a lost lift */
+			nvt_irq_wait(ev, touch_any_down() ? 20 : 80);
+			if (__atomic_load_n(&nvt_irq_events, __ATOMIC_ACQUIRE) == ev) {
+				chip_poll();
+				reads++;
+			}
+			continue;
+		}
 
 		/* the interrupt line is low while a report waits; look anyway every 80 ms in case it is missed */
 		if (touch_chip == TOUCH_NOVATEK ? nvt_edge_seen() : !gpio_get(PIN_INT)) {
@@ -1764,7 +1830,7 @@ goodix_thread(__unused void *parameter, __unused wait_result_t result)
 		}
 		before = looked;
 		if (fast) {
-			touch_tick(&deadline, period);
+			touch_tick(&deadline, burst && micros_now() - last_read < 20000 ? burst : period);
 		} else {
 			sleep_us(poll_us);
 		}

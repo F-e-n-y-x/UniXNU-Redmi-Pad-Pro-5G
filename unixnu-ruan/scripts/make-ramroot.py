@@ -171,10 +171,6 @@ def select(slt, work):
     pick.SKIP_EXT = tuple(e for e in pick.SKIP_EXT if e != '.metallib')
     pick.SKIP_APP_EXT = tuple(e for e in pick.SKIP_APP_EXT if e != '.metallib')
     pick.SKIP_SYSTEM_LIBRARY += ('OnBoardingBundles', 'Health')
-    # The Collections lock-screen poster: XPC kills it every ~5 s (ns 7 code 3, likely its launch check-in while the Metal stack
-    # loads), and a touch on its dead scene makes SpringBoard assert (FBS processIdentity, rbu130u-rbu133u). Without it PosterBoard
-    # falls back to another poster. shortcut: drop it until Metal start-up is fast enough, then restore.
-    pick.SKIP_PREFIX += ('System/Library/PrivateFrameworks/WallpaperKit.framework/PlugIns/CollectionsPoster.appex/',)
     pick.SKIP_PREFIX += tuple(f'System/Library/{name}/' for name in ('OnBoardingBundles', 'Health')) + \
         tuple(f'System/Library/PrivateFrameworks/{name}.framework/' for name in SKIP_FRAMEWORKS) + \
         tuple(f'System/Library/Frameworks/{name}.framework/' for name in SKIP_FRAMEWORKS)
@@ -185,6 +181,12 @@ def select(slt, work):
         not (path.endswith('.loctable') and size > 2 << 20) and not heavy_feature_resource(path, size) and \
         path not in SKIP_DAEMON_PATHS and \
         wanted(path, size)
+    # RUAN_FULL_ROOT=1 (UFS root, 32 GiB): the whole OS image like upstream's userdata root. The trims above were for the RAM root;
+    # missing apps/frameworks leave scenes with no process identity and SpringBoard asserts on touch (FBS processIdentity, rbu142p).
+    # Kept out: Setup (seeded done), Spotlight (abort loop), the removed daemons' plists.
+    if os.environ.get('RUAN_FULL_ROOT'):
+        pick.wanted_file = lambda path, size: path not in SKIP_DAEMON_PATHS and \
+            not path.startswith(('Applications/Setup.app/', 'Applications/Spotlight.app/'))
     files, manifest = work / 'root.files', work / 'root.manifest'
     sys.argv = ['select-system.py', str(slt), str(files), str(manifest)]
     pick.main()
@@ -415,19 +417,20 @@ SEED_PREFERENCES = {
     'backboardd': CA_FRAMEBUFFER, '.GlobalPreferences': CA_FRAMEBUFFER,
     # CPU-only CoreAnimation (no GPU): Reduce Motion + Reduce Transparency cut most animations and blurs. Settings >
     # Accessibility crashed when opened (rb16), so they are preset here.
-    'com.apple.Accessibility': {'ReduceMotionEnabled': True, 'ReduceMotionReduceSlideTransitionsPreference': True,
+    # rbu140: the GPU draws now, so real motion (unlock/home gestures follow the finger); Reduce Transparency stays (blur is costly)
+    'com.apple.Accessibility': {'ReduceMotionEnabled': False, 'ReduceMotionReduceSlideTransitionsPreference': False,
                                 'EnhancedBackgroundContrastEnabled': True},
 }
 DISABLED_JOBS = (
                  # rbu133u: no cellular/NFC/Siri/iCloud on this tablet; these crash-looped or churned (docs/research/opt/daemons-memory.md)
                  'com.apple.CommCenterMobileHelper', 'com.apple.nfcd', 'com.apple.seld', 'com.apple.seserviced', 'com.apple.MobileInternetSharing', 'com.apple.accessoryupdaterd', 'com.apple.betaenrollmentd', 'com.apple.ap.adprivacyd', 'com.apple.studentd', 'com.apple.tipsd', 'com.apple.financed', 'com.apple.icloud.fmfd', 'com.apple.icloud.fmflocatord', 'com.apple.routined', 'com.apple.suggestd', 'com.apple.triald', 'com.apple.PowerUIAgent', 'com.apple.dataaccess.dataaccessd', 'com.apple.syncdefaultsd', 'com.apple.wifianalyticsd', 'com.apple.transparencyd', 'com.apple.icloudmailagent', 'com.apple.security.cloudkeychainproxy3', 'com.apple.ptpd', 
+                 # rbu140: no Apple ID / iCloud on this tablet
+                 'com.apple.familycircled', 'com.apple.amsaccountsd', 'com.apple.duetexpertd', 'com.apple.remindd', 'com.apple.bird', 
                  'com.apple.watchdogd', 'com.apple.identityservicesd', 'com.apple.locationd', 'com.apple.CommCenter',
                  # iconservicesagent stays enabled: disabled (amethyst's list), every icon on the home screen is a blank
                  # placeholder (rb14f, 2026-11-14). It keeps its cache in the system group container on Data.
                  'com.apple.bluetoothd',
-                 'com.apple.telephonyutilities.callservicesd', 'com.apple.fitcored', 'com.apple.liveactivitiesd',
-                 'com.apple.privacyaccountingd', 'com.apple.ScreenTimeAgent', 'com.apple.dmd', 'com.apple.assistantd',
-                 'com.apple.biomesyncd', 'com.apple.biomed',
+                 'com.apple.telephonyutilities.callservicesd', 'com.apple.fitcored', 'com.apple.privacyaccountingd', 'com.apple.ScreenTimeAgent', 'com.apple.dmd', 'com.apple.assistantd',
                  # ruan rb8s-rb11: crash-loop every few seconds (audiomxd SIGSEGV without audio hardware; searchd/siriactionsd
                  # NSInvalidArgumentException AssetProperties/NSBundle nil; maild killed). amethyst v2->v3: crash-loopers kept
                  # the first UI frame from coming (scripts/log/WORKING-BOOT.md:104-140).
@@ -579,6 +582,9 @@ def main():
         gpu_firmware(tree, manifest)
         if args.overlay:
             overlay(tree, manifest, args.overlay)
+        # HEIC wallpaper layers converted to PNG (docs/research/wallpaper/make-wallpaper-png.py): no hardware HEVC decoder here
+        if os.environ.get('RUAN_WALLPAPER_OVERLAY'):
+            overlay(tree, manifest, Path(os.environ['RUAN_WALLPAPER_OVERLAY']))
     volumes = [f'System={tree},manifest={manifest}']
     if args.data:
         data_tree, data_manifest = data_volume(args.os, slt, args.work)

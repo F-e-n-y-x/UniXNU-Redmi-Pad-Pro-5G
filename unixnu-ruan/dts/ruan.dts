@@ -25,6 +25,15 @@
             label = "cont_splash_region";
         };
     };
+
+    // ruan-wifi=5 (macOS/docs/research/wifi/port, as asteroids.dts): launchd starts wifid only when the device tree has a node named
+    // "wlan" (com.apple.wifid.plist _LimitLoadToDeviceTree). Nothing matches it; RuanWifi.cpp writes the radio's address into its
+    // local-mac-address and /chosen/mac-address-wifi0 (MobileGestalt's WifiAddress). Harmless without ruan-wifi: wifid finds no en0.
+    wlan {
+        compatible = "qcom,wcn6750";
+        unixnu,adt-name = "wlan";
+        status = "okay";
+    };
 };
 
 &cpu0 { unixnu,die-cluster-id = <0>; unixnu,cluster-core-id = <0>; };

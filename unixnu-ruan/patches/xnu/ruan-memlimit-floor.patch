@@ -14,7 +14,7 @@ Off without the boot-arg.
 +
 +	/* ruan: ruan-memlimit-floor=<MB> raises every per-process footprint limit below it (in-process GPU driver memory) */
 +	if (ruan_memlimit_floor < 0) {
-+		int floor_mb = 0;
++		int floor_mb = 512;   /* default 512 MB; ruan-memlimit-floor=0 turns it off */
 +		PE_parse_boot_argn("ruan-memlimit-floor", &floor_mb, sizeof(floor_mb));
 +		ruan_memlimit_floor = floor_mb;
 +	}

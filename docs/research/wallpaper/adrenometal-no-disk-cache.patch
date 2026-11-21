@@ -1,0 +1,25 @@
+ruan: Metal clients (posters, widgets, apps) run Turnip without the Mesa disk cache
+
+The rbu125u CollectionsPoster report: RUNNINGBOARD 0xDEAD10CC (suspended while holding a file lock), thread in flock inside
+libvulkan_freedreno = Mesa's multi-file disk cache writer (src/util/disk_cache_os.c:807, flock LOCK_EX|LOCK_NB on the
+temporary cache file while it writes). backboardd, the render server, keeps the cache; every other process gets
+MESA_SHADER_CACHE_DISABLE=true (src/util/disk_cache_os.c:1033 disk_cache_enabled) before clientDevice() loads Turnip.
+overwrite=0: a value already in the environment wins. Apply from UniXNU/drivers/AdrenoMetal with patch -p1.
+
+--- a/NativeAdrenoMetalPlugin.mm
++++ b/NativeAdrenoMetalPlugin.mm
+@@ -458,7 +458,13 @@
+             return device;
+         }
+ #else
+-        if (!nativeIsRenderServer()) return device = clientDevice(port);
++        if (!nativeIsRenderServer()) {
++            // ruan: no Mesa disk cache outside the render server. Its writer takes flock on cache files (util/disk_cache_os.c:807), and
++            // a poster suspended by RunningBoard while holding it is killed 0xDEAD10CC (rbu125u CollectionsPoster, thread in flock in
++            // libvulkan_freedreno). Set before clientDevice loads Turnip, whose tu_physical_device_init reads it in disk_cache_create.
++            setenv("MESA_SHADER_CACHE_DISABLE", "true", 0);
++            return device = clientDevice(port);
++        }
+ #endif
+         // The discovery releases the accelerator port when it is done; the monitor and the scanout client keep using it.
+         if (void *iokit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW | RTLD_LOCAL)) {

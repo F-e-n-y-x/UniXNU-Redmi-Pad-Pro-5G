@@ -283,13 +283,28 @@ run(void *arg __unused, wait_result_t wr __unused)
 	}
 }
 
+volatile uint32_t ruan_cpufreq_started;   // 1 once the thread runs; USB `cpufreq` reads it
+
+// USB `cpufreq` (UsbDebugCdc.cpp): mode, start state, both domains' live state/vote, hottest big core, capped windows.
+void
+ruan_cpufreq_report(char *out, unsigned len)
+{
+	unsigned s0 = dom[0] ? (dom[0][kState / 4] & 0xff) * 192 / 10 : 0, s1 = dom[1] ? (dom[1][kState / 4] & 0xff) * 192 / 10 : 0;
+	snprintf(out, len, "mode %u started %u d0 %u MHz d1 %u MHz temp %d dC capped %u", mode, ruan_cpufreq_started, s0, s1,
+	    ruan_cpufreq_temp_dc, ruan_cpufreq_capped);
+}
+
 void
 ruan_cpufreq_start(void)
 {
 	thread_t thread;
+	if (ruan_cpufreq_started) {
+		return;
+	}
 	if (!PE_parse_boot_argn("ruan-cpufreq", &mode, sizeof(mode)) || !mode) {
 		return;
 	}
+	ruan_cpufreq_started = 1;
 	if (kernel_thread_start(run, NULL, &thread) == KERN_SUCCESS) {
 		thread_deallocate(thread);
 	}

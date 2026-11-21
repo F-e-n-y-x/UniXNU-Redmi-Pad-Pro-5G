@@ -1,0 +1,60 @@
+diff -ru a/package/BootProgress.c b/package/BootProgress.c
+--- a/package/BootProgress.c	2026-11-21 10:02:03.533553080 +0530
++++ b/package/BootProgress.c	2026-11-21 10:02:03.544343283 +0530
+@@ -910,12 +910,14 @@
+ }
+ 
+ extern void ruan_cpufreq_start(void);   /* package/RuanCpuFreq.c, ruan-cpufreq=<n>; strong: a weak import would not pull it from the archive */
++extern void ruan_wifi_start(void);      /* package/RuanWifiWpss.cpp, ruan-wifi=<1|2|5>; strong for the same reason */
+ 
+ void
+ boot_progress_start(void)
+ {
+ 	thread_t thread;
+ 	ruan_cpufreq_start();
++	ruan_wifi_start();
+ 	extern void ruan_gpu_survey(void);
+ 	ruan_gpu_survey();   /* package/RuanGpuPower.c: ruan-gpu=<1-3> (gpu-dev stage S1), ruan-gpu-survey=1 = mode 1; nothing otherwise */
+ 	if (enabled) {
+diff -ru a/package/UsbDebugCdc.cpp b/package/UsbDebugCdc.cpp
+--- a/package/UsbDebugCdc.cpp	2026-11-21 10:02:03.533311701 +0530
++++ b/package/UsbDebugCdc.cpp	2026-11-21 10:02:03.544128334 +0530
+@@ -13,6 +13,7 @@
+ extern "C" volatile uint32_t native_ufs_dpu_smmu[24] __attribute__((weak_import));
+ extern "C" volatile uint32_t native_ufs_dpu_check[8] __attribute__((weak_import));
+ extern "C" void ruan_cpufreq_report(char *, unsigned) __attribute__((weak_import));   // RuanCpuFreq.c, USB `cpufreq`
++extern "C" void ruan_wifi_report(char *, unsigned) __attribute__((weak_import));      // RuanWifiWpss.cpp, USB `wifi`
+ extern "C" volatile uint32_t native_legacy_direct[14] __attribute__((weak_import));   // NativeLegacyDisplay direct-scanout counters
+ #include <IOKit/IOMemoryDescriptor.h>
+ #include <IOKit/IOBufferMemoryDescriptor.h>
+@@ -793,6 +794,11 @@
+         if (&ruan_cpufreq_report) ruan_cpufreq_report(row, sizeof(row));
+         snprintf(buf, sizeof(buf), "[usb] CPUFREQ: %s\r\n", row);
+         s.reply.writeStr(buf);
++    } else if (strEq(raw, "wifi")) {
++        char row[480] = "not linked";
++        if (&ruan_wifi_report) ruan_wifi_report(row, sizeof(row));
++        snprintf(buf, sizeof(buf), "[usb] WIFI: %.470s\r\n", row);
++        s.reply.writeStr(buf);
+     } else if (strEq(raw, "dpu.flip")) {
+         // Step b (docs/research/dpu-scanout-sm7435.md): point VIG0 at our own buffer (colour bars, below 4 GiB, contiguous) for
+         // 3 s, then back to the boot buffer. Shows whether the display can scan out a buffer we own without a copy.
+diff -ru a/scripts/build-ram-root-probe.py b/scripts/build-ram-root-probe.py
+--- a/scripts/build-ram-root-probe.py	2026-11-21 10:02:03.534729747 +0530
++++ b/scripts/build-ram-root-probe.py	2026-11-21 10:02:03.544415753 +0530
+@@ -193,8 +193,13 @@
+            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanGpuPower.c', OUT / 'RuanGpuPower.o'),
+            # HFI queue table for gpu 6 (UniXNU kits/AdrenoFirmware/AdrenoHfi.c, copied into package/)
+            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/AdrenoHfi.c', OUT / 'AdrenoHfi.o'),
+-           # Qualcomm WCN6750 Wi-Fi subsystem (icnss2 / ath11k & 12M MSA)
+-           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanWifiProbe.c', OUT / 'RuanWifiProbe.o'),
++           # ruan-wifi=1|2: the WPSS (docs/research/wifi/plan.md stage 1). WpssProbe.cpp, the Qcom* helpers, AdspFirmware.c and FatVolume.c
++           # are filipnavara/UniXNU-asteroids 9f07af3's (WpssProbe with docs/research/wifi/draft/WpssProbe-ruan.patch); RuanWifiWpss.cpp is the host.
++           compile_cxx_like('iokit/DEVELOPMENT/IOPlatformExpert.cpo.json', DEVICE / 'package/RuanWifiWpss.cpp', OUT / 'RuanWifiWpss.o'),
++           compile_cxx_like('iokit/DEVELOPMENT/IOPlatformExpert.cpo.json', DEVICE / 'package/WpssProbe.cpp', OUT / 'WpssProbe.o'),
++           *[compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / f'package/{n}.c', OUT / f'{n}.o')
++             for n in ('QcomGlink', 'QcomMdt', 'QcomQmp', 'QcomQrtr', 'QcomRpmh', 'QcomSmem', 'QcomSmp2p', 'FatVolume')],
++           compile_like('bsd/DEVELOPMENT/kern_exec.o.json', DEVICE / 'package/AdspFirmware.c', OUT / 'AdspFirmware.o'),
+            # Qualcomm LPASS Quad WSA883x Smart Amplifiers Audio subsystem
+            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanAudioProbe.c', OUT / 'RuanAudioProbe.o')]
+ archive = OUT / 'libRamRootProbe.a'

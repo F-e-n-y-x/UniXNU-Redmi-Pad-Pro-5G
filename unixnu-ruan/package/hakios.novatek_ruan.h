@@ -58,6 +58,66 @@ nvt_edge_seen(void)
 	}
 	return false;
 }
+
+/* touch_irq=1: a real interrupt. All TLMM pins share the summary line, SPI 208 level high (pinctrl@f000000 interrupts =
+ * <0 0xd0 4>), INTID 240. Linux on ruan takes GPIO 54 through the PDC instead (parrot_pdc_map {54, 94} -> SPI 609), but
+ * the summary path is the one sheng's TouchProbe.cpp uses with ArmCpu's armcpu_spi_share, and needs no PDC writes.
+ * INTR_CFG (pinctrl-parrot.h PINGROUP): enable 0, polarity 1, detection 3:2, raw status 4, target 7:5 (3 = apps).
+ * Rising edge, as ruan's vendor driver requests it (nt36xxx.h INT_TRIGGER_TYPE), whatever the DT cell says. */
+extern int armcpu_spi_share(uint32_t, void (*)(void *), void *) __attribute__((weak_import));
+extern kern_return_t clear_wait(thread_t thread, wait_result_t result);
+extern kern_return_t thread_wakeup_prim(event_t event, boolean_t one_thread, wait_result_t result);
+#define NVT_TLMM_SUMMARY_INTID  (32 + 208)
+
+static volatile uint32_t nvt_irq_events, nvt_irq_spurious;
+static volatile uint64_t nvt_irq_at;    /* mach_absolute_time of the last interrupt, for the latency numbers */
+
+static void
+nvt_irq(__unused void *context)
+{
+	if (!(rd(NVT_INTR_STATUS) & 1)) {
+		nvt_irq_spurious = nvt_irq_spurious + 1;       /* another pin's summary interrupt */
+		return;
+	}
+	wr(NVT_INTR_STATUS, 0);
+	nvt_irq_at = mach_absolute_time();
+	__atomic_fetch_add(&nvt_irq_events, 1, __ATOMIC_RELEASE);
+	thread_wakeup_prim((event_t)&nvt_irq_events, FALSE, THREAD_AWAKENED);
+}
+
+/* Returns 0 once the line is attached; else the attach result (retried by the caller: the GIC may not be up yet). */
+static int
+nvt_irq_arm(void)
+{
+	if (!armcpu_spi_share) {
+		return -1;
+	}
+	uint32_t cfg = rd(NVT_INTR_CFG) & ~0xffu;
+	cfg |= (3u << 5) | (1u << 4) | (1u << 2) | (1u << 1);  /* apps, raw status, rising edge, polarity high; enable last */
+	wr(NVT_INTR_CFG, cfg);
+	wr(NVT_INTR_STATUS, 0);
+	__asm__ volatile ("dsb sy" ::: "memory");
+	int rc = armcpu_spi_share(NVT_TLMM_SUMMARY_INTID, nvt_irq, NULL);
+	if (rc == 0) {
+		wr(NVT_INTR_CFG, cfg | 1u);
+	}
+	return rc;
+}
+
+/* Sleeps until an interrupt newer than `seen`, or `ms` pass. */
+static void
+nvt_irq_wait(uint32_t seen, uint32_t ms)
+{
+	uint64_t deadline;
+
+	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
+	assert_wait_deadline_with_leeway((event_t)&nvt_irq_events, THREAD_UNINT, TIMEOUT_URGENCY_SYS_CRITICAL, deadline, 0);
+	if (__atomic_load_n(&nvt_irq_events, __ATOMIC_ACQUIRE) != seen) {
+		clear_wait(current_thread(), THREAD_AWAKENED);  /* it came between the caller's look and the assert */
+		return;
+	}
+	thread_block(THREAD_CONTINUE_NULL);
+}
 static uint16_t nvt_max_x = 1600, nvt_max_y = 2560;
 
 static void
@@ -380,6 +440,20 @@ novatek_probe(bool verbose)
 	return true;
 }
 
+/* touch_active=1: Xiaomi's Touch_Active_MODE (ruan nt36xxx.c nvt_set_cur_value -> nvt_xiaomi_write_reg(0x7A, 1)): the
+ * bytes 0x7A, 0x01 at EVENT_BUF + 0x50. The vendor sends it only while a game asks; it is lost on a firmware reload. */
+static bool nvt_active;
+
+static void
+nvt_send_active(void)
+{
+	static const uint8_t cmd[2] = { 0x7a, 0x01 };
+
+	if (nvt_active) {
+		nvt_log("active mode write ok, ", nvt_write(NVT_EVENT_BUF + NVT_EV_HOST_CMD, cmd, sizeof cmd), 0);
+	}
+}
+
 /* ---- points ---- */
 
 static void
@@ -416,6 +490,7 @@ novatek_poll(void)
 			nvt_log("firmware reset itself (0xFD): recovery#, at poll", recoveries, polls);
 			if (nvt_download()) {
 				sleep_ms(50);
+				nvt_send_active();
 			}
 		}
 		return;
