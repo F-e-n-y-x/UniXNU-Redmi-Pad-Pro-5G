@@ -13,12 +13,15 @@
 
 > **Branches:** `agy-15-11-26` (this one) is the **iPadOS build**. `macos` is the **macOS build** for the same tablet.
 > Experimental research software: it boots a real Apple OS on non-Apple hardware. Back up your device first.
+>
+> **Want to try it?** Read [Install and setup](#install-and-setup) first: it wipes Android user data, and you need your own iPadOS IPSW.
 
 ## Contents
 
 - [What works](#what-works)
 - [How it works](#how-it-works)
-- [Quick start](#quick-start)
+- [Install and setup](#install-and-setup)
+- [Quick start](#quick-start) (maintainers)
 - [Debugging](#debugging)
 - [Project layout](#project-layout)
 - [Roadmap](#roadmap)
@@ -79,19 +82,244 @@ Android bootloader ──fastboot boot──▶ UEFI (Mu) ──▶ DarwinBoot �
 - **Display:** frames go straight from the GPU's memory to the panel. The display engine reads them through its own SMMU window, so the CPU copies nothing.
 - **Boot:** only RAM boots (`fastboot boot`). Android's partitions are untouched, apart from the shrunk `userdata` and the new `unixnu` partition.
 
+## Install and setup
+
+> [!CAUTION]
+> **Experimental research software. Use it entirely at your own risk.** There is no warranty and no support.
+> - It can brick your tablet or leave it unbootable. Recovery may need Xiaomi's flashing tools or a service centre.
+> - Unlocking the bootloader and repartitioning void your warranty.
+> - **Step 1 wipes all Android user data** (apps, photos, accounts). Back up first.
+> - You need **your own, legally obtained iPadOS 17.7.11 IPSW** and an iOS SDK you are allowed to use. This project
+>   distributes **no Apple software and no Qualcomm or Xiaomi firmware**. Everything proprietary is built on your PC, from
+>   your own copies and your own tablet's stock firmware, and must not be redistributed.
+> - Only the Redmi Pad Pro 5G (`ruan`, SM7435) is supported. The numbers below are for the 8 GB / 256 GB model; read your own.
+
+Only `userdata` (shrunk) and the new `unixnu` partition change. The kernel is RAM-booted with `fastboot boot` every time, so
+Android's boot partitions are never written and Android still boots normally.
+
+### 0. Requirements
+
+- **Tablet:** unlocked bootloader; root (Magisk) for the partitioning step; a good USB cable (bad cables drop data).
+- **Linux build host, x86-64**, with: `git`, `python3`, `7z` (p7zip), `mkfs.vfat` (dosfstools), `mcopy` (mtools),
+  `sgdisk` (gdisk), `losetup`, `sha256sum`, `fastboot` and `adb` (android-tools). The GPU stack also needs `clang`, `lld`,
+  `llvm-strip`, `rustup` with the `aarch64-apple-ios` target, and theos `ldid`.
+- **[UniXNU](https://github.com/UniXNU)** checked out with its Linux toolchain (the scripts put `/opt/unixnu-linux/bin` on `PATH`)
+  and its own prerequisites (see UniXNU's `docs/building.md`). UniXNU's `fetch` step fetches the iPadOS 17.7.11 (**21H461**)
+  IPSW into `out/ipsw/21H461/`.
+- **An iOS 17.5 SDK** for the Metal plugin (`UNIXNU_SDKROOT=`), obtained by you.
+- **Mu-Silicium UEFI for ruan** (`uefi/`): `uefi/Binaries/ruan` is generated from **your tablet's own** stock `uefi_a`
+  partition with `tools/regen-binaries.sh` (not shipped), then `uefi/build-ruan.sh <Mu-Silicium checkout>`. The build packs the
+  firmware volume with the USB receiver, `SILICIUM_UEFI-log.fd`, kept in `<work>/ramroot/` (an older FD refuses current roots).
+- **Disk space:** about 50 GB free. The IPSW cache is about 8 GB, the root work tree about 4 GB, and a root output directory
+  up to 16 GB (the partition image alone is 6–10 GB).
+
+**Layout.** The scripts expect one work directory, called `<work>` here, set in the `W=` line at the top of
+`unixnu-ruan/scripts/build-ramroot.sh` and `make-ufs-board.sh` (and the `sys.path` line in `make-ufs-root.py`). Change
+those lines to your path, or use the same one. Inside it:
+
+| Path | What |
+|---|---|
+| `<work>/UniXNU` | UniXNU checkout (`./unixnu fetch` once) |
+| `<work>/UniXNU-ruan` | this repository's `macOS/unixnu-ruan/` (copy or symlink) |
+| `<work>/uefi-ruan` | Mu-Silicium ruan checkout (also `MU=` for `mkxnuimg-ruan.py`) |
+| `<work>/ramroot/SILICIUM_UEFI-log.fd` | the UEFI firmware volume (`FD=` overrides) |
+| `<work>/unique-chip-id.txt` | any hex value: the device tree's platform seed (`--unique-chip-id`) |
+
+Set `MKXNUIMG=<repo>/macOS/uefi/mkxnuimg-ruan.py` when you run the build.
+
+### 1. Partition the UFS (wipes Android data)
+
+The partition table of UFS LUN 0 (`/dev/block/sda`, **4096-byte sectors**) changes like this, on our 256 GB tablet:
+
+| # | Name | Before | After |
+|---|---|---|---|
+| 21 | `userdata` | the rest of the disk | `3514920`–`22147071` (71 GiB), **same type and unique GUID** |
+| 22 | `unixnu` | (none) | `22147072`–`30535674` (32 GiB): the iPadOS root and the persistent Data store |
+
+The root image needs at least 6 GiB and the persistent Data store starts about 16 GB into `unixnu`, so use 32 GiB. Android
+finds `userdata` by name and GUID, which is why both stay the same.
+
+**a. Back up both GPT copies** (rooted Android over `adb`). Write down the disk size, and keep these files safe: they are your
+only way back.
+
+```bash
+adb shell su -c 'cat /sys/block/sda/queue/logical_block_size'      # must print 4096
+adb shell su -c 'blockdev --getsize64 /dev/block/sda'             # BYTES. N = BYTES / 4096; type the number for $((N-6)) below
+adb shell su -c 'dd if=/dev/block/sda of=/sdcard/sda-primary.orig.bin bs=4096 count=6'
+adb shell su -c 'dd if=/dev/block/sda of=/sdcard/sda-backup-tail.orig.bin bs=4096 skip=$((N-6)) count=6'   # put your N in
+adb pull /sdcard/sda-primary.orig.bin; adb pull /sdcard/sda-backup-tail.orig.bin
+```
+
+**b. Edit the table on the PC**, on a sparse copy of the disk that holds only the two GPTs:
+
+```bash
+truncate -s <BYTES> disk.img
+dd if=sda-primary.orig.bin of=disk.img conv=notrunc
+dd if=sda-backup-tail.orig.bin of=disk.img bs=4096 seek=$((N-6)) conv=notrunc
+L=$(sudo losetup --sector-size 4096 -f --show disk.img)
+sudo sgdisk --backup=sda-gpt-sgdisk.bak $L      # a third backup, in sgdisk's format
+sudo sgdisk -p $L; sudo sgdisk -i 21 $L         # check: entry 21 is userdata; note its first LBA, type GUID and unique GUID
+```
+
+Pick `unixnu`'s first LBA `S` = last usable LBA − 0x800000 + 1, rounded **up** to a multiple of 4096 sectors. On a 256 GB
+tablet that gives `S = 22147072` and a last usable LBA of `30535674`. Then:
+
+```bash
+sudo sgdisk -d 21 -n 21:<userdata first LBA>:$((S-1)) -t 21:<type GUID> -u 21:<unique GUID> -c 21:userdata \
+            -n 22:$S:<last usable LBA> -c 22:unixnu $L
+sudo sgdisk -v $L; sudo sgdisk -p $L
+dd if=disk.img of=sda-primary.new.bin bs=4096 count=6
+dd if=disk.img of=sda-backup-tail.new.bin bs=4096 skip=$((N-6)) count=6
+sudo losetup -d $L
+```
+
+**c. Write the new table**, then read it back and compare checksums before rebooting:
+
+```bash
+adb push sda-primary.new.bin sda-backup-tail.new.bin /sdcard/
+adb shell su -c 'dd if=/sdcard/sda-primary.new.bin of=/dev/block/sda bs=4096 count=6 conv=fsync'
+adb shell su -c 'dd if=/sdcard/sda-backup-tail.new.bin of=/dev/block/sda bs=4096 seek=$((N-6)) count=6 conv=fsync'
+adb shell su -c 'dd if=/dev/block/sda bs=4096 count=6 | sha256sum'           # must match sha256sum sda-primary.new.bin
+```
+
+**d. Reformat Android's data:** reboot to recovery and wipe / format Data. Android's old file system is larger than the
+shrunk partition and will not mount until it is recreated. Android then starts like new.
+
+### 2. Build
+
+All commands run from `<work>/UniXNU-ruan`. `<t>` is any build tag you choose. Every output lands in `OUT`.
+
+**a. GPU userland overlay** (Turnip, AdrenoMetal and the smoke tool, signed ad hoc, with their CDHashes for the trust bundle):
+
+```bash
+python3 scripts/build-turnip-smoke.py
+UNIXNU_SDKROOT=<iOS 17.5 SDK> python3 scripts/build-metal-plugin.py <work>/overlay
+# optional, Wi-Fi joining (ruan-wifi=5): python3 scripts/build-wifi-userspace.py <out> --into <work>/overlay
+```
+
+**b. The root.** This builds the full OS + SystemOS root from the IPSW, with the overlay and a Data tree. The same run also
+produces a RAM kernel and payload you don't need. Then pack it into the `unixnu` partition image:
+
+```bash
+RUAN_FULL_ROOT=1 OVERLAY=<work>/overlay DATA_CONTAINER=1 REBUILD_ROOT=1 TAG=<t>root OUT=<work>/out-<t>root \
+  KERNEL_ARGS="boot-progress=1" scripts/build-ramroot.sh usb
+cd <work>/out-<t>root
+python3 <work>/UniXNU-ruan/scripts/make-ufs-root.py root-usb.apfs $(cat root-usb.split) \
+  <work>/UniXNU/out/ipsw/21H461/044-76034-038.dmg unixnu-root.img
+cd -
+```
+
+`make-ufs-root.py` prints the root volume UUID and the image size. The image is raw; `fastboot` sparses it itself.
+
+**c. Kernel, Data seed and boot image.** `UFS=1` generates the UFS board (`make-ufs-board.sh`: ShengUfs driver,
+`patches/xnu/ufs-own-root.series`) and builds the kernel. `PERSIST=1` packs a 16 GiB Data seed into the payload, whose changed
+pages are stored at the end of `unixnu`. For the **first** build of a seed add `PERSIST_RESET=1` (or `2` to run Setup), and
+never boot that image twice: every boot of it wipes Data.
+
+```bash
+UFS=1 PERSIST=1 PERSIST_RESET=1 UFS_ROOT=<work>/out-<t>root REBUILD_ROOT=1 TAG=<t>u OUT=<work>/out-<t>u \
+  KERNEL_ARGS="boot-progress=1 smp-gic=1 cpus=8 smp=1 launchd_disable_all_timeouts=1 armcpu-edge=1 gpu-fence-wake=0 gpu-prime=0 gpu-prime-system=0" \
+  scripts/build-ramroot.sh usb
+```
+
+Later builds use the same command without `PERSIST_RESET` and with a new tag. Add `REBUILD_KERNEL=` (empty) to change only
+boot arguments: that rebuilds just the boot image. Check the printed `kernel_args` before you boot.
+
+What the boot image is: UniXNU's payload (kernel, device tree, trust caches, Data seed) is repacked as a **58 MiB FAT inside
+an `XNUP` container**, behind a BootShim and the UEFI FD, in an Android boot image (`ruan-ramroot-usb-<t>u.img`). The stock
+bootloader (ABL) accepts about 62 MB for `fastboot boot`, so the FAT stays at 58 MiB (60.8 MB). The build stops if the root
+does not fit DarwinBoot's 2.75 GiB memory window.
+
+#### Boot arguments
+
+UniXNU caps the kernel command line at **1000 bytes**, and the build adds about 490 of them (UFS, Data and board arguments).
+ruan's fixed settings therefore sit in the kernel as **built-in defaults** (`patches/xnu/ruan-default-bootargs.patch`). The
+command line always wins over them, but userland (launchd) only sees the real command line. Useful knobs:
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `dpu-scanout=2` | built in | Zero-copy scanout: the display engine reads the GPU's frames. `0` falls back to CPU copies |
+| `ruan-bl-svc=1` | on | The AppleARMBacklight-conforming backlight service. `0` is the old path, which brings back the 5 s frame stall |
+| `ruan-bl-mirror=1` | on | Also drives the second backlight chip (the other half of the LED strings). `0` leaves it at the boot level |
+| `ruan-120hz=1` / `=2` | off | `1` switches the panel to 120 Hz (checked, reverted if the measured rate is wrong); `2` only reads and checks |
+| `ruan-wifi=0..5` | off | Wi-Fi stages: `3` firmware ready (radio off), `4` radio on + self-test scan, `5` also brings up `en0` (needs the step 2a Wi-Fi overlay and `no-lc=1`) |
+| `no-lc=1` | off | Skips launch constraints, so the overlay's ad-hoc binaries can start |
+| `ruan-gpu=18`, `ruan-gpu-perf`, `ruan-gpu-dcvs`, `ruan-gpu-irq` | built in | Adreno power-up, clock levels, governor, interrupts. `ruan-gpu-max-level=N` lowers the clock ceiling (default 9 = 940 MHz) |
+| `gpu-prime=0`, `gpu-prime-system=0` | | Turn off background shader-cache priming |
+| `boot-progress=1` | | The on-screen boot page and banner |
+
+Never pass `cs_enforcement_disable=1` (the kernel panics) or `-v` (backboardd never presents).
+
+### 3. Flash the root and boot
+
+Put the tablet in fastboot (Power + Volume down). This is the **only** flash, and only to `unixnu`. Never flash anything to
+`userdata`, `boot` or any other partition.
+
+```bash
+fastboot flash unixnu <work>/out-<t>root/unixnu-root.img      # 6-10 GB, takes a while
+fastboot boot <work>/out-<t>u/ruan-ramroot-usb-<t>u.img        # RAM only
+```
+
+With `PERSIST=1` nothing more is sent. (Builds without `PERSIST` want their Data over USB once DarwinBoot's receiver shows
+up: `fastboot stage <out>/data-usb.apfs` then `fastboot continue`.) Re-flash `unixnu` only when the root changes. Kernel or
+argument changes need only a new `fastboot boot`.
+
+### 4. First boot
+
+- The boot page (`boot-progress=1`) steps through KERNEL … SPRINGBRD. Expect the lock screen after a few minutes. The first
+  boot of a fresh Data is the slowest, because every shader compiles cold.
+- A few boots reset by themselves after launchd. Just boot again.
+- The kernel's USB debug port enumerates as a serial device (`1209:0001`, `/dev/ttyACM*`). Use `tools/ruan-usbdbg.py`
+  (Python standard library only; one client at a time):
+
+| Command | What it shows |
+|---|---|
+| `cmd info` | Uptime and status lines, plus the saved log of the previous boot |
+| `cmd bootargs` | The command line the kernel got |
+| `cmd display` | Frame pacing (`PACING`, `SUBMIT-MS`) and the display state |
+| `cmd backlight` / `cmd backlight N` | Backlight chip state; set the brightness (16–4095) |
+| `cmd wifi` | Wi-Fi stage and status |
+| `cmd panel120` | 120 Hz switch result (`0x120` switched, `0x60` dry run ok, negative = refused step) |
+| `cmd cpufreq` | CPU cluster frequencies and governor |
+| `shot -o screen.png` | Screenshot of the panel |
+| `dmesg -o dmesg.txt` | The whole kernel log |
+| `pull-crashes -d crashes` | Every iOS crash report (`.ips`) |
+| `reboot-fastboot` / `reboot` | Back to fastboot / a normal (Android) boot |
+
+### 5. Back to Android, and undo
+
+- **Back to Android:** `ruan-usbdbg.py reboot`, or force a restart. Android boots normally, because
+  nothing it boots from was changed. Run `ruan-usbdbg.py reboot-fastboot` to get to fastboot for the next iPadOS boot.
+- **Undo the partitioning:** with rooted Android (or recovery), write the original tables back, then format Data again:
+
+```bash
+adb push sda-primary.orig.bin sda-backup-tail.orig.bin /sdcard/
+adb shell su -c 'dd if=/sdcard/sda-primary.orig.bin of=/dev/block/sda bs=4096 count=6 conv=fsync'
+adb shell su -c 'dd if=/sdcard/sda-backup-tail.orig.bin of=/dev/block/sda bs=4096 seek=$((N-6)) count=6 conv=fsync'
+# alternative from a recovery with sgdisk: sgdisk --load-backup=sda-gpt-sgdisk.bak /dev/block/sda
+```
+
+Reboot to recovery and format Data. `userdata` then spans the whole disk again, and the iPadOS root is gone.
+
+### 6. Known issues
+
+See [What works](#what-works). In short: SpringBoard sometimes resprings; Turnip has an alignment fault (SIGBUS) in some GPU
+writes; closing apps can take over 5 s; widgets and app snapshots draw as blank boxes; 120 Hz and Wi-Fi are still being
+tested; audio, cameras, sensors, cellular and Bluetooth do not work. A device left idle must not sleep (`noidle=1` is built in).
+
 ## Quick start
 
-Requirements: Linux host, `fastboot`, a USB cable, the UniXNU work tree at `/root/unixnu-work`, the iPadOS 17.7.11 (21H461) IPSW (UniXNU downloads it).
+Requirements: Linux host, `fastboot`, a USB cable, the UniXNU work tree at `<work>`, the iPadOS 17.7.11 (21H461) IPSW (UniXNU downloads it).
 
 ```bash
 # 1. Build the root image, flash it to the unixnu partition, build and RAM-boot the kernel (tablet in fastboot)
-/root/unixnu-work/cycle-root.sh rbu140          # boot arguments: /root/unixnu-work/args-current.txt
+<work>/cycle-root.sh rbu140          # boot arguments: <work>/args-current.txt
 
 # 2. Kernel or boot-argument change only (root already flashed)
-RAMROOT=/root/unixnu-work/ramroot WORK=/root/unixnu-work/ramroot/work-full UFS=1 \
-UFS_ROOT=/root/unixnu-work/tr/out-rbu137root REBUILD_KERNEL=1 TAG=rbu140u OUT=/root/unixnu-work/tr/out-rbu140u \
-KERNEL_ARGS="$(cat /root/unixnu-work/args-current.txt)" unixnu-ruan/scripts/build-ramroot.sh usb
-/root/unixnu-work/boot-local.sh rbu140u
+RAMROOT=<work>/ramroot WORK=<work>/ramroot/work-full UFS=1 \
+UFS_ROOT=<work>/tr/out-rbu137root REBUILD_KERNEL=1 TAG=rbu140u OUT=<work>/tr/out-rbu140u \
+KERNEL_ARGS="$(cat <work>/args-current.txt)" unixnu-ruan/scripts/build-ramroot.sh usb
+<work>/boot-local.sh rbu140u
 ```
 
 The kernel command line is limited to 1000 bytes, and the build adds about 490 of them.

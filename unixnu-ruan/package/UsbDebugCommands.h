@@ -133,6 +133,8 @@ static bool usbCaptureAndQueueGsc1(UsbScreenState &sc, UsbReplyRing &reply, bool
         return false;
     }
 
+    // Zero-copy scanout (dpu-scanout=2): the panel shows a GPU surface, not the boot memory; copy that surface in first.
+    if (&native_legacy_direct_snapshot) native_legacy_direct_snapshot();
     // Invalidate/flush CPU dcache for GOP framebuffer so GPU DMA blits in DRAM are read cleanly
     if (native_legacy_gop_virtual && native_legacy_gop_bytes) {
         flush_dcache64((uint64_t)native_legacy_gop_virtual, (unsigned)native_legacy_gop_bytes, 0);

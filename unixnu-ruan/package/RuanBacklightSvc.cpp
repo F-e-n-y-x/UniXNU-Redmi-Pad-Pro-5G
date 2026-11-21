@@ -31,6 +31,7 @@
 // [10] interrupts, [12] interrupt mode (0 polling, 1 attached, else the attach result), [13] transfer timeouts, [14] attach tries,
 // [15] transfers done
 extern "C" {volatile int32_t ruan_bl_svc_stats[16];}
+extern "C" void ruan_bl_mirror_level(uint32_t);
 extern "C" int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint32_t *, uint64_t *) __attribute__((weak_import));
 
 namespace {
@@ -108,6 +109,7 @@ class RuanBacklightSvc : public IOService {
         else if (!published) {step = StepNone; return;}
         else if (written != (int32_t)hwLevel(target)) {
             sendingLevel = target; sending = hwLevel(target); step = StepWriteLsb;
+            ruan_bl_mirror_level(sending);   // the second SY7758 (RuanBacklight.cpp): the other half of the LED strings
             rc = geni_i2c_start_write(&bus, kBrtL, (uint8_t)(sending & 0xff));   // low then high, as sy7758.c
         }
         else if (!ctlDone) {step = StepWriteCtl; rc = geni_i2c_start_write(&bus, kDevCtl, kDevCtlRegisterMode);}
@@ -302,10 +304,19 @@ class RuanBacklightSvc : public IOService {
                 value->release();
             }
         }
-        OSDictionary *calibration = OSDictionary::withCapacity(6);
+        OSDictionary *calibration = OSDictionary::withCapacity(9);
         if (!calibration) return;
         const struct {const char *key; uint32_t nits;} fields[] = {{"lMinProduct", kMinNits}, {"lMidProduct", kMidNits}, {"lMaxProduct", kMaxNits},
                                                                    {"lMinPanel", kMinNits}, {"lMidPanel", kMidNits}, {"lMaxPanel", kMaxNits}};
+        // CoreBrightness dereferences every calibration number (rbu169p: backboardd SIGSEGV in CFNumberGetValue from CoreBrightness
+        // once the service conformed). The three current fields stay 0, as UniXNU's pclm10 T733 backlight publishes them.
+        static const char *const kCurrentKeys[] = {"current-for-max-backlight", "current-for-mid-backlight", "hardware-max-current-limit"};
+        for (const char *key : kCurrentKeys) {
+            if (OSNumber *zero = OSNumber::withNumber(0ULL, 32)) {
+                calibration->setObject(key, zero);
+                zero->release();
+            }
+        }
         for (const auto &field : fields) {
             if (OSNumber *number = OSNumber::withNumber((uint64_t)field.nits << 16, 32)) {
                 calibration->setObject(field.key, number);
