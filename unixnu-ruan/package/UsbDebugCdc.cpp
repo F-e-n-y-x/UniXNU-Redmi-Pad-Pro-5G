@@ -13,6 +13,11 @@ extern "C" volatile uint32_t native_ufs_dpu_state __attribute__((weak_import));
 extern "C" volatile uint32_t native_ufs_dpu_smmu[24] __attribute__((weak_import));
 extern "C" volatile uint32_t native_ufs_dpu_check[8] __attribute__((weak_import));
 extern "C" void ruan_cpufreq_report(char *, unsigned) __attribute__((weak_import));
+// patches/xnu/ruan-idle-wfi.patch and RuanInput.c: idle mode, WFIs per CPU, display power state (USB `cpu`, power/plan.md)
+extern "C" uint32_t ruan_idle_wfi_us __attribute__((weak_import)), ruan_idle_wfi_sleep_us __attribute__((weak_import));
+extern "C" uint64_t ruan_idle_wfi_count[8] __attribute__((weak_import));
+extern "C" volatile uint32_t ruan_screen_off __attribute__((weak_import)), ruan_sleeping __attribute__((weak_import)),
+    ruan_screen_changes __attribute__((weak_import));
 extern "C" unsigned armcpu_stats_row(unsigned, char *, unsigned) __attribute__((weak_import));   // ArmCpu.cpp, USB `cpu` (per-core rows need diag=1)   // RuanCpuFreq.c, USB `cpufreq`
 extern "C" volatile uint32_t native_legacy_direct[14] __attribute__((weak_import));   // NativeLegacyDisplay direct-scanout counters
 #include <IOKit/IOMemoryDescriptor.h>
@@ -38,7 +43,8 @@ extern "C" char ruan_bl_mirror_status[96] __attribute__((weak_import));
 extern "C" volatile uint32_t ruan_touch_multi __attribute__((weak_import));   // RuanInput.c / novatek: multi-finger reports
 extern "C" volatile uint32_t ruan_touch_maxfingers __attribute__((weak_import));
 extern "C" volatile uint32_t ruan_touch_lastmulti[4] __attribute__((weak_import));
-extern "C" volatile int32_t ruan_panel120_stats[32] __attribute__((weak_import));   // RuanPanel120.c, USB `panel120`   // RuanBacklight.cpp, the second SY7758
+extern "C" volatile uint32_t focaltech_heartbeats __attribute__((weak_import));   // RuanTouch.c: resting-finger heartbeat posts
+extern "C" volatile int32_t ruan_panel120_stats[36] __attribute__((weak_import));   // RuanPanel120.c, USB `panel120`   // RuanBacklight.cpp, the second SY7758
 
 extern "C" {
 #include "SmmuBypass.h"
@@ -89,6 +95,8 @@ extern volatile uint64_t native_legacy_vsync_events[6] __attribute__((weak_impor
 extern volatile uint32_t ruan_touch_events __attribute__((weak_import));
 extern volatile uint32_t ruan_button_events __attribute__((weak_import));
 extern char ruan_input_row[96] __attribute__((weak_import));
+extern char ruan_buttons_row[96] __attribute__((weak_import));
+extern volatile uint32_t ruan_key_presses[3] __attribute__((weak_import));
 extern "C" void hakios_touch_post(uint32_t, uint32_t, uint32_t, uint32_t) __attribute__((weak_import));
 
 // package/BootReset.c: probe the PMIC reboot-reason cell; write "bootloader" into it and read it back.
@@ -98,6 +106,10 @@ extern struct msgbuf *msgbufp;   // bsd/kern/subr_log.c (XNU_KERNEL_PRIVATE in s
 extern const char *ruan_wifi_status_str(void) __attribute__((weak_import));
 extern unsigned ruan_wifi_log(unsigned i, char *out, unsigned len) __attribute__((weak_import));   // RuanWifiWpss.cpp, USB `wifi.log`
 extern const char *ruan_audio_status_str(void) __attribute__((weak_import));
+extern "C" const char *ruan_bt_status_str(void) __attribute__((weak_import));                      // RuanBluetooth.cpp, USB `bt`
+extern "C" unsigned ruan_bt_log(unsigned i, char *out, unsigned len) __attribute__((weak_import));   // RuanBluetooth.cpp, USB `bt.log`
+extern const char *ruan_video_status_str(void) __attribute__((weak_import));                      // RuanVideo.cpp, USB `video`
+extern unsigned ruan_video_log(unsigned i, char *out, unsigned len) __attribute__((weak_import));  // RuanVideo.cpp, USB `video.log`
 
 // The boot-progress banner prints this (package/BootProgress.c defines it weak; this definition wins when linked).
 char ruan_usb_short[48] = "usb: off";
@@ -543,7 +555,7 @@ static void handleCommand(TerminalSession &s, const char *raw) {
     if (strEq(raw, "ping")) {
         s.reply.writeStr("[usb] PONG ruan\r\n");
     } else if (strEq(raw, "features") || strEq(raw, "help")) {
-        s.reply.writeStr("FEATURES: ping status bootargs display usb touch battery wifi wifi.log audio replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg gpu\r\n");
+        s.reply.writeStr("FEATURES: ping status bootargs display usb touch battery wifi wifi.log bt bt.log video video.log audio replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg gpu\r\n");
     } else if (strEq(raw, "wifi") || strEq(raw, "wlan")) {
         if (&ruan_wifi_status_str && ruan_wifi_status_str) {
             snprintf(buf, sizeof(buf), "[usb] WIFI: %s\r\n", ruan_wifi_status_str());
@@ -556,6 +568,20 @@ static void handleCommand(TerminalSession &s, const char *raw) {
         unsigned i = 0;
         for (; &ruan_wifi_log && ruan_wifi_log(i, buf, sizeof(buf)); ++i) s.reply.writeStr(buf);
         if (!i) s.reply.writeStr("[usb] WIFI.LOG: not linked\r\n");
+    } else if (strEq(raw, "bt") || strEq(raw, "bluetooth")) {
+        snprintf(buf, sizeof(buf), "[usb] BT: %s\r\n", &ruan_bt_status_str ? ruan_bt_status_str() : "driver not linked");
+        s.reply.writeStr(buf);
+    } else if (strEq(raw, "bt.log")) {
+        unsigned i = 0;   // the last 32 lines: survey, DMA slot, power results, controller log
+        for (; &ruan_bt_log && ruan_bt_log(i, buf, sizeof(buf)); ++i) s.reply.writeStr(buf);
+        if (!i) s.reply.writeStr("[usb] BT.LOG: empty or not linked\r\n");
+    } else if (strEq(raw, "video") || strEq(raw, "vpu")) {
+        snprintf(buf, sizeof(buf), "[usb] VIDEO: %s\r\n", &ruan_video_status_str ? ruan_video_status_str() : "driver not linked");
+        s.reply.writeStr(buf);
+    } else if (strEq(raw, "video.log")) {
+        unsigned i = 0;
+        for (; &ruan_video_log && ruan_video_log(i, buf, sizeof(buf)); ++i) s.reply.writeStr(buf);
+        if (!i) s.reply.writeStr("[usb] VIDEO.LOG: not linked\r\n");
     } else if (strEq(raw, "audio") || strEq(raw, "sound")) {
         if (&ruan_audio_status_str && ruan_audio_status_str) {
             snprintf(buf, sizeof(buf), "[usb] AUDIO: %s\r\n", ruan_audio_status_str());
@@ -762,9 +788,19 @@ static void handleCommand(TerminalSession &s, const char *raw) {
                  &ruan_button_events ? ruan_button_events : 0u,
                  &ruan_input_row ? ruan_input_row : "");
         s.reply.writeStr(buf);
+        if (&ruan_key_presses) {
+            // hardware presses (RuanButtons.c) apart from button events, which include USB button.lock
+            snprintf(buf, sizeof(buf), "[usb] INPUT: presses power=%u volup=%u voldown=%u | %s\r\n", ruan_key_presses[0],
+                     ruan_key_presses[1], ruan_key_presses[2], &ruan_buttons_row ? ruan_buttons_row : "");
+            s.reply.writeStr(buf);
+        }
         if (&ruan_touch_multi) {
             snprintf(buf, sizeof(buf), "[usb] INPUT: multi-finger reports %u, most fingers %u, last ids %#x at %08x %08x %08x\r\n",
                      ruan_touch_multi, ruan_touch_maxfingers, ruan_touch_lastmulti[0], ruan_touch_lastmulti[1], ruan_touch_lastmulti[2], ruan_touch_lastmulti[3]);
+            s.reply.writeStr(buf);
+        }
+        if (&focaltech_heartbeats) {
+            snprintf(buf, sizeof(buf), "[usb] INPUT: resting-finger heartbeats %u\r\n", focaltech_heartbeats);
             s.reply.writeStr(buf);
         }
     } else if (strEq(raw, "dpu")) {
@@ -809,6 +845,14 @@ static void handleCommand(TerminalSession &s, const char *raw) {
         }
     } else if (strEq(raw, "cpu")) {
         char row[480];
+        if (&ruan_idle_wfi_count && &ruan_screen_off) {
+            // idle: spin (ruan-idle-wfi-us=0) or WFI bounded by us=; sleep-us= the bound while asleep (0 = awake)
+            const volatile uint64_t *w = ruan_idle_wfi_count;
+            snprintf(buf, sizeof(buf), "[usb] IDLE: %s us=%u sleep-us=%u wfi %llu/%llu/%llu/%llu/%llu/%llu/%llu/%llu | screen-off %u sleep %u changes %u\r\n",
+                     ruan_idle_wfi_us || ruan_idle_wfi_sleep_us ? "wfi" : "spin", ruan_idle_wfi_us, ruan_idle_wfi_sleep_us,
+                     w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], ruan_screen_off, ruan_sleeping, ruan_screen_changes);
+            s.reply.writeStr(buf);
+        }
         for (unsigned i = 0; &armcpu_stats_row && i < 32 && armcpu_stats_row(i, row, sizeof(row)) != 0; i++) {
             snprintf(buf, sizeof(buf), "[usb] %s\r\n", row);
             s.reply.writeStr(buf);
@@ -822,9 +866,10 @@ static void handleCommand(TerminalSession &s, const char *raw) {
                      (unsigned)p[6], (int)p[7], (int)p[8], (int)p[11], (int)p[12], (int)p[13], (unsigned)p[14], (unsigned)p[15]);
             s.reply.writeStr(buf);
             // [16..31] perf step (docs/research/120hz/underrun.md)
-            snprintf(buf, sizeof(buf), "[usb] PANEL120: mdp kHz %d->%d pll0 %#x rcg %#x vig0 qos %#x danger %#x safe %#x creq %#x %#x cdp %#x perf %d intr %#x upos %d fifo %#x phy %#x tmo %#x\r\n",
+            snprintf(buf, sizeof(buf), "[usb] PANEL120: mdp kHz %d->%d pll0 %#x rcg %#x vig0 qos %#x danger %#x safe %#x creq %#x %#x cdp %#x perf %d intr %#x upos %d fifo %#x phy %#x tmo %#x fifo0 %#x phy0 %#x fetch %d db %#x\r\n",
                      (int)p[16], (int)p[17], (unsigned)p[18], (unsigned)p[19], (unsigned)p[20], (unsigned)p[21], (unsigned)p[22], (unsigned)p[23],
-                     (unsigned)p[24], (unsigned)p[25], (int)p[26], (unsigned)p[27], (int)p[28], (unsigned)p[29], (unsigned)p[30], (unsigned)p[31]);
+                     (unsigned)p[24], (unsigned)p[25], (int)p[26], (unsigned)p[27], (int)p[28], (unsigned)p[29], (unsigned)p[30], (unsigned)p[31],
+                     (unsigned)p[32], (unsigned)p[33], (int)p[34], (unsigned)p[35]);
         } else snprintf(buf, sizeof(buf), "[usb] PANEL120: not linked\r\n");
         s.reply.writeStr(buf);
     } else if (strEq(raw, "cpufreq")) {

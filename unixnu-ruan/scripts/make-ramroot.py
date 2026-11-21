@@ -183,10 +183,13 @@ def select(slt, work):
         wanted(path, size)
     # RUAN_FULL_ROOT=1 (UFS root, 32 GiB): the whole OS image like upstream's userdata root. The trims above were for the RAM root;
     # missing apps/frameworks leave scenes with no process identity and SpringBoard asserts on touch (FBS processIdentity, rbu142p).
-    # Kept out: Setup (seeded done), Spotlight (abort loop), the removed daemons' plists.
+    # Kept out: Setup (seeded done) and the removed daemons' plists. Spotlight stays in: without it the home-screen pull-down search
+    # asks for com.apple.Spotlight's process identity, gets nil and SpringBoard asserts (FBSSceneClientIdentity
+    # identityForProcessIdentity:, the recurring respring, rbu81-rbu179u; docs/research/springboard-trap/plan.md). An aborting
+    # Spotlight only loses its own process.
     if os.environ.get('RUAN_FULL_ROOT'):
         pick.wanted_file = lambda path, size: path not in SKIP_DAEMON_PATHS and \
-            not path.startswith(('Applications/Setup.app/', 'Applications/Spotlight.app/'))
+            not path.startswith('Applications/Setup.app/')
     files, manifest = work / 'root.files', work / 'root.manifest'
     sys.argv = ['select-system.py', str(slt), str(files), str(manifest)]
     pick.main()
@@ -414,7 +417,13 @@ SEED_PREFERENCES = {
         'ShouldRunDiagnosticsMiniBuddy', 'ShouldRunHSA2MiniBuddy', 'ShouldRunKeychainSyncMiniBuddy', 'ShouldRunMesaMiniBuddy',
         'ShouldRunPaymentMiniBuddy', 'ShouldRunStandardMiniBuddy', 'SilentICDPUpgrade')},
     'com.apple.managedconfiguration.notbackedup': {'LockdownActivationIndicatesCloudConfigurationAvailable': False},
-    'backboardd': CA_FRAMEBUFFER, '.GlobalPreferences': CA_FRAMEBUFFER,
+    # The 12.9" (Pro) keyboard layout, which fits the real width: 800x1280 pt matches no iPad in UIKit's keyboard idiom table, so
+    # the keyboard took a 768 pt layout centred then stretched, and redrew 16 pt off on `.?123` (docs/research/keyboard/plan.md).
+    'com.apple.keyboard.preferences': {'KeyboardUseProLayout': True},
+    # RUAN_CA_OPTS="CA_FORCE_TRIPLE_BUFFERING CA_FORCE_GENERIC_SHADERS": QuartzCore debug options for A/B builds, on in backboardd's domain
+    # (CADefaults reads the environment, then the defaults; names from 21H461's QuartzCore, docs/research/smoothness/plan.md).
+    'backboardd': {**CA_FRAMEBUFFER, **{k: True for k in os.environ.get('RUAN_CA_OPTS', '').split()}},
+    '.GlobalPreferences': CA_FRAMEBUFFER,
     # CPU-only CoreAnimation (no GPU): Reduce Motion + Reduce Transparency cut most animations and blurs. Settings >
     # Accessibility crashed when opened (rb16), so they are preset here.
     # rbu140: the GPU draws now, so real motion (unlock/home gestures follow the finger); Reduce Transparency stays (blur is costly)
@@ -434,7 +443,17 @@ DISABLED_JOBS = (
                  # ruan rb8s-rb11: crash-loop every few seconds (audiomxd SIGSEGV without audio hardware; searchd/siriactionsd
                  # NSInvalidArgumentException AssetProperties/NSBundle nil; maild killed). amethyst v2->v3: crash-loopers kept
                  # the first UI frame from coming (scripts/log/WORKING-BOOT.md:104-140).
-                 'com.apple.audiomxd', 'com.apple.searchd', 'com.apple.siriactionsd', 'com.apple.email.maild')
+                 'com.apple.audiomxd', 'com.apple.searchd', 'com.apple.siriactionsd', 'com.apple.email.maild',
+                 # rbu149p-rbu182u: passd SIGTRAPs every 1-2 min, a try! in FinanceKit/CoreDataProvider.swift:34 (its store does not
+                 # load; financed is off and SKIP_DAEMONS meant passd off too). No Wallet/Apple Pay here.
+                 'com.apple.passd',
+                 # smoothness (rbu182u): launchd runs from System/Library/xpc/launchd.plist, so SKIP_DAEMON_PATHS never stopped these.
+                 # parsecd writes SiriSearchFeedback reports, DumpPanic burns ~90 s of CPU at boot (cpu_resource report), the rest is
+                 # background ML/indexing/OTA. ReportCrash/osanalytics stay on: the .ips reports are our crash evidence.
+                 'com.apple.parsecd', 'com.apple.DumpPanic', 'com.apple.photoanalysisd', 'com.apple.mediaanalysisd',
+                 'com.apple.mediaanalysisd.service', 'com.apple.knowledgeconstructiond', 'com.apple.intelligenceplatformd',
+                 'com.apple.spotlightknowledged', 'com.apple.spotlight.IndexAgent', 'com.apple.biomesyncd',
+                 'com.apple.proactiveeventtrackerd', 'com.apple.spindump', 'com.apple.mobile.softwareupdated', 'com.apple.OTATaskingAgent')
 
 
 def missing_jobs(tree):

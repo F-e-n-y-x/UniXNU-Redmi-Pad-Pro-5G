@@ -29,3 +29,5 @@ ruan-keystore-probe.patch
 ruan-native-sandbox-grant-any.patch
 # Counts IOMobileFramebuffer user-client methods per selector for USB `display` (rbu80, vsync/frame-rate investigation).
 ruan-iomfb-method-counts.patch
+# Timer-bounded WFI idle (ruan-idle-wfi-us=N, default 0 = spin) and the screen-off sleep bound, both boards (package/RuanInput.c writes ruan_idle_wfi_sleep_us; macOS/docs/research/power/plan.md).
+ruan-idle-wfi.patch

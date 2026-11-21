@@ -1,0 +1,116 @@
+diff -ruN a/QcomIris/include/QcomIrisCore.h b/QcomIris/include/QcomIrisCore.h
+--- a/include/QcomIrisCore.h	2026-11-21 14:34:52.432745569 +0530
++++ b/include/QcomIrisCore.h	2026-11-21 14:35:09.353779117 +0530
+@@ -57,6 +57,7 @@
+     volatile uint32_t *sfr;
+     uint32_t sfr_device_addr;
+     unsigned num_vpp_pipe;
++    bool vpu2;                        /* ruan: iris2 one-pipe power-off halves (set after qcom_iris_core_setup) */
+     enum qcom_iris_core_state state;
+     bool powered, suspended;
+     unsigned usage;                   /* runtime PM usage count */
+diff -ruN a/QcomIris/include/QcomIrisVpu.h b/QcomIris/include/QcomIrisVpu.h
+--- a/include/QcomIrisVpu.h	2026-11-21 14:34:52.432851548 +0530
++++ b/include/QcomIrisVpu.h	2026-11-21 14:35:09.353703577 +0530
+@@ -42,6 +42,10 @@
+ /* iris_vpu3_power_off_hardware's register part; the caller then turns the core clock and MVS0 off (iris_vpu_power_off_hw). */
+ void qcom_iris_vpu3_power_off_hardware(const struct qcom_iris_vpu_io *, unsigned num_vpp_pipe);
+ /* iris_vpu_power_off_controller's register part; the caller then turns the controller clocks and MVS0C off. */
++/* ruan (SM7435 parrot, VPU_VERSION_IRIS2_1PIPE): downstream msm_vidc_iris2.c __power_off_iris2_hardware / _controller, which skip the
++ * AON MVP NOC handshakes on a one-pipe iris2 and hold the debug bridge with 0x7 before releasing it. */
++void qcom_iris_vpu2_power_off_hardware(const struct qcom_iris_vpu_io *, unsigned num_vpp_pipe);
++void qcom_iris_vpu2_power_off_controller(const struct qcom_iris_vpu_io *);
+ void qcom_iris_vpu_power_off_controller(const struct qcom_iris_vpu_io *);
+ #ifdef __cplusplus
+ }
+diff -ruN a/QcomIris/src/IrisCore.c b/QcomIris/src/IrisCore.c
+--- a/src/IrisCore.c	2026-11-21 14:34:52.433138355 +0530
++++ b/src/IrisCore.c	2026-11-21 14:35:09.353861636 +0530
+@@ -31,7 +31,8 @@
+     if (ret) return ret;
+     ret = c->ops->power_on_hardware(c->ops->context);
+     if (ret) {
+-        qcom_iris_vpu_power_off_controller(&c->vpu);
++        if (c->vpu2) qcom_iris_vpu2_power_off_controller(&c->vpu);
++        else qcom_iris_vpu_power_off_controller(&c->vpu);
+         c->ops->power_off_controller(c->ops->context);
+         return ret;
+     }
+@@ -46,9 +47,11 @@
+ static void power_off(struct qcom_iris_core *c)
+ {
+     if (!c->powered) return;
+-    qcom_iris_vpu3_power_off_hardware(&c->vpu, c->num_vpp_pipe);
++    if (c->vpu2) qcom_iris_vpu2_power_off_hardware(&c->vpu, c->num_vpp_pipe);
++    else qcom_iris_vpu3_power_off_hardware(&c->vpu, c->num_vpp_pipe);
+     c->ops->power_off_hardware(c->ops->context);
+-    qcom_iris_vpu_power_off_controller(&c->vpu);
++    if (c->vpu2) qcom_iris_vpu2_power_off_controller(&c->vpu);
++    else qcom_iris_vpu_power_off_controller(&c->vpu);
+     c->ops->power_off_controller(c->ops->context);
+     c->powered = false;
+     if (!qcom_iris_vpu_watchdog(c->intr_status)) c->ops->disable_irq(c->ops->context);
+diff -ruN a/QcomIris/src/IrisSystem.c b/QcomIris/src/IrisSystem.c
+--- a/src/IrisSystem.c	2026-11-21 14:34:52.433264463 +0530
++++ b/src/IrisSystem.c	2026-11-21 14:35:09.353648108 +0530
+@@ -4,7 +4,11 @@
+ /* qcom_ubwc_cfg_data ubwc_4_0_hbb16 (SM8550) through the ubwc.h helpers */
+ #define UBWC_MAX_CHANNELS 8u        /* macrotile mode: UBWC 3.1 and later */
+ #define UBWC_MAL_LENGTH 32u         /* 64-byte minimum access only for UBWC 1.0 */
++#ifndef QCOM_IRIS_UBWC_HBB
+ #define UBWC_HBB 16u
++#else
++#define UBWC_HBB QCOM_IRIS_UBWC_HBB   /* ruan (parrot, LPDDR4X): ubwc_config_parrot + msm_vidc_ddr_ubwc_config override 0xe */
++#endif
+ #define UBWC_SWIZZLE_L1 0u
+ #define UBWC_SWIZZLE_L2 1u
+ #define UBWC_SWIZZLE_L3 1u
+diff -ruN a/QcomIris/src/IrisVpu.c b/QcomIris/src/IrisVpu.c
+--- a/src/IrisVpu.c	2026-11-21 14:34:52.433283293 +0530
++++ b/src/IrisVpu.c	2026-11-21 14:35:09.353741947 +0530
+@@ -137,6 +137,26 @@
+     wr(io, CPU_CS_AHB_BRIDGE_SYNC_RESET, 0);
+ }
+ 
++void qcom_iris_vpu2_power_off_hardware(const struct qcom_iris_vpu_io *io, unsigned pipes)
++{
++    if (!(rd(io, WRAPPER_CORE_POWER_STATUS) & 2)) return;   /* is_iris2_hw_power_collapsed */
++    if (rd(io, WRAPPER_CORE_CLOCK_CONFIG)) wr(io, WRAPPER_CORE_CLOCK_CONFIG, CORE_CLK_RUN);
++    for (unsigned i = 0; i < pipes; ++i)   /* downstream logs a timeout here and goes on */
++        (void)poll(io, VCODEC_SS_IDLE_STATUSN + 4 * i, 0x400000, 0x400000, 2000, 20000);
++    wr(io, CPU_CS_AHB_BRIDGE_SYNC_RESET, CORE_BRIDGE_SW_RESET | CORE_BRIDGE_HW_RESET_DISABLE);
++    wr(io, CPU_CS_AHB_BRIDGE_SYNC_RESET, CORE_BRIDGE_HW_RESET_DISABLE);
++    wr(io, CPU_CS_AHB_BRIDGE_SYNC_RESET, 0);
++}
++
++void qcom_iris_vpu2_power_off_controller(const struct qcom_iris_vpu_io *io)
++{
++    wr(io, CPU_CS_X2RPMH, MSK_SIGNAL_FROM_TENSILICA | MSK_CORE_POWER_ON);
++    wr(io, WRAPPER_DEBUG_BRIDGE_LPI_CONTROL, 0x7);
++    (void)poll(io, WRAPPER_DEBUG_BRIDGE_LPI_STATUS, 0x7, 0x7, 200, 2000);
++    wr(io, WRAPPER_DEBUG_BRIDGE_LPI_CONTROL, 0);
++    (void)poll(io, WRAPPER_DEBUG_BRIDGE_LPI_STATUS, 0xffffffffu, 0, 200, 2000);
++}
++
+ void qcom_iris_vpu_power_off_controller(const struct qcom_iris_vpu_io *io)
+ {
+     wr(io, CPU_CS_X2RPMH, MSK_SIGNAL_FROM_TENSILICA | MSK_CORE_POWER_ON);
+diff -ruN a/QcomIris/tests/vpu_host.c b/QcomIris/tests/vpu_host.c
+--- a/tests/vpu_host.c	2026-11-21 14:34:52.433590120 +0530
++++ b/tests/vpu_host.c	2026-11-21 14:35:19.475948169 +0530
+@@ -63,6 +63,14 @@
+     assert(regs[0xb0088 / 4] == 0 && regs[0x1f000 / 4] == 0 && regs[0xa0160 / 4] == 0);
+     qcom_iris_vpu_power_off_controller(&io);
+     assert(regs[0xa0168 / 4] == 3 && regs[0xb005c / 4] == 1 && regs[0xc0014 / 4] == 0 && regs[0xc0018 / 4] == 0);
+-    printf("vpu: preset, boot, doorbell, interrupt clear, watchdog, power collapse checks, power-off: ok\n");
++    /* ruan iris2 one pipe: no AON NoC reset or LPI handshake, the debug bridge held with 7 and released */
++    memset(regs, 0, sizeof regs);
++    regs[0xb0080 / 4] = 2; regs[0xb0088 / 4] = 5; regs[0x1f000 / 4] = 0xdead;
++    qcom_iris_vpu2_power_off_hardware(&io, 1);
++    assert(regs[0xb0088 / 4] == 0 && regs[0x1f000 / 4] == 0xdead && regs[0xa0160 / 4] == 0);
++    regs[0xe0000 / 4] = 0xdead; regs[0xb005c / 4] = 0xdead;
++    qcom_iris_vpu2_power_off_controller(&io);
++    assert(regs[0xa0168 / 4] == 3 && regs[0xe0000 / 4] == 0xdead && regs[0xb005c / 4] == 0xdead && regs[0xb0054 / 4] == 0);
++    printf("vpu: preset, boot, doorbell, interrupt clear, watchdog, power collapse checks, power-off (vpu3 and ruan vpu2): ok\n");
+     return 0;
+ }

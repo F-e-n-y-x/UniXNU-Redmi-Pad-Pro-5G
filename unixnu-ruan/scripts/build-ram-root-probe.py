@@ -183,6 +183,50 @@ def wifi_module_objects():
             *module]
 
 
+QCA_BT = Path(os.environ.get('QCA_BLUETOOTH_DIR', DEVICE / '.cache/QcaBluetooth'))
+
+
+def bluetooth_include():
+    if not (QCA_BT / 'out/linux/btqca.c').is_file():
+        subprocess.run(['bash', DEVICE / 'scripts/fetch-qca-bluetooth.sh', QCA_BT], check=True)
+    return [f'-I{QCA_BT / d}' for d in ('include', 'src', 'shim', 'out/linux')]
+
+
+def bluetooth_objects():
+    built = subprocess.run(['python3', DEVICE / 'scripts/build-qca-bluetooth.py', QCA_BT, OUT / 'qca-bluetooth'], check=True,
+                           capture_output=True, text=True).stdout
+    return [Path(line[4:]) for line in built.splitlines() if line.startswith('OBJ ')]
+
+
+# The iris2 VPU (macOS/docs/research/video/port): ruan-video=1-4 (survey, power, firmware boot, one decoder session); default built,
+# RUAN_VIDEO=0 leaves it out. drivers/QcomIris of UniXNU-sheng (GPL-2.0-only) is fetched into .cache/QcomIris by scripts/fetch-qcom-iris.sh
+# with patches/qcom-iris-ruan.patch; its own tools fetch the pinned Linux iris files. The ArmSmmu4K kit objects come from build-ruan-adreno.
+# RuanVideo.o is pulled by BootProgress.c's ruan_video_start (built with -DRUAN_VIDEO=1).
+VIDEO = os.environ.get('RUAN_VIDEO', '1') == '1'
+
+
+def video_objects():
+    if not VIDEO:
+        return []
+    iris = Path(os.environ.get('QCOM_IRIS_DIR', DEVICE / '.cache/QcomIris'))
+    if not (iris / 'include/QcomIrisCore.h').is_file():
+        subprocess.run(['bash', DEVICE / 'scripts/fetch-qcom-iris.sh', iris], check=True)
+    subprocess.run(['python3', iris / 'tools/fetch-sources.py'], check=True, stdout=subprocess.DEVNULL)
+    linux = iris / 'deps/linux/drivers/media/platform/qcom/iris'
+    kit = ROOT / 'kits/ArmSmmu4K'
+    common = ['-I', str(iris / 'include'), '-I', str(iris / 'shim'), '-I', str(linux), '-I', str(kit)]
+    out = OUT / 'video'
+    out.mkdir(exist_ok=True)
+    # sheng's build-qcom-iris.py flags: -Os (text room), unused parameters of the Linux-shaped ops allowed; ruan's UBWC bank bit 14
+    iris_flags = ['-Os', '-Wno-unused-parameter', '-DQCOM_IRIS_UBWC_HBB=14', *common, '-I', str(iris / 'src'),
+                  '-I', str(ROOT / '.cache/xnu-work/osfmk')]
+    return [compile_cxx_like(IOKIT_RECORD, DEVICE / 'package/RuanVideo.cpp', out / 'RuanVideo.o', common),
+            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanVideoCc.c', out / 'RuanVideoCc.o'),
+            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/Sm8550AppsSmmu.c', out / 'Sm8550AppsSmmu.o'),
+            *[compile_like('osfmk/DEVELOPMENT/startup.o.json', s, out / (s.stem + '.o'), iris_flags)
+              for s in [*sorted((iris / 'src').glob('*.c')), linux / 'iris_vpu_buffer.c']]]
+
+
 # HakiOS's C is warning-clean under its own flags, not under -Wextra -Werror; its firmware headers live outside git.
 HAKIOS_C = ['-I', str(DEVICE / '.cache/hakios-fw'), '-Wno-error', '-Wno-unused-function', '-Wno-unused-parameter',
             '-Wno-unused-variable', '-Wno-unused-but-set-variable', '-Wno-sign-compare', '-Wno-missing-prototypes']
@@ -194,7 +238,8 @@ objects = [ramblock / 'NativeRamBlock.o', ramblock / 'original-bindings.o',
            OUT / 'NativeKeyStoreEvents.late.o',
            compile_like('bsd/DEVELOPMENT/kern_trustcache.o.json', DEVICE / 'package/RamRestoreTrust.c', OUT / 'RamRestoreTrust.o'),
            # the boot_progress_* hooks (patches/xnu/ruan-boot-progress.patch), with the flags of the startup.c that calls them
-           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/BootProgress.c', OUT / 'BootProgress.o'),
+           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/BootProgress.c', OUT / 'BootProgress.o',
+                        [f'-DRUAN_VIDEO={int(VIDEO)}']),
            # ruan-autoreset's reboot into fastboot (package/BootReset.c, from UniXNU-Dizi-Ruan)
            compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/BootReset.c', OUT / 'BootReset.o'),
            # EL0 fault records and the SIGABRT reason scan for the crash banner (package/BootFaultProbe.c, from UniXNU-fuxi)
@@ -233,8 +278,18 @@ objects = [ramblock / 'NativeRamBlock.o', ramblock / 'original-bindings.o',
            compile_like('bsd/DEVELOPMENT/kern_exec.o.json', DEVICE / 'package/AdspFirmware.c', OUT / 'AdspFirmware.o',
                         ['-Wno-unused-but-set-global']),
            *wifi_module_objects(),
-           # Qualcomm LPASS Quad WSA883x Smart Amplifiers Audio subsystem
-           compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / 'package/RuanAudioProbe.c', OUT / 'RuanAudioProbe.o')]
+           # Qualcomm WCN6750 Bluetooth (macOS/docs/research/bluetooth/port; asteroids' QcaBluetooth for the WCN6750): ruan-bt=1-4. RuanBluetooth.o is
+           # pulled by BootProgress.c's ruan_bt_start; QcaBluetooth (fetched into .cache/QcaBluetooth, Linux btqca.c staged by its own tool),
+           # RuanGeniUart.c and BluetoothFirmware.c come from build-qca-bluetooth.py with kern_exec.c's flags.
+           compile_cxx_like(IOKIT_RECORD, DEVICE / 'package/RuanBluetooth.cpp', OUT / 'RuanBluetooth.o', bluetooth_include()),
+           *bluetooth_objects(),
+           *video_objects(),
+           # ruan-audio=N: speaker path stages (docs/research/audio): the ADSP host (UniXNU-sheng AdspProbe.cpp, ported), GPR and AudioReach
+           # packets (sheng's, + codec DMA RX), the staged bring-up. Same ruan_audio_init / ruan_audio_status_str names as the old
+           # RuanAudioProbe.c status stub it replaces (the stub's files can be deleted). Exclusive with ruan-wifi >= 2 (one IPCC/QMP/TCS owner).
+           compile_cxx_like(IOKIT_RECORD, DEVICE / 'package/RuanAudio.cpp', OUT / 'RuanAudio.o'),
+           compile_cxx_like(IOKIT_RECORD, DEVICE / 'package/RuanAdsp.cpp', OUT / 'RuanAdsp.o'),
+           *[compile_like('osfmk/DEVELOPMENT/startup.o.json', DEVICE / f'package/{n}.c', OUT / f'{n}.o') for n in ('ShengGpr', 'ShengAudioReach')]]
 archive = OUT / 'libRamRootProbe.a'
 archive.unlink(missing_ok=True)
 subprocess.run(['xcrun', 'ar', 'rcs', archive, *objects], check=True)

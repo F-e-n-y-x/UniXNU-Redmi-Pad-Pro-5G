@@ -806,6 +806,12 @@ void native_legacy_display_late_probe(void) {
 		boot_progress_stage("late_probe: ruan_wifi_init");
 		extern void ruan_wifi_init(void) __attribute__((weak_import));
 		if (&ruan_wifi_init) ruan_wifi_init();
+		boot_progress_stage("late_probe: ruan_bt_init");
+		extern void ruan_bt_init(void) __attribute__((weak_import));
+		if (&ruan_bt_init) ruan_bt_init();
+		boot_progress_stage("late_probe: ruan_video_init");
+		extern void ruan_video_init(void) __attribute__((weak_import));
+		if (&ruan_video_init) ruan_video_init();
 		boot_progress_stage("late_probe: ruan_audio_init");
 		extern void ruan_audio_init(void) __attribute__((weak_import));
 		if (&ruan_audio_init) ruan_audio_init();

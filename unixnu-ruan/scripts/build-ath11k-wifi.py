@@ -22,6 +22,8 @@ raw.mkdir(exist_ok=True)
 subprocess.run(['bash', str(module / 'tools/fetch-sources.sh')], check=True, stdout=subprocess.DEVNULL)
 subprocess.run(['bash', str(module / 'tools/prepare.sh')], check=True, stdout=subprocess.DEVNULL)
 subprocess.run(['bash', str(module / 'tools/prepare-ath11k.sh')], check=True, stdout=subprocess.DEVNULL)
+# ruan: the module's changes (scripts/patch-ath11k-userspace.py), after prepare-ath11k.sh regenerated out/ath11k-src/mac.c
+subprocess.run([sys.executable, str(Path(__file__).resolve().parent / 'patch-ath11k-userspace.py'), str(module)], check=True, stdout=subprocess.DEVNULL)
 clang = subprocess.run(['xcrun', '-f', 'clang'], check=True, capture_output=True, text=True).stdout.strip()
 resource = subprocess.run([clang, '-print-resource-dir'], check=True, capture_output=True, text=True).stdout.strip() + '/include'
 flags = ['-target', TRIPLE, '-mkernel', '-O2', '-g0', '-ffreestanding', '-fno-builtin', '-fno-common', '-fno-strict-aliasing', '-fwrapv',
