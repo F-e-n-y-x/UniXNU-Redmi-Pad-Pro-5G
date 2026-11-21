@@ -6,10 +6,12 @@
 </p>
 
 <p align="center">
-  <img src="docs/img/ipados-control-center-rbu127u.png" alt="Control Center on the tablet (rbu127u)" width="30%">
-  <img src="docs/img/usb-homescreen-full.png" alt="Home screen" width="30%">
-  <img src="docs/img/usb-settings-about-full.png" alt="Settings, About" width="30%">
+  <img src="docs/img/usb-rbu172p-home.png" alt="Home screen" width="24%">
+  <img src="docs/img/usb-rbu172p-control-center.png" alt="Control Center with background blur" width="24%">
+  <img src="docs/img/usb-rbu172p-recents.png" alt="App switcher" width="24%">
+  <img src="docs/img/usb-rbu172p-about.png" alt="Settings, About: iPadOS 17.7.11" width="24%">
 </p>
+<p align="center"><sub>Native screenshots from the tablet (rbu172p, 2026-11-21): home screen, Control Center, app switcher, Settings → About.</sub></p>
 
 > **Branches:** `agy-15-11-26` (this one) is the **iPadOS build**. `macos` is the **macOS build** for the same tablet.
 > Experimental research software: it boots a real Apple OS on non-Apple hardware. Back up your device first.
