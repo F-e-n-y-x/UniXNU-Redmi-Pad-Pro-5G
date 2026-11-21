@@ -78,10 +78,29 @@ flags = ['-target', 'arm64-apple-ios17.0', '-isysroot', SDK, '-O2', '-g', '-Wall
 pm4 = OUT / 'AdrenoPM4.o'
 run('/usr/bin/clang', *flags, '-std=c11', '-c', U / 'kits/AdrenoPM4/AdrenoPM4.c', '-o', pm4)
 exe = bundle / 'NativeAdrenoMetal'
-run('/usr/bin/clang++', *flags, '-fuse-ld=lld', '-std=c++17', '-fobjc-arc', '-Wno-deprecated-declarations', '-bundle',
+# Shader priming (UniXNU docs/porting/gpu.md "Warm the shader caches"): the OS image's .metallib paths, embedded as __DATA,__primelist
+# (the render server's sandbox may refuse the file beside the bundle) and shipped beside the bundle. Written here from make-ramroot.py's
+# root.manifest (ROOT_MANIFEST); gpu-prime=0 turns priming off.
+# Opt-in (PRIME=1): every Metal process (mediaserverd too) primes the list, mediaserverd hit its per-process limit priming QuartzCore,
+# was killed and relaunched over and over, and unowned anonymous memory ("throttled", no compressor) grew ~2.3 GB until jetsam had
+# no victim and panicked (rbu82/rbu83, 2026-11-19). Without a list priming scans only what the sandbox shows, as rbu81 did.
+PRIME_LIST = U / 'build/prime-list.txt'
+PRIME_LIST.unlink(missing_ok=True)
+MANIFEST = Path(os.environ.get('ROOT_MANIFEST', '/root/unixnu-work/ramroot/work-full/root.manifest'))   # make-ramroot.py's
+if os.environ.get('PRIME') == '1' and MANIFEST.is_file():
+    # mode, uid, gid, path, link target; Apple's AGX runtime libraries are not translated by the plugin
+    paths = sorted({'/' + line.split('\t')[3] for line in MANIFEST.read_text().splitlines()
+                    if line.count('\t') >= 3 and line.split('\t')[3].endswith('.metallib') and 'AGXMetal' not in line})
+    PRIME_LIST.write_text(''.join(p + '\n' for p in paths))
+prime_section = [f'-Wl,-sectcreate,__DATA,__primelist,{PRIME_LIST}'] if PRIME_LIST.is_file() else []
+# The iOS 17.5 SDK predates MTLMathMode / MTLMathFloatingPointFunctions (iOS 18), which the frontend reads only through runtime
+# selectors iOS 17 lacks: their SDK 18 values, so it compiles.
+sdk18 = ['-DMTLMathModeSafe=0', '-DMTLMathModeRelaxed=1', '-DMTLMathModeFast=2',
+         '-DMTLMathFloatingPointFunctionsFast=0', '-DMTLMathFloatingPointFunctionsPrecise=1']
+run('/usr/bin/clang++', *flags, '-fuse-ld=lld', '-std=c++17', '-fobjc-arc', '-Wno-deprecated-declarations', '-bundle', *sdk18,
     '-I', U / 'drivers/Adreno740', '-I', U / 'kits/AdrenoPM4', '-I', VK, '-I', U / 'build/turnip-smoke',
     '-x', 'objective-c++', U / 'drivers/AdrenoMetal/NativeAdrenoMetalPlugin.mm', U / 'drivers/AdrenoMetal/NativeBridgeMetalFrontend.mm',
-    '-x', 'none', pm4, BRIDGE, '-Wl,-dead_strip', '-lobjc', '-framework', 'Foundation', '-framework', 'Metal', '-framework', 'IOSurface',
+    '-x', 'none', pm4, BRIDGE, '-Wl,-dead_strip', *prime_section, '-lobjc', '-framework', 'Foundation', '-framework', 'Metal', '-framework', 'IOSurface',
     '-o', exe)
 run('/usr/bin/llvm-strip', '-x', exe)
 # The linker writes the Rust bridge's debug symbols (~230 MB) beside the executable: keep them in OUT, not in the root.
@@ -101,6 +120,12 @@ run(LDID, '-S', '-Iorg.blu-sharky.turnip', turnip)
 # own signature against the trust cache. Use codesign on a Mac if Metal's bundle load ever wants the seal.
 run(LDID, '-S', '-Iorg.blu-sharky.NativeAdrenoMetal', exe)
 (ext / 'NativeAdrenoMetal.publish').write_bytes(b'')
+if PRIME_LIST.is_file():
+    shutil.copyfile(PRIME_LIST, ext / 'NativeAdrenoMetal.primelist')
+# PIPELINE_PACK=<file>: a pipeline pack (scripts/make-ruan-m2vpack.py from a pulled cache directory of the same runtime + Turnip build);
+# the plugin imports it into each Metal process's cache directory before the runtime opens it (CacheExport.h importPack).
+if os.environ.get('PIPELINE_PACK'):
+    shutil.copyfile(os.environ['PIPELINE_PACK'], ext / 'NativeAdrenoMetal.m2vpack')
 hashes = [cdhash(exe), cdhash(turnip)]
 for path in (exe, turnip):
     assert path.read_bytes()[:8] == bytes.fromhex('cffaedfe0c000001'), f'{path}: not an arm64 Mach-O'

@@ -28,6 +28,9 @@ extern "C" volatile uint32_t native_adreno_diag;   // NativeAdrenoSubmit.cpp
 extern "C" int (*native_adreno_dram_read32)(uint64_t, uint32_t *);
 extern "C" vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
 extern "C" void ml_io_unmap(vm_offset_t addr, vm_size_t size);
+// UniXNU ArmCpu 5f37026 (#299) weak-imports this platform-sleep hook, which xnu-10063 lacks; nothing calls it here, so
+// platform-sleep=1 stays a no-op on ruan. Defined in this force-loaded archive so the kernel links.
+extern "C" void (*arm64_platform_sleep_hook)(boolean_t) = nullptr;
 static int ruanDramRead32(uint64_t pa, uint32_t *value)
 {
 	const vm_offset_t va = ml_io_map_unmappable(vm_offset_t(pa & ~uint64_t(0xfff)), 0x1000, 0x7 /* VM_WIMG_IO */);

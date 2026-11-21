@@ -55,6 +55,12 @@ extern char native_adreno_last_property[64] __attribute__((weak_import));
 extern char native_adreno_last_client[64] __attribute__((weak_import));
 extern uint32_t ruan_iomfb_calls[128] __attribute__((weak_import)), ruan_iomfb_errors[128] __attribute__((weak_import));
 extern int32_t ruan_iomfb_last[128] __attribute__((weak_import));
+extern volatile uint64_t ruan_slot345_calls __attribute__((weak_import)), ruan_retire_refused __attribute__((weak_import)),
+    ruan_rekicks __attribute__((weak_import)), native_legacy_swap_timeouts __attribute__((weak_import));
+extern volatile uint32_t native_legacy_swapstat[16] __attribute__((weak_import));
+extern volatile uint64_t native_legacy_copy_last __attribute__((weak_import)), native_legacy_copy_max __attribute__((weak_import));
+extern volatile uint64_t (*native_legacy_ring)[2] __attribute__((weak_import));
+extern volatile uint32_t native_legacy_ring_cap __attribute__((weak_import)), native_legacy_ring_count __attribute__((weak_import));
 
 extern volatile uint32_t native_legacy_swap_accepted_count __attribute__((weak_import));
 extern volatile uint32_t native_legacy_swap_rejected_count __attribute__((weak_import));
@@ -627,6 +633,38 @@ static void handleCommand(TerminalSession &s, const char *raw) {
                  &native_legacy_vsync_events ? (unsigned long long)native_legacy_vsync_events[4] : 0ULL,
                  &native_legacy_vsync_events ? (unsigned long long)native_legacy_vsync_events[5] : 0ULL);
         s.reply.writeStr(buf);
+        if (&ruan_slot345_calls && &native_legacy_swapstat) {
+            // rbu81: the family's 5 s swap-wait timeouts (slot 345), refused retirements, 1 s re-kicks, copy time (ticks), swapstat[0..15].
+            size_t at = (size_t)snprintf(buf, sizeof(buf), "[usb] PACING slot345=%llu timeouts=%llu retire_refused=%llu rekicks=%llu copy_last=%llu copy_max=%llu stat",
+                                         (unsigned long long)ruan_slot345_calls, &native_legacy_swap_timeouts ? (unsigned long long)native_legacy_swap_timeouts : 0ull,
+                                         (unsigned long long)ruan_retire_refused, (unsigned long long)ruan_rekicks,
+                                         (unsigned long long)native_legacy_copy_last, (unsigned long long)native_legacy_copy_max);
+            for (unsigned i = 0; i < 16 && at < sizeof(buf) - 12; ++i) at += (size_t)snprintf(buf + at, sizeof(buf) - at, " %u", native_legacy_swapstat[i]);
+            strlcat(buf, "\r\n", sizeof(buf));
+            s.reply.writeStr(buf);
+        }
+        if (&native_legacy_ring && native_legacy_ring && &native_legacy_ring_cap && native_legacy_ring_cap) {
+            // rbu81: the newest 16 swap events as <ms since boot>:<event> (1 validated = submitted, 6 retired, ...), then the intervals
+            // between submissions (event 1) among the newest 64 events, in ms.
+            const uint32_t n = native_legacy_ring_count, mask = native_legacy_ring_cap - 1, shown = n < 16 ? n : 16;
+            size_t at = (size_t)snprintf(buf, sizeof(buf), "[usb] SWAPS");
+            for (uint32_t k = n - shown; k != n && at < sizeof(buf) - 24; ++k)
+                at += (size_t)snprintf(buf + at, sizeof(buf) - at, " %llu:%u", (unsigned long long)(native_legacy_ring[k & mask][0] / 1000),
+                                       (unsigned)(native_legacy_ring[k & mask][1] >> 56));
+            strlcat(buf, "\r\n", sizeof(buf));
+            s.reply.writeStr(buf);
+            at = (size_t)snprintf(buf, sizeof(buf), "[usb] SUBMIT-MS");
+            uint64_t prev = 0;
+            const uint32_t span = n < 64 ? n : 64;
+            for (uint32_t k = n - span; k != n && at < sizeof(buf) - 12; ++k) {
+                if ((native_legacy_ring[k & mask][1] >> 56) != 1) continue;
+                const uint64_t us = native_legacy_ring[k & mask][0];
+                if (prev) at += (size_t)snprintf(buf + at, sizeof(buf) - at, " %llu", (unsigned long long)((us - prev) / 1000));
+                prev = us;
+            }
+            strlcat(buf, "\r\n", sizeof(buf));
+            s.reply.writeStr(buf);
+        }
         if (&ruan_iomfb_calls) {
             // rbu80: the IOMobileFramebuffer methods called so far, as selector:calls/failures(last IOReturn).
             size_t at = (size_t)snprintf(buf, sizeof(buf), "[usb] IOMFB methods:");
@@ -704,6 +742,69 @@ static void handleCommand(TerminalSession &s, const char *raw) {
                  &ruan_button_events ? ruan_button_events : 0u,
                  &ruan_input_row ? ruan_input_row : "");
         s.reply.writeStr(buf);
+    } else if (strEq(raw, "dpu")) {
+        // Read-only DPU probe (docs/research/dpu-scanout-sm7435.md step a): which pipe scans out the boot buffer, its format and
+        // stride, the CTL's active pipes/flush, and INTF1's frame counter. MDP block 0xae00000 + 0x84000 from the live DT.
+        static OSSharedPtr<IOMemoryMap> mdpMap;
+        static uintptr_t mdp;
+        if (!mdp) mdp = mapRangeUncached(0xae00000, 0x84000, mdpMap);
+        if (!mdp) {
+            s.reply.writeStr("[usb] DPU: map failed\r\n");
+        } else {
+            auto r = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
+            snprintf(buf, sizeof(buf), "[usb] DPU: hw=%08x ctl0 flush=%08x intf_active=%08x pipes_active=%08x\r\n",
+                     r(mdp), r(mdp + 0x16018), r(mdp + 0x160f4), r(mdp + 0x160fc));
+            s.reply.writeStr(buf);
+            static const struct { const char *name; uint32_t off; } pipes[] = {{"vig0", 0x5000}, {"dma0", 0x25000}, {"dma1", 0x27000}};
+            for (const auto &p : pipes) {
+                const uintptr_t b = mdp + p.off;
+                snprintf(buf, sizeof(buf),
+                         "[usb] DPU %s: size=%08x img=%08x xy=%08x addr0=%08x stride0=%08x fmt=%08x unpack=%08x op=%08x 48=%08x\r\n",
+                         p.name, r(b), r(b + 0x08), r(b + 0x0c), r(b + 0x14), r(b + 0x24), r(b + 0x30), r(b + 0x34), r(b + 0x38),
+                         r(b + 0x48));
+                s.reply.writeStr(buf);
+            }
+            const uint32_t f0 = r(mdp + 0x360ac), l0 = r(mdp + 0x360b0);
+            IOSleep(100);
+            snprintf(buf, sizeof(buf), "[usb] DPU intf1: frames %u -> %u in 100 ms, line %u -> %u\r\n", f0, r(mdp + 0x360ac), l0,
+                     r(mdp + 0x360b0));
+            s.reply.writeStr(buf);
+        }
+    } else if (strEq(raw, "dpu.flip")) {
+        // Step b (docs/research/dpu-scanout-sm7435.md): point VIG0 at our own buffer (colour bars, below 4 GiB, contiguous) for
+        // 3 s, then back to the boot buffer. Shows whether the display can scan out a buffer we own without a copy.
+        static OSSharedPtr<IOMemoryMap> mdpMap;
+        static uintptr_t mdp;
+        if (!mdp) mdp = mapRangeUncached(0xae00000, 0x84000, mdpMap);
+        const uint32_t w = 1600, h = 2560, stride = 6400, size = stride * h;
+        // second buffer inside the UEFI splash carve-out (0xb8000000 + 0x2b00000, DT): the display already reads this region
+        static OSSharedPtr<IOMemoryMap> fbMap;
+        static uintptr_t fbVa;
+        const uint64_t phys = 0xb9000000ULL;
+        if (!fbVa) fbVa = mapRangeUncached(phys, size, fbMap);
+        if (!mdp || !fbVa) {
+            s.reply.writeStr("[usb] DPU flip: map failed\r\n");
+        } else {
+            volatile uint32_t *px = reinterpret_cast<volatile uint32_t *>(fbVa);
+            static const uint32_t bars[8] = {0xffffffff, 0xffffff00, 0xff00ffff, 0xff00ff00, 0xffff00ff, 0xffff0000, 0xff0000ff, 0xff000000};
+            for (uint32_t y = 0; y < h; y++)
+                for (uint32_t x = 0; x < w; x++) px[y * (stride / 4) + x] = bars[x * 8 / w];
+            __asm__ volatile("dsb sy" ::: "memory");
+            volatile uint32_t *addr0 = reinterpret_cast<volatile uint32_t *>(mdp + 0x5000 + 0x14);
+            volatile uint32_t *flush = reinterpret_cast<volatile uint32_t *>(mdp + 0x16018);
+            const uint32_t boot = *addr0;
+            const uint32_t f0 = *reinterpret_cast<volatile uint32_t *>(mdp + 0x360ac);
+            *addr0 = (uint32_t)phys;
+            *flush = 0x1;   // VIG0
+            IOSleep(3000);
+            const uint32_t pending = *flush, f1 = *reinterpret_cast<volatile uint32_t *>(mdp + 0x360ac);
+            *addr0 = boot;
+            *flush = 0x1;
+            IOSleep(100);
+            snprintf(buf, sizeof(buf), "[usb] DPU flip: phys=%llx boot=%08x flush_after=%08x frames %u->%u restored flush=%08x\r\n",
+                     (unsigned long long)phys, boot, pending, f0, f1, *flush);
+            s.reply.writeStr(buf);
+        }
     } else if (strEq(raw, "usb") || strEq(raw, "usb.status")) {
         snprintf(buf, sizeof(buf),
                  "[usb] USB: cfg=%u mps=%u dtr=%u dsts=0x%08x gctl=0x%08x dctl=0x%08x phy2=0x%08x qhs=0x%08x qss=0x%08x events=%u resets=%u\r\n",
@@ -932,10 +1033,15 @@ static bool bringUpController(TerminalSession &s) {
     UsbHw &hw = s.hw;
     if (!hw.dmaVirt) {
         char why[96];
-        hw.dmaDesc = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        // ruan-usbdbg-arena=1 (vildangil's dizi switch): skip the allocation and take the low-bank arena. dizi's allocation landed in
+        // high memory and the host reset the port over and over (usb r1424 c0); the UFS-root variant frees DarwinBoot's window, so ruan's
+        // allocation lands elsewhere too (build-ramroot.sh UFS=1 sets it).
+        uint32_t forceArena = 0;
+        (void)PE_parse_boot_argn("ruan-usbdbg-arena", &forceArena, sizeof(forceArena));
+        if (!forceArena) hw.dmaDesc = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
             kernel_task,
             static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryPhysicallyContiguous),
-            DMA_TOTAL_BYTES, 0xFFFFFFF000ULL);
+            DMA_TOTAL_BYTES, 0xFFFFF000ULL);
         const IOReturn prep = hw.dmaDesc ? hw.dmaDesc->prepare() : kIOReturnNoMemory;
         addr64_t segLen = 0;
         if (hw.dmaDesc && prep == kIOReturnSuccess) {
@@ -1020,11 +1126,13 @@ static bool bringUpController(TerminalSession &s) {
     hw.wr(QSCRATCH_SS_PHY_CTRL, hw.rd(QSCRATCH_SS_PHY_CTRL) | QSCRATCH_LANE0_PWR_PRESENT);
 
     // 3. OEM UsbfnDwc3Dxe DwcInitialize (0x39cc..0x40e0): device CSFTRST, then configure DWC3 core
+    logStage("usb: DWC3 CSFTRST enter");
     hw.wr(DWC3_DCTL, (hw.rd(DWC3_DCTL) & ~DWC3_DCTL_RUN_STOP) | DWC3_DCTL_CSFTRST);
     for (unsigned i = 0; i < 100000; ++i) {
         if ((hw.rd(DWC3_DCTL) & DWC3_DCTL_CSFTRST) == 0u) break;
         IODelay(5);
     }
+    logStage("usb: DWC3 CSFTRST done");
 
     hw.wr(DWC3_DCTL, (hw.rd(DWC3_DCTL) & ~(0x1F000000u | DWC3_DCTL_RUN_STOP)) | 0x10F00000u);
     hw.wr(DWC3_GSBUSCFG0, hw.rd(DWC3_GSBUSCFG0) | 0x0Eu);
@@ -1114,7 +1222,12 @@ static void usbDebugThread(void *arg, int waitResult) {
     s->ramoops = reinterpret_cast<volatile const uint8_t *>(
         mapRangeUncached(J716F_RAMOOPS_BASE, J716F_RAMOOPS_SIZE, s->ramoopsMap));
 
-    if (!bringUpController(*s)) return;
+    logStage("usb: controller init starting");
+    if (!bringUpController(*s)) {
+        logStage("usb: bringUpController failed");
+        return;
+    }
+    logStage("usb: controller init success");
     gSession = s;
 
     uint8_t *txScratch = static_cast<uint8_t *>(IOMalloc(DMA_EP3_MAX_CHUNK));

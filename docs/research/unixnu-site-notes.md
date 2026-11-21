@@ -110,6 +110,9 @@ cupid, asteroids, zizhan, aston, droidvm, garnet. Device pages are generated fro
   as our GPU alias fix); enable UTRCE only and find completions from the doorbell bits; poll 200 us then sleep;
   `native-ufs-wait=1`/`native-ufs-spin-us`; `ufs-bench=1`.
 
+- **2026-11-19:** ported as the UFS=1 build variant (rbu82u, built, not booted/flashed): IPADOS-BRINGUP.md §27, with the
+  install procedure (needs the user's OK, erases Android userdata).
+
 ## 6. Metal performance (R2507), GMEM/UBWC on A7xx
 - https://unixnu.com/porting/gpu#render-mode, #scheduling, #memory-path; https://unixnu.com/drivers/adreno-metal; drivers/adreno740
 - R2507 (#292–#298): AdrenoMetal submodule `73d582f` → `8c7f950` (dev `46e7cc96` + `0063-main-optimizations...patch`):

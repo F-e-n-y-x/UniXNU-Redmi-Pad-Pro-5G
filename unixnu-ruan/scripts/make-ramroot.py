@@ -166,7 +166,15 @@ def select(slt, work):
     spec.loader.exec_module(pick)
     pick.STAGED_APPS = '\0'                        # staged apps stay under private/var, which is not taken
     pick.MAX_FONT, pick.TRIMMED_FONTS = 8 << 20, ()
+    # Metal shader libraries stay: HakiOS (no GPU) skipped .metallib, but on the Adreno track RenderBox (widgets) and other Metal
+    # clients abort without their default.metallib (rbu125u: "RenderBox: unable to load shader library").
+    pick.SKIP_EXT = tuple(e for e in pick.SKIP_EXT if e != '.metallib')
+    pick.SKIP_APP_EXT = tuple(e for e in pick.SKIP_APP_EXT if e != '.metallib')
     pick.SKIP_SYSTEM_LIBRARY += ('OnBoardingBundles', 'Health')
+    # The Collections lock-screen poster: XPC kills it every ~5 s (ns 7 code 3, likely its launch check-in while the Metal stack
+    # loads), and a touch on its dead scene makes SpringBoard assert (FBS processIdentity, rbu130u-rbu133u). Without it PosterBoard
+    # falls back to another poster. shortcut: drop it until Metal start-up is fast enough, then restore.
+    pick.SKIP_PREFIX += ('System/Library/PrivateFrameworks/WallpaperKit.framework/PlugIns/CollectionsPoster.appex/',)
     pick.SKIP_PREFIX += tuple(f'System/Library/{name}/' for name in ('OnBoardingBundles', 'Health')) + \
         tuple(f'System/Library/PrivateFrameworks/{name}.framework/' for name in SKIP_FRAMEWORKS) + \
         tuple(f'System/Library/Frameworks/{name}.framework/' for name in SKIP_FRAMEWORKS)
@@ -410,7 +418,10 @@ SEED_PREFERENCES = {
     'com.apple.Accessibility': {'ReduceMotionEnabled': True, 'ReduceMotionReduceSlideTransitionsPreference': True,
                                 'EnhancedBackgroundContrastEnabled': True},
 }
-DISABLED_JOBS = ('com.apple.watchdogd', 'com.apple.identityservicesd', 'com.apple.locationd', 'com.apple.CommCenter',
+DISABLED_JOBS = (
+                 # rbu133u: no cellular/NFC/Siri/iCloud on this tablet; these crash-looped or churned (docs/research/opt/daemons-memory.md)
+                 'com.apple.CommCenterMobileHelper', 'com.apple.nfcd', 'com.apple.seld', 'com.apple.seserviced', 'com.apple.MobileInternetSharing', 'com.apple.accessoryupdaterd', 'com.apple.betaenrollmentd', 'com.apple.ap.adprivacyd', 'com.apple.studentd', 'com.apple.tipsd', 'com.apple.financed', 'com.apple.icloud.fmfd', 'com.apple.icloud.fmflocatord', 'com.apple.routined', 'com.apple.suggestd', 'com.apple.triald', 'com.apple.PowerUIAgent', 'com.apple.dataaccess.dataaccessd', 'com.apple.syncdefaultsd', 'com.apple.wifianalyticsd', 'com.apple.transparencyd', 'com.apple.icloudmailagent', 'com.apple.security.cloudkeychainproxy3', 'com.apple.ptpd', 
+                 'com.apple.watchdogd', 'com.apple.identityservicesd', 'com.apple.locationd', 'com.apple.CommCenter',
                  # iconservicesagent stays enabled: disabled (amethyst's list), every icon on the home screen is a blank
                  # placeholder (rb14f, 2026-11-14). It keeps its cache in the system group container on Data.
                  'com.apple.bluetoothd',

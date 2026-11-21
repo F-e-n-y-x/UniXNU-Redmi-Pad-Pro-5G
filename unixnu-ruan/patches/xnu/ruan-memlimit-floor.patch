@@ -1,0 +1,26 @@
+ruan: ruan-memlimit-floor=<MB> raises per-process footprint limits below it.
+
+The Adreno/Turnip Metal stack runs inside each Metal client, so small extensions (CollectionsPoster 15 MB ActiveHard)
+exceed their limit at GPU start and die; SpringBoard then asserts on their dead scene (FBS "processIdentity", rbu116u).
+Off without the boot-arg.
+
+--- a/osfmk/kern/task.c
++++ b/osfmk/kern/task.c
+@@ -7380,6 +7380,17 @@
+ {
+ 	ledger_amount_t old;
+ 	kern_return_t ret;
++	static int ruan_memlimit_floor = -1;
++
++	/* ruan: ruan-memlimit-floor=<MB> raises every per-process footprint limit below it (in-process GPU driver memory) */
++	if (ruan_memlimit_floor < 0) {
++		int floor_mb = 0;
++		PE_parse_boot_argn("ruan-memlimit-floor", &floor_mb, sizeof(floor_mb));
++		ruan_memlimit_floor = floor_mb;
++	}
++	if (new_limit_mb > 0 && new_limit_mb < ruan_memlimit_floor) {
++		new_limit_mb = ruan_memlimit_floor;
++	}
+ #if DEVELOPMENT || DEBUG
+ 	diagthreshold_check_return diag_threshold_validity;
+ #endif
