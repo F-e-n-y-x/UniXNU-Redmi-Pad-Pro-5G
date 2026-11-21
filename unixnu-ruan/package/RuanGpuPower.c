@@ -26,6 +26,7 @@
 #include "RuanA710HwInit.h"
 #include "RuanA710Pm4.h"
 #include "RuanBuiltinFw.h"
+#include "RuanAdrenoGlue.h"   // gpu 17/18: UniXNU's Adreno740 driver on top of this power-up (package/RuanAdrenoGlue.cpp)
 
 extern void boot_progress_stage(const char *s);
 extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, uint32_t flags);
@@ -113,8 +114,12 @@ static int gpu_s3_writable(uint32_t off)
 	if (off >= RUAN_CP_RB_BASE * 4u && off <= RUAN_CP_SQE_CNTL * 4u) return 1;
 	if (off == RUAN_CP_BV_RB_RPTR_ADDR_LO * 4u || off == RUAN_CP_BV_RB_RPTR_ADDR_HI * 4u) return 1;
 	if (off == RUAN_CP_SQE_INSTR_BASE_LO * 4u || off == RUAN_CP_SQE_INSTR_BASE_HI * 4u) return 1;
+	if (off == 0x00885u * 4u) return 1;   /* CP_SCRATCH(2): NativeAdrenoRing::program clears it (gpu 17) */
 	if (off == RUAN_RBBM_PERFCTR_CNTL * 4u || off == RUAN_RBBM_PERFCTR_GPU_BUSY_MASKED * 4u || off == RUAN_RBBM_INTERFACE_HANG_INT_CNTL * 4u) return 1;
-	if (off >= 0x00e80u * 4u && off <= 0x00e88u * 4u) return 1;   /* UCHE */
+	if (off >= RUAN_UCHE_MODE_CNTL * 4u && off <= RUAN_UCHE_CLIENT_PF * 4u) return 1;   /* UCHE 0xe01..0xe19 */
+	if (off >= RUAN_RBBM_SECVID_TSB_TRUSTED_BASE_LO * 4u && off <= RUAN_RBBM_SECVID_TSB_CNTL * 4u) return 1;   /* SECVID TSB */
+	if (off == RUAN_UCHE_CMDQ_CONFIG * 4u || off == RUAN_RB_NC_MODE_CNTL * 4u || off == RUAN_TPL1_NC_MODE_CNTL * 4u ||
+	    off == RUAN_SP_NC_MODE_CNTL * 4u || off == RUAN_GRAS_NC_MODE_CNTL * 4u || off == RUAN_RB_CMP_DBG_ECO_CNTL * 4u) return 1;
 	if (off == 0x00e3au * 4u) return 1;   /* UCHE_GBIF_GX_CONFIG */
 	for (unsigned i = 0; i < RUAN_A710_HWCG_COUNT; i++) if (off == ruan_a710_hwcg[i].reg * 4u) return 1;
 	for (unsigned i = 0; i < RUAN_A710_GBIF_COUNT; i++) if (off == ruan_a710_gbif[i].reg * 4u) return 1;
@@ -868,7 +873,121 @@ static int ruan_arc_vote(const struct ruan_cmddb_res *pri, const struct ruan_cmd
 	return 1;
 }
 
-static void ruan_build_hfi_tables(uint32_t *perf, uint32_t *bw)
+/* ruan-gpu-perf=1: the full KGSL gen7 tables (adreno_gen7_rpmh.c build_dcvs_table / build_bw_table) from the live DT
+ * (ruan-live.dts:16151-16290, speed-bin 0, ddr_device_type 7 = LPDDR4X). Ascending, index = HFI perf index. */
+struct ruan_gpu_opp { uint32_t khz, vlvl, bus; };
+static const struct ruan_gpu_opp ruan_gpu_opps[] = {
+	{295000, 0x38, 2}, {345000, 0x40, 2}, {500000, 0x80, 4}, {600000, 0xc0, 5}, {650000, 0xe0, 6},
+	{734000, 0x100, 7}, {816000, 0x140, 8}, {875000, 0x180, 8}, {940000, 0x1a0, 8},
+};
+#define RUAN_GPU_OPPS (sizeof ruan_gpu_opps / sizeof ruan_gpu_opps[0])
+/* qcom,bus-table-ddr7 (KB/s); the pwrlevels' qcom,bus-freq-ddr7 index this */
+static const uint32_t ruan_ddr7_kbps[] = {0, 781250, 2136718, 3000000, 3972656, 5285156, 6074218, 6671875, 8332031};
+#define RUAN_DDR7_LEVELS (sizeof ruan_ddr7_kbps / sizeof ruan_ddr7_kbps[0])
+static unsigned perf_level;   /* the boot perf index once the multi-level tables are in, else 0 (ruan-gpu-dcvs needs it) */
+
+/* KGSL rpmh_arc_cmds: entries up to the zero padding */
+static unsigned ruan_arc_num(const struct ruan_cmddb_res *r)
+{
+	unsigned n;
+	for (n = 1; n < r->length / 2; n++)
+		if (ruan_le16(r->aux + 2 * (n - 1)) && !ruan_le16(r->aux + 2 * n)) break;
+	return n;
+}
+
+/* KGSL setup_volt_dependency_tbl for one level: fails (0) when the primary rail has no level >= vlvl */
+static int ruan_arc_vote_kgsl(const struct ruan_cmddb_res *pri, const struct ruan_cmddb_res *sec, uint32_t vlvl, uint32_t *vote)
+{
+	if (!pri->found || pri->length < 2 || !sec->found || sec->length < 2) return 0;
+	unsigned pn = ruan_arc_num(pri), sn = ruan_arc_num(sec), k, j;
+	for (k = 0; k < pn && ruan_le16(pri->aux + 2 * k) < vlvl; k++) {}
+	if (k == pn) return 0;
+	uint32_t cur = ruan_le16(pri->aux + 2 * k);
+	for (j = 0; j < sn; j++)
+		if (ruan_le16(sec->aux + 2 * j) >= cur || j + 1 == sn) break;
+	*vote = (cur << 16) | (j << 8) | k;
+	return 1;
+}
+
+/* KGSL tcs_cmd_data with ab = 0, ib = kbps: BCM_TCS_CMD(commit, valid, x, y); buswidth 0 = fixed (ACV) */
+static uint32_t ruan_bcm_data(const struct ruan_cmddb_res *r, uint32_t buswidth, int commit, uint32_t kbps)
+{
+	uint32_t d = commit ? (1u << 30) : 0;
+	if (!kbps) return d;
+	if (!buswidth) return d | (1u << 29) | 0x8u;
+	uint64_t y = (uint64_t)kbps * ruan_le16(r->aux + 4) / buswidth;
+	uint32_t unit = (uint32_t)r->aux[0] | (uint32_t)r->aux[1] << 8 | (uint32_t)r->aux[2] << 16 | (uint32_t)r->aux[3] << 24;
+	y = y * 1000u / unit;
+	if (!y) y = 1;
+	if (y > 0x3fff) y = 0x3fff;
+	return d | (1u << 29) | (uint32_t)y;
+}
+
+/* res: gfx.lvl, mx.lvl, SH0, MC0, ACV, CN0 (indices 0, 1, 3, 4, 5, 10). Fills perf/bw only when every input checks out. */
+static int ruan_build_perf_tables(const struct ruan_cmddb_res *res, uint32_t gmu_vote, uint32_t *perf, uint32_t *bw)
+{
+	static const unsigned bcm[3] = {3, 4, 5};
+	static const uint32_t buswidth[3] = {16, 4, 0};   /* gen7_ddr_bcms: SH0 16, MC0 4, ACV fixed */
+	uint32_t votes[RUAN_GPU_OPPS];
+	char msg[96];
+
+	for (unsigned i = 0; i < 3; i++) {
+		const struct ruan_cmddb_res *r = &res[bcm[i]];
+		if (!r->found || r->length != 8 || r->aux[7] || (buswidth[i] && (!ruan_le16(r->aux + 4) || !(r->aux[0] | r->aux[1] | r->aux[2] | r->aux[3])))) {
+			result_line("gpu perf: BCM aux missing/odd, keeping the one-level tables");
+			return 0;
+		}
+	}
+	if (!res[10].found || !res[10].address || res[10].length != 8) {
+		result_line("gpu perf: CN0 missing in cmd-db, keeping the one-level tables");
+		return 0;
+	}
+	for (unsigned i = 0; i < RUAN_GPU_OPPS; i++) {
+		if (!ruan_arc_vote_kgsl(&res[0], &res[1], ruan_gpu_opps[i].vlvl, &votes[i])) {
+			snprintf(msg, sizeof msg, "gpu perf: gfx.lvl has no corner >= 0x%x, keeping the one-level tables", ruan_gpu_opps[i].vlvl);
+			result_line(msg);
+			return 0;
+		}
+	}
+
+	memset(perf, 0, 58 * sizeof(uint32_t));
+	memset(bw, 0, 159 * sizeof(uint32_t));
+	perf[0] = 1 + RUAN_GPU_OPPS;
+	perf[1] = 2;
+	perf[2] = 0; perf[3] = 0xffffffffu; perf[4] = 0;    /* level 0: off; cx_vote off (no qcom,cx-level in DT) */
+	for (unsigned i = 0; i < RUAN_GPU_OPPS; i++) {
+		perf[5 + 3 * i] = votes[i];
+		perf[6 + 3 * i] = 0xffffffffu;
+		perf[7 + 3 * i] = ruan_gpu_opps[i].khz;
+		snprintf(msg, sizeof msg, "gpu perf: L%u %u kHz vlvl 0x%x vote %08x bw %u", i + 1, ruan_gpu_opps[i].khz,
+			ruan_gpu_opps[i].vlvl, votes[i], ruan_gpu_opps[i].bus);
+		result_line(msg);
+	}
+	perf[50] = 0; perf[51] = 0; perf[52] = gmu_vote; perf[53] = 200000;
+
+	bw[0] = RUAN_DDR7_LEVELS;
+	bw[1] = 1;
+	bw[2] = 3;
+	bw[3] = 1;
+	bw[5] = res[10].address;
+	bw[11] = ruan_bcm_data(&res[10], 4, 1, 0);        /* qcom,bus-table-cnoc <0 100> */
+	bw[17] = ruan_bcm_data(&res[10], 4, 1, 100);
+	for (unsigned j = 0; j < 3; j++) {
+		int commit = j == 2 || res[bcm[j]].aux[6] != res[bcm[j + 1]].aux[6];   /* aux[6] = vcd */
+		if (commit) bw[4] |= 1u << j;
+		bw[23 + j] = res[bcm[j]].address;
+		for (unsigned i = 0; i < RUAN_DDR7_LEVELS; i++)
+			bw[31 + 8 * i + j] = ruan_bcm_data(&res[bcm[j]], buswidth[j], commit, ruan_ddr7_kbps[i]);
+	}
+	for (unsigned i = 0; i < RUAN_DDR7_LEVELS; i++) {
+		snprintf(msg, sizeof msg, "gpu perf: bw%u %u KB/s sh0 %08x mc0 %08x acv %08x", i, ruan_ddr7_kbps[i],
+			bw[31 + 8 * i], bw[32 + 8 * i], bw[33 + 8 * i]);
+		result_line(msg);
+	}
+	return 1;
+}
+
+static void ruan_build_hfi_tables(uint32_t *perf, uint32_t *bw, uint32_t *boot_vote)
 {
 	memset(perf, 0, 58 * sizeof(uint32_t));
 	memset(bw, 0, 159 * sizeof(uint32_t));
@@ -880,16 +999,20 @@ static void ruan_build_hfi_tables(uint32_t *perf, uint32_t *bw)
 	uint32_t sh0_addr = 0x50004u;
 	uint32_t mc0_addr = 0x50008u;
 	uint32_t acv_addr = 0x5000cu;
+	uint32_t perf_on = 0;
+	int perf_ok = 0;
+	PE_parse_boot_argn("ruan-gpu-perf", &perf_on, sizeof(perf_on));
+	boot_vote[0] = 1; boot_vote[1] = 1; boot_vote[2] = 1;   /* GX_BW_PERF_VOTE {ack_type block, perf idx, bw idx} */
 
 	vm_offset_t cdb_va = ml_io_map_unmappable((vm_offset_t)RUAN_CMD_DB_PHYS, (vm_size_t)RUAN_CMD_DB_SIZE, 7);
 	if (cdb_va) {
 		uint32_t magic = *(volatile uint32_t *)(cdb_va + 4);
 		if (magic == RUAN_CMD_DB_MAGIC) {
 			result_line("gpu s3_gx: cmd-db magic 0x0c0330db OK at 0x80860000");
-			static const char *const res_names[10] = {
-				"gfx.lvl", "mx.lvl", "cx.lvl", "SH0", "MC0", "ACV", "SH2", "xo.lvl", "SN15", "SN3"
+			static const char *const res_names[11] = {
+				"gfx.lvl", "mx.lvl", "cx.lvl", "SH0", "MC0", "ACV", "SH2", "xo.lvl", "SN15", "SN3", "CN0"
 			};
-			struct ruan_cmddb_res res[10];
+			struct ruan_cmddb_res res[11];
 			memset(res, 0, sizeof(res));
 
 			for (unsigned slave = 0; slave < 8; slave++) {
@@ -907,7 +1030,7 @@ static void ruan_build_hfi_tables(uint32_t *perf, uint32_t *bw)
 					uint32_t r_addr = *(volatile uint32_t *)(cdb_va + rec_off + i * 24 + 16);
 					uint32_t r_aux = *(volatile uint32_t *)(cdb_va + rec_off + i * 24 + 20);
 
-					for (unsigned n = 0; n < 10; n++) {
+					for (unsigned n = 0; n < 11; n++) {
 						if (!res[n].found && ruan_res_match(r0, r1, res_names[n])) {
 							res[n].found = 1;
 							res[n].address = r_addr;
@@ -922,7 +1045,10 @@ static void ruan_build_hfi_tables(uint32_t *perf, uint32_t *bw)
 				}
 			}
 
-			if (res[0].found && res[1].found) (void)ruan_arc_vote(&res[0], &res[1], 64, &gpu_vote);
+			/* ruan-gpu-corner=<RPMh level>: GX corner for the active level (DT gpu-pwrlevels: 0x100 NOM = 734 MHz); default 64 (LOW_SVS) */
+			uint32_t corner = 256;   /* NOM: 734 MHz (rbu124u+); was 64 LOW_SVS 295 MHz */
+			PE_parse_boot_argn("ruan-gpu-corner", &corner, sizeof(corner));
+			if (res[0].found && res[1].found) (void)ruan_arc_vote(&res[0], &res[1], corner, &gpu_vote);
 			if (res[2].found && res[1].found) (void)ruan_arc_vote(&res[2], &res[1], 48, &gmu_vote);
 			if (res[6].found) cn0_addr = res[6].address;
 			if (res[3].found) sh0_addr = res[3].address;
@@ -933,12 +1059,27 @@ static void ruan_build_hfi_tables(uint32_t *perf, uint32_t *bw)
 			snprintf(msg, sizeof msg, "gpu s3_gx: cmd-db ARC gpu=%08x gmu=%08x sh0=%05x mc0=%05x acv=%05x",
 				gpu_vote, gmu_vote, sh0_addr, mc0_addr, acv_addr);
 			result_line(msg);
+			if (perf_on == 1) perf_ok = ruan_build_perf_tables(res, gmu_vote, perf, bw);
 		} else {
 			result_line("gpu s3_gx: cmd-db magic mismatch, using fallback tables");
 		}
 		ml_io_unmap(cdb_va, (vm_size_t)RUAN_CMD_DB_SIZE);
 	} else {
 		result_line("gpu s3_gx: cmd-db map failed, using fallback tables");
+	}
+	if (perf_ok) {
+		/* ruan-gpu-level=N: fixed HFI perf index, 1 = 295 ... 9 = 940 MHz; default 6 = 734 MHz (NOM) */
+		uint32_t level = 6;
+		PE_parse_boot_argn("ruan-gpu-level", &level, sizeof(level));
+		if (level < 1) level = 1;
+		if (level > RUAN_GPU_OPPS) level = RUAN_GPU_OPPS;
+		boot_vote[1] = level;
+		perf_level = level;
+		boot_vote[2] = ruan_gpu_opps[level - 1].bus;
+		char msg[64];
+		snprintf(msg, sizeof msg, "gpu perf: boot vote L%u %u kHz bw%u", level, ruan_gpu_opps[level - 1].khz, boot_vote[2]);
+		result_line(msg);
+		return;
 	}
 
 	/* 1. Build DCVS / Performance Table (58 words) */
@@ -949,7 +1090,9 @@ static void ruan_build_hfi_tables(uint32_t *perf, uint32_t *bw)
 	perf[4] = 0;              /* Level 0: 0 kHz */
 	perf[5] = gpu_vote;       /* Level 1: active vote */
 	perf[6] = 0xffffffffu;    /* Level 1: cx_vote disabled */
-	perf[7] = 295000;         /* Level 1: 295 MHz (lowest active on A710) */
+	perf[7] = 734000;         /* Level 1: 734 MHz at NOM (ruan-gpu-khz overrides); was 295 MHz */
+	/* ruan-gpu-khz=<kHz>: the active level's clock; must match ruan-gpu-corner's DT pwrlevel (734000 with 0x100) */
+	{ uint32_t khz = 0; if (PE_parse_boot_argn("ruan-gpu-khz", &khz, sizeof(khz)) && khz >= 295000 && khz <= 940000) perf[7] = khz; }
 	perf[50] = 0;             /* GMU Level 0: vote off */
 	perf[51] = 0;             /* GMU Level 0: 0 kHz */
 	perf[52] = gmu_vote;      /* GMU Level 1: active vote */
@@ -1012,7 +1155,8 @@ static void s3_gx_on(struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const st
 	if (!gmu_hfi_started) {
 		uint32_t perf_table[58];
 		uint32_t bw_table[159];
-		ruan_build_hfi_tables(perf_table, bw_table);
+		uint32_t vote[3];
+		ruan_build_hfi_tables(perf_table, bw_table, vote);
 
 		result_line("gpu s3_gx: send HFI Msg 4 (H2F_MSG_PERF_TBL, 58 words)");
 		uint32_t out[16] = {0};
@@ -1040,7 +1184,6 @@ static void s3_gx_on(struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const st
 		}
 
 		result_line("gpu s3_gx: send HFI Msg 30 (H2F_MSG_GX_BW_PERF_VOTE, 3 words)");
-		const uint32_t vote[3] = {1, 1, 1};
 		stat = AdrenoHfiExchange(&gmu_hfi, 30, vote, 3, 500, hfi_wait_once, out, 16, &count, &fw_err);
 		if (stat != AdrenoHfiSuccess) {
 			snprintf(gx->why, sizeof gx->why, "HFI Msg 30 PERF_VOTE failed: stat %d err %u", stat, fw_err);
@@ -1136,6 +1279,10 @@ struct ruan_gpu_s3_hw {
 };
 static struct ruan_gpu_s3_hw ruan_gpu_s3_hw_result;
 static struct ruan_pt stream0_pt;
+// gpu 17/18: hw_init without ruan's own stream-0 tables and bank-2 context; NativeAdrenoGpuContext programs bank 2 instead.
+// stream0_owner: 1 once this file's stream 0 owns bank 2 (gpu 9..16), 2 once the glue's context does; one owner per boot,
+// since a bank is never torn down here (Gunyah).
+static int s3_hw_skip_stream0, stream0_owner;
 
 static void s3_hw_init(struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
 {
@@ -1170,7 +1317,28 @@ static void s3_hw_init(struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, stru
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_TRAP_BASE_HI * 4u, 0x0001ffffu);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_WRITE_THRU_BASE_LO * 4u, 0xfffff000u);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_WRITE_THRU_BASE_HI * 4u, 0x0001ffffu);
-	(void)wr(NULL, GPB_WIN_GPU, 0x00e85u * 4u, 0x800000u);
+	// gen7_start (KGSL, the A710's own driver) from here on; GMEM range as msm a6xx_hw_init for a7xx: 16 MiB + gmem (512 KiB, the
+	// gmem_base RuanAdrenoGlue.cpp reports to Turnip).
+	// No UCHE_GMEM_RANGE: KGSL's gen7_3_0 (adreno-gpulist.h) has gmem_base 0 and never writes it; the registers read 0/0 after our
+	// 16 MiB writes (rbu52b). RuanAdrenoGlue.cpp reports gmem_base 0 to Turnip to match.
+	// _set_secvid (KGSL gen7_start, sheng gpuHwInit): the trusted (secure) buffer region off. Never written before rbu55, so its
+	// reset value decided which GPU addresses count as trusted; unprivileged (IB) accesses there are dropped without a fault.
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_SECVID_TSB_CNTL * 4u, 0u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_SECVID_TSB_TRUSTED_BASE_LO * 4u, 0u);
+	(void)wr(NULL, GPB_WIN_GPU, (RUAN_RBBM_SECVID_TSB_TRUSTED_BASE_LO + 1u) * 4u, 0u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_SECVID_TSB_TRUSTED_SIZE * 4u, 0u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_CACHE_WAYS * 4u, 0x800000u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_CMDQ_CONFIG * 4u, (6u << 16) | (6u << 12) | (9u << 8) | (1u << 3) | (1u << 2) | 2u);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_RB_NC_MODE_CNTL * 4u, (1u << 11) | (1u << 4) | (3u << 1));
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_TPL1_NC_MODE_CNTL * 4u, 3u << 1);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_SP_NC_MODE_CNTL * 4u, (2u << 4) | (3u << 1));
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_GRAS_NC_MODE_CNTL * 4u, 3u << 5);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_MODE_CNTL * 4u, 3u << 21);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_CLIENT_PF * 4u, 1u);
+	{
+		uint32_t eco = 0;
+		if (!rd(NULL, GPB_WIN_GPU, RUAN_RB_CMP_DBG_ECO_CNTL * 4u, &eco)) (void)wr(NULL, GPB_WIN_GPU, RUAN_RB_CMP_DBG_ECO_CNTL * 4u, eco | (1u << 11));
+	}
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_CP_AHB_CNTL * 4u, 0x1u);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_PERFCTR_CNTL * 4u, 0x1u);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_INTERFACE_HANG_INT_CNTL * 4u, (1u << 30) | (RUAN_A710_HANG_DETECT_CYCLES & 0x0fffffffu));
@@ -1199,6 +1367,13 @@ static void s3_hw_init(struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, stru
 		h->hwcg_writes++;
 	}
 
+	if (s3_hw_skip_stream0) {
+		// the bank-2 page must still be known: allowed() lets the glue's context writes through only there
+		gpu_stream0_cb_off = ruan_smmu_survey_result.id1 ? cb_offset(ruan_smmu_survey_result.id1, GPU_STREAM0_BANK) : 0x22000u;
+		(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_STATUS * 4u, &h->rbbm_status);
+		h->ok = 1;
+		return;
+	}
 	result_line("gpu s3_hw: Stream-0 page tables on GPU pool (+0x100000, 256 KiB)");
 	uint8_t *s0_cpu = pool_cpu + RUAN_S3_POOL_STREAM0_PT_OFF;
 	uint64_t s0_pa = pool_pa + RUAN_S3_POOL_STREAM0_PT_OFF;
@@ -1263,6 +1438,7 @@ static void s3_hw_init(struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, stru
 	(void)rd(NULL, W_SMMUF, gpu_stream0_cb_off + CB_SCTLR, &h->sctlr_after);
 	h->ttbr0_lo = (uint32_t)s0_pa;
 	(void)rd(NULL, GPB_WIN_GPU, RUAN_RBBM_STATUS * 4u, &h->rbbm_status);
+	stream0_owner = 1;
 	h->ok = 1;
 }
 
@@ -1598,12 +1774,12 @@ static void s4_fb_blit(struct ruan_gpu_s4_fb *fb, struct ruan_gpu_s3_blitter *bl
 	result_line("gpu s4_fb: draw test rectangle to GOP framebuffer (0x50000000 -> phys 0xb8000000)");
 	volatile uint32_t *rb = (volatile uint32_t *)(void *)(pool_cpu + RUAN_S3_POOL_RB_OFF);
 
-	/* Draw a 100x40 vibrant neon magenta test box on GOP screen at (1230, 80) */
-	/* 2560x1600 32-bpp ARGB8888; stride = 2560 pixels = 10240 bytes */
-	const unsigned x_start = 1230;
-	const unsigned y_start = 80;
-	const unsigned width = 100;
-	const unsigned height = 40;
+	/* Draw a 60x24 vibrant neon magenta test box in top-right corner at (1520, 4) */
+	/* 1600x2560 32-bpp ARGB8888; stride = 1600 pixels = 6400 bytes */
+	const unsigned x_start = 1520;
+	const unsigned y_start = 4;
+	const unsigned width = 60;
+	const unsigned height = 24;
 	const uint32_t color = 0xFFFF00FFu; /* Neon Magenta */
 
 	for (unsigned y = 0; y < height; y++) {
@@ -1612,7 +1788,7 @@ static void s4_fb_blit(struct ruan_gpu_s4_fb *fb, struct ruan_gpu_s3_blitter *bl
 			strlcpy(fb->why, "ring full on s4_fb_blit", sizeof fb->why);
 			return;
 		}
-		uint32_t line_gpu_va = RUAN_S3_GPU_VA_FB + ((y_start + y) * 2560u + x_start) * 4u;
+		uint32_t line_gpu_va = RUAN_S3_GPU_VA_FB + ((y_start + y) * 1600u + x_start) * 4u;
 		rb[w++] = cp_type7_packet(CP_MEM_WRITE, 2 + width);
 		rb[w++] = line_gpu_va;
 		rb[w++] = 0;
@@ -1838,14 +2014,204 @@ static void s5_fb_dma_blit(struct ruan_gpu_s5_fb *sfb, struct ruan_gpu_s5_m2m *m
 	}
 }
 
+// gpu 17 / 18 (boot-arg ruan-adreno=1): GX on as gpu 8, gen7 hw_init without stream 0 (gpu 9 minus the SMMU part), then
+// package/RuanAdrenoGlue.cpp: 17 = NativeAdreno GPU context on bank 2 + CP init + one fenced CP_MEM_WRITE, 18 = that plus
+// native_adreno_publish. Weak: a kernel without libRuanAdreno.a says "nolink".
+extern int ruan_adreno_glue_run(unsigned stage, const struct ruan_adreno_glue_io *io, char *row, size_t row_bytes)
+    __attribute__((weak_import));
+/* ruan-gpu-dcvs=1: GPU governor + tsens thermal cap (docs/research/opt/governors.md). Needs ruan-gpu-perf=1 (perf_level != 0) and
+ * gpu 16/17/18, the modes that keep the windows mapped. Every ~16 ms: busy share from GMU power counter 0 (KGSL gen7_start: AO
+ * CX_BUSY_MASK 0x23b0e = 0xff000000, SELECT_0 0x1f841 low byte 0x20, ENABLE 0x1f840 = 1; XOCLK_0_L/H 0x1f844/5 count 19.2 MHz
+ * ticks while busy); the lowest level whose clock keeps that work ~60 % busy, up at once, one level down after 4 calm windows,
+ * floor 3 (500 MHz), ceiling ruan-gpu-max-level (default 9). Each change is HFI msg 30 {1, perf idx, bus idx}, as the boot vote.
+ * Thermal cap: gpuss-0/1 = tsens0 (TM 0xc263000) sensors 11/12; TM_Sn_STATUS 0xa0 + 4n, bits 11:0 signed deci-C, bit 21 valid.
+ * Over 85 C the ceiling is level 6, over 95 C level 3; each limit lifts 5 C lower. No reading holds level 6.
+ * Locking: the governor is the only HFI sender while it runs; ruan_gpu_run (every other sender, and the only code that unmaps
+ * va[] or puts the GMU in reset) stops and joins it first and restarts it at the end. */
+typedef struct thread *thread_t;
+extern int kernel_thread_start_priority(void (*)(void *, int), void *, int, thread_t *);
+extern void thread_deallocate(thread_t);
+extern uint64_t mach_absolute_time(void);
+extern void absolutetime_to_nanoseconds(uint64_t, uint64_t *);
+#define DCVS_FLOOR 3u
+#define DCVS_TSENS0_TM 0x0c263000u
+#define GMU_IO(dw) (*(volatile uint32_t *)(va[W_GMU] + GMU_REG(dw)))
+static volatile uint32_t dcvs_stop, dcvs_running;
+/* Diagnostics: [0] running, [1] level, [2] thermal ceiling, [3] level changes, [4] failed votes, [5] busy per mille (1 s average),
+ * [6] hottest GPU sensor in deci-C (INT32_MIN: no valid reading), [7] seconds, [8] windows without a valid tsens reading */
+volatile int32_t ruan_gpu_dcvs[9];
+
+/* The level for a window: lowest perf index in [lo, hi] whose clock runs cur's work (busy_pm per mille) at <= 60 % busy. */
+static unsigned dcvs_want(unsigned cur, unsigned busy_pm, unsigned lo, unsigned hi)
+{
+	uint64_t need = (uint64_t)ruan_gpu_opps[cur - 1].khz * busy_pm / 600u;
+	unsigned w = lo;
+	while (w < hi && ruan_gpu_opps[w - 1].khz < need) w++;
+	return w;
+}
+
+/* Thermal ceiling from the hottest GPU sensor (deci-C) with 5 C hysteresis, never above top. */
+static unsigned dcvs_cap(unsigned cap, int32_t dc, unsigned top)
+{
+	if (dc == INT32_MIN) return top < 6u ? top : 6u;
+	unsigned hot = dc > 950 ? 3u : dc > 850 ? 6u : top, cool = dc > 900 ? 3u : dc > 800 ? 6u : top;
+	if (hot < cap) cap = hot;
+	else if (cool > cap) cap = cool;
+	return cap < top ? cap : top;
+}
+
+static int32_t tsens_dc(volatile uint32_t *tm, unsigned s)
+{
+	for (unsigned i = 0; i < 3; i++) {   /* tsens.c: up to three reads for the valid bit */
+		uint32_t v = tm[(0xa0u + 4u * s) / 4u];
+		if (v & (1u << 21)) return (int32_t)(v << 20) >> 20;
+	}
+	return INT32_MIN;
+}
+
+static uint64_t dcvs_busy_ticks(void)
+{
+	uint32_t hi = GMU_IO(0x1f845), lo = GMU_IO(0x1f844), hi2 = GMU_IO(0x1f845);
+	if (hi2 != hi) lo = GMU_IO(0x1f844);
+	return (uint64_t)hi2 << 32 | lo;
+}
+
+static int dcvs_vote(unsigned l)
+{
+	const uint32_t v[3] = {1u, l, ruan_gpu_opps[l - 1].bus};
+	uint32_t out[16], fw_err = 0;
+	size_t count = 0;
+	return AdrenoHfiExchange(&gmu_hfi, 30, v, 3, 500, hfi_wait_once, out, 16, &count, &fw_err) == AdrenoHfiSuccess;
+}
+
+static void dcvs_thread(void *arg, int wres)
+{
+	(void)arg; (void)wres;
+	unsigned hi = 7 /* 816 MHz until the speed bin is read; ruan-gpu-max-level=9 allows 940 */, cur = ruan_gpu_dcvs[1] ? (unsigned)ruan_gpu_dcvs[1] : perf_level, cap, down = 0, fails = 0, n = 0, busy_sum = 0;
+	PE_parse_boot_argn("ruan-gpu-max-level", &hi, sizeof hi);
+	if (hi > RUAN_GPU_OPPS) hi = RUAN_GPU_OPPS;
+	if (hi < DCVS_FLOOR) hi = DCVS_FLOOR;
+	cap = hi;
+	vm_offset_t tm = ml_io_map_unmappable((vm_offset_t)DCVS_TSENS0_TM, 0x1000, 7);
+	GMU_IO(0x23b0e) = 0xff000000u;
+	GMU_IO(0x1f841) = (GMU_IO(0x1f841) & ~0xffu) | 0x20u;
+	GMU_IO(0x1f840) = 1u;
+	__asm__ volatile("dsb sy" ::: "memory");
+	uint64_t ticks = dcvs_busy_ticks(), t0 = mach_absolute_time();
+	ruan_gpu_dcvs[0] = 1;
+	kprintf("ruan-gpu: dcvs on, L%u, floor %u ceiling %u, tsens %s\n", cur, DCVS_FLOOR, hi, tm ? "mapped" : "MAP FAILED");
+	while (!dcvs_stop) {
+		delay(16000);
+		uint64_t now = mach_absolute_time(), tk = dcvs_busy_ticks(), ns = 0;
+		absolutetime_to_nanoseconds(now - t0, &ns);
+		uint64_t busy_ns = (tk - ticks) * 10000u / 192u;   /* 19.2 MHz ticks */
+		unsigned busy = ns ? (unsigned)(busy_ns >= ns ? 1000u : busy_ns * 1000u / ns) : 0;
+		ticks = tk, t0 = now;
+
+		int32_t dc = INT32_MIN;
+		for (unsigned s = 11; tm && s <= 12; s++) {
+			int32_t t = tsens_dc((volatile uint32_t *)tm, s);
+			if (t > dc) dc = t;
+		}
+		if (dc == INT32_MIN) ruan_gpu_dcvs[8]++;
+		unsigned ncap = dcvs_cap(cap, dc, hi);
+		if (ncap != cap) kprintf("ruan-gpu: dcvs thermal ceiling L%u -> L%u at %d dC\n", cap, ncap, dc);
+		cap = ncap;
+
+		unsigned want = dcvs_want(cur, busy, DCVS_FLOOR, cap);
+		if (want < cur && cur <= cap) want = ++down >= 4 ? cur - 1 : cur;   /* calm: one step after 4 windows */
+		else down = 0;
+		if (want != cur) {
+			down = 0;
+			if (dcvs_vote(want)) {
+				cur = want, fails = 0;
+				ruan_gpu_dcvs[3]++;
+			} else {
+				ruan_gpu_dcvs[4]++;
+				if (++fails >= 3) {   /* a timeout poisons the HFI session: stop voting */
+					kprintf("ruan-gpu: dcvs stopped, 3 failed votes (L%u -> L%u)\n", cur, want);
+					break;
+				}
+			}
+		}
+		ruan_gpu_dcvs[1] = (int32_t)cur;
+		ruan_gpu_dcvs[2] = (int32_t)cap;
+		busy_sum += busy;
+		if (++n == 62) {   /* ~1 s */
+			ruan_gpu_dcvs[5] = (int32_t)(busy_sum / n);
+			ruan_gpu_dcvs[6] = dc;
+			ruan_gpu_dcvs[7]++;
+			n = 0, busy_sum = 0;
+		}
+	}
+	if (tm) ml_io_unmap(tm, 0x1000);
+	ruan_gpu_dcvs[0] = 0;
+	__atomic_store_n(&dcvs_running, 0, __ATOMIC_RELEASE);
+}
+
+static void dcvs_start(void)
+{
+	uint32_t on = 0;
+	thread_t t;
+	if (!PE_parse_boot_argn("ruan-gpu-dcvs", &on, sizeof on) || on != 1 || !perf_level || !va[W_GMU] || dcvs_running) return;
+	dcvs_stop = 0;
+	dcvs_running = 1;
+	if (kernel_thread_start_priority(dcvs_thread, NULL, 80, &t) == KERN_SUCCESS) thread_deallocate(t);
+	else dcvs_running = 0;
+}
+
+/* Before any other HFI send, unmap or GMU reset: a vote in flight takes at most 500 x 100 us. */
+static void dcvs_stop_join(void)
+{
+	if (!dcvs_running) return;
+	dcvs_stop = 1;
+	for (unsigned i = 0; __atomic_load_n(&dcvs_running, __ATOMIC_ACQUIRE) && i < 200; i++) delay(10000);
+	if (dcvs_running) kprintf("ruan-gpu: dcvs did not stop in 2 s\n");
+}
+
+static int glue_gpu_rd(uint32_t reg, uint32_t *v) {return rd(NULL, GPB_WIN_GPU, reg * 4u, v);}
+static int glue_gpu_wr(uint32_t reg, uint32_t v) {return wr(NULL, GPB_WIN_GPU, reg * 4u, v);}
+static int glue_smmu_rd(uint32_t off, uint32_t *v) {return rd(NULL, W_SMMUF, off, v);}
+static int glue_smmu_wr(uint32_t off, uint32_t v) {return wr(NULL, W_SMMUF, off, v);}
+static char glue_row[64];
+static int s3_glue(unsigned mode, struct ruan_gpu_s3_gx *gx, struct ruan_gpu_s3_hw *hw, struct ruan_gpu_s2c *c, const struct ruan_gpu_s2b *b)
+{
+	unsigned on = 0;
+	glue_row[0] = 0;
+	if (!PE_parse_boot_argn("ruan-adreno", &on, sizeof on) || on != 1) {strlcpy(glue_row, "glue off (boot-arg ruan-adreno=1)", sizeof glue_row); return -1;}
+	if (!ruan_adreno_glue_run) {strlcpy(glue_row, "glue nolink", sizeof glue_row); return -1;}
+	// One owner of bank 2 per boot: ruan's stream 0 (gpu 9..16) leaves it enabled and is never torn down (Gunyah).
+	if (stream0_owner == 1) {strlcpy(glue_row, "glue: bank 2 is ruan's stream 0 (gpu 9..16 ran), reboot", sizeof glue_row); return -1;}
+	if (gmu_bank == GPU_STREAM0_BANK || gmu_slot == GPU_STREAM0_SLOT) {strlcpy(glue_row, "glue: GMU took bank 2 / slot 1", sizeof glue_row); return -1;}
+	s3_gx_on(gx, c, b);
+	if (gx->gx_on) {
+		s3_hw_skip_stream0 = 1;
+		s3_hw_init(hw, gx, c, b);
+		s3_hw_skip_stream0 = 0;
+	}
+	if (!hw->ok) {strlcpy(glue_row, "glue: GX/hw_init not ok", sizeof glue_row); return -1;}
+	stream0_owner = 2;
+	// rbu57: RBBM_SECVID_TRUST_CNTL is secure-locked (an HLOS write aborted, esr 0x96000010); secure mode is left through the zap
+	// shader instead (RuanAdrenoGlue.cpp zapExit, gpu-zap=1). `gpu` REGS keeps reading it (trust=).
+	if (!sqe_fw_data) sqe_fw_data = ruan_builtin_sqe_fw, sqe_fw_size = sizeof(ruan_builtin_sqe_fw);
+	const struct ruan_adreno_glue_io io = {
+		glue_gpu_rd, glue_gpu_wr, glue_smmu_rd, glue_smmu_wr, (uint32_t)len[W_SMMUF],
+		GPU_STREAM0_BANK, GPU_STREAM0_SLOT, RUAN_SMMU_SID_GPU, 0x400u,   // ruan DT: kgsl-smmu SID 0, mask 0x400 (rbu59b: 0x402 is refused by Gunyah, SEA)
+		sqe_fw_data, sqe_fw_size,
+		// past this file's pool layout (GMU 512 KiB, S3 buffers and stream-0 tables up to +0x240000), rounded to 4 MiB
+		RUAN_GPU_POOL_BASE + 0x400000u, RUAN_GPU_POOL_BYTES - 0x400000u,
+		result_line};
+	return ruan_adreno_glue_run(mode == 18 ? 2 : 1, &io, glue_row, sizeof glue_row);
+}
 
 int
 ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 {
+	dcvs_stop_join();
 	trace_fn = trace, trace_ctx = ctx;
-	if (!mode || (mode > 16 && mode != RUAN_GPU_OFF)) {
+	if (!mode || (mode > 18 && mode != RUAN_GPU_OFF)) {
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m%u?", mode);
-		result_line("gpu: mode is 1..16 or off, nothing done");
+		result_line("gpu: mode is 1..18 or off, nothing done");
 		trace_fn = NULL;
 		return -1;
 	}
@@ -1895,7 +2261,9 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 	struct ruan_gpu_s4_fb *fb = &ruan_gpu_s4_fb_result;
 	struct ruan_gpu_s5_m2m *m2m = &ruan_gpu_s5_m2m_result;
 	struct ruan_gpu_s5_fb *sfb = &ruan_gpu_s5_fb_result;
-	if (mode >= 8 && mode <= 16) {
+	if (mode >= 9 && mode <= 16 && stream0_owner == 2)   // hw_init already ran without stream 0: its ring would fault
+		result_line("gpu: bank 2 is the NativeAdreno context (gpu 17/18 ran), reboot for 9..16");
+	else if (mode >= 8 && mode <= 16) {
 		s3_gx_on(gx, c, b);
 		if (mode >= 9 && gx->gx_on) s3_hw_init(hw, gx, c, b);
 		if (mode >= 10 && hw->ok) s3_cp_start(cp, hw, gx, c, b);
@@ -1906,7 +2274,8 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		if (mode >= 15 && fb->ok) s5_mem_to_mem(m2m, fb, bl, sm, cp, hw, gx, c, b);
 		if (mode >= 16 && m2m->ok) s5_fb_dma_blit(sfb, m2m, fb, bl, sm, cp, hw, gx, c, b);
 	}
-	if (mode != 16) {
+	const int glue_rc = mode == 17 || mode == 18 ? s3_glue(mode, gx, hw, c, b) : 0;
+	if (mode < 16) {   // 16 keeps them for the per-frame blits, 17/18 for the driver (its ring, hang check and TTBR0 switches)
 		for (unsigned w = 0; w < NWIN; w++) {
 			if (va[w]) ml_io_unmap(va[w], (vm_size_t)len[w]);
 			va[w] = 0;
@@ -1985,46 +2354,46 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode >= 10) {
+	if (mode >= 10 && mode <= 16) {
 		snprintf(line, sizeof(line), "gpu s3_cp %s sqe %u rptr %u wptr %u rbbm %08x int0 %08x fault %08x polls %u %s",
 		    cp->ok ? "ok" : "FAIL", cp->sqe_bytes, cp->rptr, cp->wptr, cp->rbbm_status, cp->rbbm_int_0, cp->cp_hw_fault, cp->polls,
 		    cp->why[0] ? cp->why : "CP ME_INIT idle");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode >= 11) {
+	if (mode >= 11 && mode <= 16) {
 		snprintf(line, sizeof(line), "gpu s3_smoke %s magic %08x (wrote %08x) rptr %u/%u polls %u rbbm %08x %s",
 		    sm->ok ? "ok" : "FAIL", sm->magic_read, sm->magic_written, sm->rptr_after, sm->wptr_after, sm->polls, sm->rbbm_status,
 		    sm->why[0] ? sm->why : "GPU executed CP_MEM_WRITE verified by CPU!");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode >= 12) {
+	if (mode >= 12 && mode <= 16) {
 		snprintf(line, sizeof(line), "gpu s3_zap trust %08x>%08x secure %s %s",
 		    zp->trust_cntl_before, zp->trust_cntl_after, zp->secure_cleared ? "CLEARED" : "LOCKED",
 		    zp->why[0] ? zp->why : "trust control unlocked");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode >= 13) {
+	if (mode >= 13 && mode <= 16) {
 		snprintf(line, sizeof(line), "gpu s3_blitter %s pixels %u/16 %s",
 		    bl->ok ? "ok" : "FAIL", bl->pixels_filled, bl->why[0] ? bl->why : "16 words filled into user buffer");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode >= 14) {
+	if (mode >= 14 && mode <= 16) {
 		snprintf(line, sizeof(line), "gpu s4_fb %s pixels %u/4000 %s",
 		    fb->ok ? "ok" : "FAIL", fb->pixels_drawn, fb->why[0] ? fb->why : "4000 pixels blitted to GOP FB");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode >= 15) {
+	if (mode >= 15 && mode <= 16) {
 		snprintf(line, sizeof(line), "gpu s5_m2m %s dwords %u/256 %s",
 		    m2m->ok ? "ok" : "FAIL", m2m->dwords_copied, m2m->why[0] ? m2m->why : "256 dwords copied via CP_MEMCPY");
 		result_line(line);
 		strlcpy(ruan_gpu_row, line, sizeof(ruan_gpu_row));
 	}
-	if (mode >= 16) {
+	if (mode == 16) {
 		snprintf(line, sizeof(line), "gpu s5_fb %s pixels %u/40000 %s",
 		    sfb->ok ? "ok" : "FAIL", sfb->pixels_copied, sfb->why[0] ? sfb->why : "40000 pixels blitted to GOP FB via CP_MEMCPY DMA");
 		result_line(line);
@@ -2051,11 +2420,16 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m15 %s m2m%u", m2m->ok ? "ok" : "FAIL", m2m->dwords_copied);
 	} else if (mode == 16) {
 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m16 %s fb_dma%u", sfb->ok ? "ok" : "FAIL", sfb->pixels_copied);
+	} else if (mode == 17 || mode == 18) {
+		result_line(glue_row);
+		strlcpy(ruan_gpu_row, glue_row, sizeof(ruan_gpu_row));
+		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m%u %s", mode, glue_rc ? "FAIL" : "ok");
 	} else
 	snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m%u cx%s gx%s smmu%s%s%s", mode, cx ? "on" : "off",
 	    gpb_gdsc_on(r->gx_gdscr) ? "on" : "off", r->smmu == GPB_DONE ? "ok" : "-", mode == 4 ? (k->gmu_read ? " gmuR" : " gmu-") : "",
 	    mode == 5 ? (b->tcm_words && !b->tcm_bad && !b->why[0] ? " tcm" : " tcm-") : "");
 	result_line(ruan_gpu_short);
+	if (mode >= 16 && ruan_gpu_s3_gx_result.gx_on) dcvs_start();
 	trace_fn = NULL;
 	return (r->io_error || (mode >= 4 && (k->io_error || k->rcg_fail || !k->gmu_read)) || (mode >= 5 && b->why[0]) ||
 	    (mode == 6 && (c->why[0] || !c->hfi_ready)) ||
@@ -2067,7 +2441,8 @@ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
 	    (mode == 13 && !bl->ok) ||
 	    (mode == 14 && !fb->ok) ||
 	    (mode == 15 && !m2m->ok) ||
-	    (mode == 16 && !sfb->ok)) ? -2 : 0;
+	    (mode == 16 && !sfb->ok) ||
+	    ((mode == 17 || mode == 18) && glue_rc)) ? -2 : 0;
 }
 
 int ruan_gpu_is_s5_ready(void)
@@ -2078,6 +2453,75 @@ int ruan_gpu_is_s5_ready(void)
 uint32_t ruan_gpu_ring_wraps(void)
 {
 	return s_gpu_ring_wraps;
+}
+
+// USB `gpu` (UsbDebugGpu.h), rbu50: the GPU's fault state after Turnip's submits. GPU registers (gen7 offsets, KGSL gen7_reg.h) and the
+// GPU context bank's fault registers (bank 2: FSR, FAR, FSYNR0). Reads only.
+// rbu74: one 64-bit word of physical memory through a fresh uncached mapping (sheng physRead64), and a software walk of bank 2's
+// current TTBR0 table (4 KiB granule, T0SZ from TCR) for a GPU address: the hung IB's words for `gpu`. Reads only.
+static int phys_read64(uint64_t pa, uint64_t *out)
+{
+	const vm_offset_t m = ml_io_map_unmappable((vm_offset_t)(pa & ~0xfffull), 0x1000, 7 /* VM_WIMG_IO */);
+	if (!m) return -1;
+	*out = *(volatile uint64_t *)(m + (pa & 0xff8));
+	ml_io_unmap(m, 0x1000);
+	return 0;
+}
+int ruan_gpu_reg_read(uint32_t reg, uint32_t *value) {return rd(NULL, GPB_WIN_GPU, reg * 4u, value);}
+int ruan_gpu_va_read32(uint64_t gva, uint32_t *value)
+{
+	uint32_t lo = 0, hi = 0, tcr = 0;
+	if (!va[W_SMMUF] || !gpu_stream0_cb_off || rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x20u, &lo) || rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x24u, &hi) ||
+	    rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x30u, &tcr)) return -1;
+	const unsigned bits = 64u - (tcr & 0x3fu);
+	if (bits < 25 || bits > 48) return -2;
+	uint64_t table = ((uint64_t)hi << 32 | lo) & 0x0000fffffffff000ull, desc = 0;
+	for (int level = 4 - (int)((bits - 12 + 8) / 9); level <= 3; ++level) {
+		const unsigned shift = 12u + 9u * (unsigned)(3 - level);
+		if (phys_read64(table + ((gva >> shift) & 0x1ffu) * 8u, &desc) || !(desc & 1)) return -3;
+		if (level == 3 || !(desc & 2)) {
+			const uint64_t pa = (desc & 0x0000fffffffff000ull & ~((1ull << shift) - 1)) | (gva & ((1ull << shift) - 1));
+			uint64_t w = 0;
+			if (phys_read64(pa & ~7ull, &w)) return -4;
+			*value = (uint32_t)(w >> ((pa & 4) * 8));
+			return 0;
+		}
+		table = desc & 0x0000fffffffff000ull;
+	}
+	return -5;
+}
+
+int ruan_gpu_fault_regs(char *out, size_t size)
+{
+	static const struct {const char *name; uint32_t reg;} regs[] = {
+		{"int0", 0x201}, {"rbbm", 0x210}, {"hwf", 0x821}, {"prot", 0x824}, {"rptr", 0x806}, {"wptr", 0x807}, {"ib1", 0x928}, {"ib1hi", 0x929}, {"ib1rem", 0x92a}, {"ib2", 0x92b}, {"ib2hi", 0x92c}, {"ib2rem", 0x92d},
+		{"cpst1", 0x825}, {"rbbm3", 0x213}, {"wtb", 0xe07}, {"wtbhi", 0xe08}, {"trap", 0xe09}, {"traphi", 0xe0a}, {"gmin", 0xe0b}, {"gmax", 0xe0d},
+		{"ways", 0xe17}, {"umode", 0xe01}, {"pf", 0xe19}, {"tsbbase", 0xf800}, {"tsbhi", 0xf801}, {"tsbsize", 0xf802}, {"tsbcntl", 0xf803},
+		{"tsbst", 0xfc00}, {"trust", 0xf400}, {"gbifhalt", 0x3c45}, {"rbhalt", 0x16}, {"qsb0", 0x3c03}, {"qos", 0x11}, {"sc0", 0x3c01},
+		{"sc1", 0x3c02}};
+	size_t at = 0;
+	for (unsigned i = 0; i < sizeof regs / sizeof *regs && at < size; i++) {
+		uint32_t v = 0;
+		const int bad = rd(NULL, GPB_WIN_GPU, regs[i].reg * 4u, &v);
+		at += (size_t)snprintf(out + at, size - at, bad ? " %s=?" : " %s=%x", regs[i].name, v);
+	}
+	uint32_t fsr = 0, far_lo = 0, far_hi = 0, fsynr = 0, ttbr_lo = 0, ttbr_hi = 0;
+	if (at < size && va[W_SMMUF] && gpu_stream0_cb_off &&
+	    !rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x58u, &fsr) && !rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x60u, &far_lo) &&
+	    !rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x64u, &far_hi) && !rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x68u, &fsynr) &&
+	    !rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x20u, &ttbr_lo) && !rd(NULL, W_SMMUF, gpu_stream0_cb_off + 0x24u, &ttbr_hi))
+		at += (size_t)snprintf(out + at, size - at, " | cb2 fsr=%x far=%x%08x fsynr0=%x ttbr0=%x%08x", fsr, far_hi, far_lo, fsynr,
+		    ttbr_hi, ttbr_lo);
+	// GR0 global faults (a stream no SMR routes: sGFSYNR1 bits 15:0 = its SID), and SMR slot 1 as programmed.
+	// Off unless gpu-gfsr=1: GR0 belongs to Gunyah (rbu51 reset silently; the reads ran only on a `gpu` query, so likely not them).
+	uint32_t gfsr = 0, gfsynr0 = 0, gfsynr1 = 0, gfsynr2 = 0, smr = 0, s2cr = 0, gfsr_on = 0;
+	PE_parse_boot_argn("gpu-gfsr", &gfsr_on, sizeof gfsr_on);
+	if (gfsr_on == 1 && at < size && va[W_SMMUF] && !rd(NULL, W_SMMUF, 0x48u, &gfsr) && !rd(NULL, W_SMMUF, 0x50u, &gfsynr0) &&
+	    !rd(NULL, W_SMMUF, 0x54u, &gfsynr1) && !rd(NULL, W_SMMUF, 0x58u, &gfsynr2) &&
+	    !rd(NULL, W_SMMUF, GPB_SMMU_SMR(GPU_STREAM0_SLOT), &smr) && !rd(NULL, W_SMMUF, GPB_SMMU_S2CR(GPU_STREAM0_SLOT), &s2cr))
+		at += (size_t)snprintf(out + at, size - at, " | gr0 gfsr=%x gfsynr=%x/%x/%x smr1=%x s2cr1=%x", gfsr, gfsynr0, gfsynr1, gfsynr2,
+		    smr, s2cr);
+	return 0;
 }
 
 int ruan_gpu_stream0_map_page(uint32_t va_addr, uint64_t pa_addr, uint32_t bytes)
@@ -2213,16 +2657,29 @@ int native_adreno_fences(uint32_t *submitted, uint32_t *retired)
 	return 1;
 }
 
+extern void *initproc;
+static void glue_late(void *arg, int wr)
+{
+	(void)wr;
+	for (unsigned i = 0; !initproc && i < 1200; i++) delay(50000);   // up to 60 s for bsd_init's init process
+	(void)ruan_gpu_run((unsigned)(uintptr_t)arg, NULL, NULL);
+}
+
 void
 ruan_gpu_survey(void)
 {
 	unsigned mode = 0, survey = 0, fb_gpu = 0, fb_gpu_stream = 0;
 	PE_parse_boot_argn("ruan-gpu", &mode, sizeof(mode));
 	if (!mode && PE_parse_boot_argn("ruan-gpu-survey", &survey, sizeof(survey)) && survey == 1) mode = 1;
-	if (!mode && PE_parse_boot_argn("fb-gpu", &fb_gpu, sizeof(fb_gpu)) && fb_gpu == 1) mode = 16;
+	(void)fb_gpu;   // fb-gpu=1 is the Metal plugin's GPU hand-off now (LegacyDisplayProbe.cpp); ruan's blitter is fb-gpu-stream=1
 	if (!mode && PE_parse_boot_argn("fb-gpu-stream", &fb_gpu_stream, sizeof(fb_gpu_stream)) && fb_gpu_stream == 1) mode = 16;
-	if (mode > GPB_MAX_MODE) {
+	if (mode > GPB_MAX_MODE && mode != 17 && mode != 18) {   // 17/18: the Adreno glue at boot, while large contiguous buffers still exist
 		boot_progress_stage("gpu: ruan-gpu mode exceeds GPB_MAX_MODE");
+		return;
+	}
+	if (mode == 17 || mode == 18) {   // IOKit is not up here (rbu41 panicked in inTaskWithPhysicalMask): run once init exists
+		thread_t t;
+		if (kernel_thread_start_priority(glue_late, (void *)(uintptr_t)mode, 80, &t) == KERN_SUCCESS) thread_deallocate(t);
 		return;
 	}
 	if (mode) (void)ruan_gpu_run(mode, NULL, NULL);

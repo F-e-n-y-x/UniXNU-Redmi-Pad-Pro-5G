@@ -323,6 +323,8 @@ unlock(void)
 static void
 event(const char *s)
 {
+	extern void boot_reset_pet_ping(void);
+	boot_reset_pet_ping();
 	uint64_t t = ms();
 	last_event_ms = t;
 	snprintf(ev[ev_n % RING], MAXCOLS, "%5llu.%03llu %s", t / 1000, t % 1000, s);
@@ -711,6 +713,50 @@ boot_progress_pid1_syscall(int code, int error, const uint64_t *arg, uint64_t rv
 
 extern void ram_data_describe(char *, size_t) __attribute__((weak_import));
 
+/* ruan-ramoops after launchd: the video console is switched off once the display is graphical (disableConsoleOutput), so
+ * boot_progress_putc sees nothing more and the zone used to end at "exec launchd". The monitor copies what the kernel log
+ * (msgbufp, the dmesg ring) gained since launchd, and every 10 s a heartbeat line (uptime, free pages, UFS reads/failures/interrupts),
+ * so a later silent reset shows its last second. Reads the ring without its lock: a torn line is acceptable here. */
+struct ruan_msgbuf { int msg_magic, msg_size, msg_bufx, msg_bufr; char *msg_bufc; };
+extern struct ruan_msgbuf *msgbufp;
+extern unsigned int vm_page_free_count;
+extern volatile uint64_t native_ufs_block_reads __attribute__((weak_import));
+extern volatile uint64_t native_ufs_block_failures __attribute__((weak_import));
+extern volatile uint64_t native_ufs_irqs __attribute__((weak_import));
+static void
+zone_follow_kernel_log(unsigned tick)
+{
+	static int at = -1;
+	struct ruan_msgbuf *mb = msgbufp;
+	if (!ramoops || !zone || !mb || mb->msg_magic != 0x063061 || mb->msg_size <= 0) {
+		return;
+	}
+	int end = mb->msg_bufx;
+	if (at < 0 || at >= mb->msg_size) {
+		at = end;   /* first call (at launchd): start from here, the console mirror already holds the earlier text */
+	}
+	char chunk[512];
+	while (at != end) {
+		unsigned n = 0;
+		while (at != end && n < sizeof(chunk)) {
+			char c = mb->msg_bufc[at];
+			at = at + 1 == mb->msg_size ? 0 : at + 1;
+			if (c) {
+				chunk[n++] = c;
+			}
+		}
+		zone_put(chunk, n);
+	}
+	if (tick % 10 == 0) {
+		char line[128];
+		uint64_t t = ms();
+		int n = snprintf(line, sizeof(line), "\n[hb] %llu.%03llu free=%u ufs=%llu/%llu irq=%llu\n", t / 1000, t % 1000, vm_page_free_count,
+		    &native_ufs_block_reads ? native_ufs_block_reads : 0ULL, &native_ufs_block_failures ? native_ufs_block_failures : 0ULL,
+		    &native_ufs_irqs ? native_ufs_irqs : 0ULL);
+		zone_put(line, n > 0 && (unsigned)n < sizeof(line) ? (unsigned)n : 0);
+	}
+}
+
 /* After the hand-off lock() refuses every drawer (yield_wanted); the banner takes draw_lock itself and points fb at the
  * panel for the length of one paint. */
 /* boot-progress-banner: 0 off, 1 the full banner (9 rows), 2 the status row plus the two input rows (3 rows at the bottom). A row is
@@ -802,10 +848,15 @@ monitor(void *arg __unused, wait_result_t wr __unused)
 	PE_parse_boot_argn("boot-progress-banner", &banner_on, sizeof(banner_on));
 	banner_mode = banner_on;
 	for (unsigned tick = 0;; tick++) {
+		extern void boot_reset_pet_ping(void);
+		boot_reset_pet_ping();
 		if (yielded && banner_on) {
 			banner();
 		}
 		DRAW(draw_title(); if (n_log && log_dirty) { log_dirty = 0; draw_ring(r_log, n_log, lg, lg_n, cur, 0xa0a0a0); } else if (n_log) draw_partial(r_log, n_log, lg_n, cur));
+		if (m_state[M_LAUNCHD]) {
+			zone_follow_kernel_log(tick);
+		}
 		if (&ram_data_describe && m_state[M_LAUNCHD] && tick % 5 == 0) {
 			char line[MAXCOLS];
 			ram_data_describe(line, sizeof(line));
@@ -878,6 +929,13 @@ boot_progress_start(void)
 	if (enabled && kernel_thread_start_priority(monitor, NULL, MAXPRI_KERNEL, &thread) == KERN_SUCCESS) {
 		thread_set_thread_name(thread, "boot-progress");
 		thread_deallocate(thread);
+	}
+	/* Gunyah watchdog: disable and start active 1s pet thread so hypervisor watchdog never bites */
+	{
+		extern int boot_reset_pet_start(char *, unsigned);
+		char text[120];
+		boot_reset_pet_start(text, sizeof(text));
+		if (enabled) event(text);
 	}
 	/* Touch and buttons (package/RuanInput.c): each driver checks its own boot-arg (ruan_touch=1, garnet_buttons=1). */
 	extern void ruan_input_start(void);

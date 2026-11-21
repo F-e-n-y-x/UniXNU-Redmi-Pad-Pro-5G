@@ -122,10 +122,10 @@ static uintptr_t mapRangeUncached(uint64_t phys, uint64_t len, OSSharedPtr<IOMem
     return keep ? static_cast<uintptr_t>(keep->getVirtualAddress()) : 0;
 }
 
-static uint32_t smmuIoRd(void *ctx, unsigned off) {
+[[maybe_unused]] static uint32_t smmuIoRd(void *ctx, unsigned off) {
     return static_cast<volatile uint32_t *>(ctx)[off / 4u];
 }
-static void smmuIoWr(void *ctx, unsigned off, uint32_t val) {
+[[maybe_unused]] static void smmuIoWr(void *ctx, unsigned off, uint32_t val) {
     static_cast<volatile uint32_t *>(ctx)[off / 4u] = val;
     __asm__ volatile("dsb sy" ::: "memory");
 }
@@ -139,96 +139,11 @@ static void smmuIoWr(void *ctx, unsigned off, uint32_t val) {
         hw.smmu = reinterpret_cast<volatile uint32_t *>(
             mapRangeUncached(J716F_APPS_SMMU_BASE, J716F_APPS_SMMU_SIZE, hw.smmuMap));
     }
-    if (!hw.smmu) {
-        hw.smmuOrigSmr  = 0xDEAD0001u;
-        hw.smmuOrigS2cr = 0u;
-        return true;
-    }
-    smmu_io io{const_cast<uint32_t *>(hw.smmu), smmuIoRd, smmuIoWr};
-
-    // Inspect the USB0 SMR entry left by UEFI HALIOMMUDxe (stream 0x80 on ruan). Never evict existing SMR entries.
-    const uint32_t idr0 = smmuIoRd(io.ctx, 0x20u);
-    const uint32_t idr1 = smmuIoRd(io.ctx, 0x24u);
-    unsigned count = idr0 & 0xFFu;
-    if (count > 128u) count = 128u;
-    const unsigned pages = 1u << (((idr1 >> 28) & 7u) + 1u);
-    const unsigned banks = idr1 & 0xFFu;
-    const unsigned bypassBank = (banks >= 2u) ? (banks - 1u) : 73u;
-    hw.smmuBank = bypassBank;
-
-    // Ensure shared bypass context bank (73) is configured for stage-1 disabled / stage-2 bypass
-    const unsigned cbOff = (pages + bypassBank) * 4096u;
-    if (smmuIoRd(io.ctx, cbOff) != 0u ||
-        smmuIoRd(io.ctx, 0x1800u + 4u * bypassBank) != 1u ||
-        smmuIoRd(io.ctx, 0x1000u + 4u * bypassBank) != 0x10000u) {
-        smmuIoWr(io.ctx, cbOff, 0u);
-        smmuIoWr(io.ctx, 0x1800u + 4u * bypassBank, 1u);
-        smmuIoWr(io.ctx, 0x1000u + 4u * bypassBank, 0x10000u);
-    }
-
-    bool foundUsb0Smr = false;
-    static const uint16_t kProtectedSids[] = {   // ruan-live.dts iommus/handoff-smrs: never retarget these
-        0x0020u,                   // ufshc@1d84000
-        0x0060u, 0x0540u,          // sdhci@7C4000, sdhci@8804000
-        0x0163u, 0x0176u, 0x0403u, 0x0416u, // QUP v3 0/1 and their GPI DMA
-        0x0800u, 0x0802u, 0x0C00u, 0x0C02u, // display: apps-smmu qcom,handoff-smrs <0x800 0x402>
-        0x04A0u, 0x04A1u, 0x04A2u, 0x04A3u  // IPA
-    };
-
-    for (unsigned i = 0; i < count; ++i) {
-        const uint32_t smr = smmuIoRd(io.ctx, 0x800u + 4u * i);
-        if (!(smr & 0x80000000u)) continue;
-        const uint32_t s2cr = smmuIoRd(io.ctx, 0xC00u + 4u * i);
-        const uint32_t mask = (smr >> 16) & 0x7FFFu;
-
-        bool hitsProtected = false;
-        for (unsigned p = 0; p < sizeof(kProtectedSids) / sizeof(kProtectedSids[0]); ++p) {
-            if (((smr ^ kProtectedSids[p]) & 0x7FFFu & ~mask) == 0u) {
-                hitsProtected = true;
-                break;
-            }
-        }
-        if (hitsProtected) continue;
-
-        if (((smr ^ J716F_USB0_SMMU_SID_0) & 0x7FFFu & ~mask) == 0u) {
-            foundUsb0Smr    = true;
-            hw.smmuOrigSmr  = smr;
-            hw.smmuOrigS2cr = s2cr;
-            // Keep UEFI's SMR[i] untouched! If its context bank has Stage-1 M=1 enabled,
-            // disable Stage-1 on that context bank directly so S2CR[i] keeps its original CB index.
-            if ((s2cr & 0x00030000u) == 0u) {
-                const unsigned cb = s2cr & 0xFFu;
-                if (cb < banks) {
-                    const unsigned usbCbOff = (pages + cb) * 4096u;
-                    const uint32_t sctlr = smmuIoRd(io.ctx, usbCbOff);
-                    if ((sctlr & 1u) != 0u) {
-                        smmuIoWr(io.ctx, usbCbOff, 0u);
-                        smmuIoWr(io.ctx, 0x1800u + 4u * cb, 1u);
-                        smmuIoWr(io.ctx, 0x1000u + 4u * cb, 0x10000u);
-                    }
-                }
-            }
-        }
-    }
-
-    if (!foundUsb0Smr) {
-        const smmu_plan plan = smmu_plan_bypass(&io, J716F_USB0_SMMU_SID_0, hw.dmaPhys, DMA_TOTAL_BYTES);
-        if (!plan.error) {
-            const char *cfgErr = smmu_configure_bypass(&io, &plan, J716F_USB0_SMMU_SID_0);
-            hw.smmuOrigSmr  = smmuIoRd(io.ctx, 0x800u + 4u * plan.slot);
-            hw.smmuOrigS2cr = smmuIoRd(io.ctx, 0xC00u + 4u * plan.slot);
-            if (cfgErr && (hw.smmuOrigSmr & 0x80000000u) == 0u && !plan.reuse) {
-                // QHEE hypervisor trapped/ignored new SMR write; revert temporary S2CR write.
-                // With SMMU_sCR0.USFCFG == 0, unmatched streams bypass SMMUv2 automatically.
-                smmuIoWr(io.ctx, 0xC00u + 4u * plan.slot, 0u);
-                hw.smmuOrigSmr  = smmuIoRd(io.ctx, 0x00u);
-                hw.smmuOrigS2cr = 0xCEu;
-            }
-        } else {
-            hw.smmuOrigSmr  = smmuIoRd(io.ctx, 0x00u);
-            hw.smmuOrigS2cr = 0xCFu;
-        }
-    }
+    // Under Gunyah hypervisor on SM7435, writing GR1 and context banks aborts with ESR 0x96000010.
+    // UEFI HALIOMMUDxe already configured USB stream 0x80 bypass mapping; write nothing.
+    hw.smmuOrigSmr  = 0x80000080u;
+    hw.smmuOrigS2cr = 0u;
+    hw.smmuBank = 0;
     return true;
 }
 

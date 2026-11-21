@@ -1,0 +1,9 @@
+# UFS root variant with ruan's own root in the OS window (build-ramroot.sh UFS_ROOT=, scripts/make-ufs-root.py). That root already
+# holds the SystemOS cryptex and the dyld cache (make-ramroot.py), so no SystemOS union and no owner cache/manifest paths: the
+# kernel roots on it as on the RAM root (boot-manifest-hash from board.toml). ShengUfs still publishes the SystemOS window, unused.
+ruan-ufs-unverified-root.patch
+# Per-process footprint limit floor (ruan-memlimit-floor=<MB>): GPU-using extensions die at their small limits (rbu116u).
+ruan-memlimit-floor.patch
+# GPU sandbox grant from the provider chain + miss log (rbu118u denies).
+ruan-grant-provider.patch
+ruan-memlimit-floor-memstat.patch

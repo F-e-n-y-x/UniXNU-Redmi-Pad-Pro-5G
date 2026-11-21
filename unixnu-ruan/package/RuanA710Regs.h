@@ -41,7 +41,10 @@
 #define RUAN_RBBM_PERFCTR_GPU_BUSY_MASKED   0x0050bu
 #define RUAN_RBBM_INTERFACE_HANG_INT_CNTL   0x0001fu
 #define RUAN_RBBM_SECVID_TRUST_CNTL         0x0f400u
-#define RUAN_RBBM_GBIF_HALT                 0x0000au
+#define RUAN_RBBM_SECVID_TSB_TRUSTED_BASE_LO 0x0f800u
+#define RUAN_RBBM_SECVID_TSB_TRUSTED_SIZE   0x0f802u
+#define RUAN_RBBM_SECVID_TSB_CNTL           0x0f803u
+#define RUAN_RBBM_GBIF_HALT                 0x00016u
 #define RUAN_GBIF_HALT                      0x03c45u
 
 /* CP registers (dword offsets from GPU base) */
@@ -57,7 +60,7 @@
 #define RUAN_CP_INTERRUPT_STATUS            0x00823u
 #define RUAN_CP_SQE_INSTR_BASE_LO           0x00830u
 #define RUAN_CP_SQE_INSTR_BASE_HI           0x00831u
-#define RUAN_CP_AHB_CNTL                    0x00840u
+#define RUAN_CP_AHB_CNTL                    0x0098du
 #define RUAN_CP_APRIV_CNTL                  0x00844u
 #define RUAN_CP_PROTECT_CNTL                0x0084fu
 #define RUAN_CP_BV_RB_RPTR_ADDR_LO          0x00a98u
@@ -65,11 +68,23 @@
 #define RUAN_CP_BV_APRIV_CNTL               0x00ad0u
 
 /* UCHE registers */
-#define RUAN_UCHE_WRITE_THRU_BASE_LO        0x00e87u
-#define RUAN_UCHE_WRITE_THRU_BASE_HI        0x00e88u
-#define RUAN_UCHE_TRAP_BASE_LO              0x00e83u
-#define RUAN_UCHE_TRAP_BASE_HI              0x00e84u
-#define RUAN_UCHE_MODE_CNTL                 0x00e80u
+#define RUAN_UCHE_WRITE_THRU_BASE_LO        0x00e07u
+#define RUAN_UCHE_WRITE_THRU_BASE_HI        0x00e08u
+#define RUAN_UCHE_TRAP_BASE_LO              0x00e09u
+#define RUAN_UCHE_TRAP_BASE_HI              0x00e0au
+#define RUAN_UCHE_MODE_CNTL                 0x00e01u
+/* rbu48a: the five above were a5xx offsets (0xe8x), so UCHE was never set up and Turnip's UCHE/CCU writes never reached memory.
+ * gen7 values from KGSL gen7_reg.h, and the rest of gen7_start's UCHE / NC_MODE writes. */
+#define RUAN_UCHE_GMEM_RANGE_MIN_LO         0x00e0bu
+#define RUAN_UCHE_GMEM_RANGE_MAX_LO         0x00e0du
+#define RUAN_UCHE_CACHE_WAYS                0x00e17u
+#define RUAN_UCHE_CLIENT_PF                 0x00e19u
+#define RUAN_UCHE_CMDQ_CONFIG               0x00e3cu
+#define RUAN_RB_NC_MODE_CNTL                0x08e08u
+#define RUAN_TPL1_NC_MODE_CNTL              0x0b604u
+#define RUAN_SP_NC_MODE_CNTL                0x0ae02u
+#define RUAN_GRAS_NC_MODE_CNTL              0x08602u
+#define RUAN_RB_CMP_DBG_ECO_CNTL            0x08e28u
 
 /* Defaults */
 #define RUAN_CP_RB_CNTL_DEFAULT             ((2u << 8) | 12u)  /* 32 KiB ring */

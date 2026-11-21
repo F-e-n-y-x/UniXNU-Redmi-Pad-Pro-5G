@@ -1,0 +1,14 @@
+diff --git a/scripts/build-turnip-darwin.py b/scripts/build-turnip-darwin.py
+index e36ab56..e82c754 100644
+--- a/scripts/build-turnip-darwin.py
++++ b/scripts/build-turnip-darwin.py
+@@ -119,7 +119,8 @@ if result.returncode:
+     sys.exit('Build failed; see ' + str(build_log) + '\n' + '\n'.join(
+         l for l in build_log.read_text().splitlines() if ': error:' in l or 'fatal error:' in l or l.startswith('FAILED:'))[:3000])
+ library = OUT / 'src/freedreno/vulkan/libvulkan_freedreno.dylib'
+-symbols = subprocess.run(['nm', '-gU', str(library)], capture_output=True, text=True).stdout
++# llvm-nm reads Mach-O on a Linux host, where nm is GNU's.
++symbols = subprocess.run([shutil.which('llvm-nm') or 'nm', '-gU', str(library)], capture_output=True, text=True).stdout
+ if ' T _vk_icdGetInstanceProcAddr' not in symbols:
+     sys.exit('The library does not export vk_icdGetInstanceProcAddr')
+ print('PASS: Turnip with the darwin kernel backend builds for %s (%d bytes); no GPU or IOKit service was exercised'

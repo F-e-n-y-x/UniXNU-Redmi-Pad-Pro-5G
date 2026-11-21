@@ -38,6 +38,9 @@ archives = [
   "component:RamBlock",
   # RAM-root diagnostic (package/RamRootProbe.c) and the key store stand-in; linked through CONFIG_XNU_EXTRA_LD_ARCHIVES.
   "build-ram-root-probe.py",
+  # gpu 17/18 (ruan-adreno=1): UniXNU's Adreno740 driver + ArmSmmu4K/AdrenoPM4 kits (patches/adreno/) + package/RuanAdrenoGlue.cpp,
+  # force-loaded through CONFIG_XNU_EXTRA_LD_ARCHIVES (macOS/docs/research/GPU-METAL-PORT.md steps 2-3).
+  "build-ruan-adreno.py",
   # The GOP display path (display-prep/PLAN.md): NativeLegacyDisplay (UniXNU GopFramebuffer) bound to the prelinked original
   # IOMobileFramebufferLegacy + package/LegacyDisplayProbe.cpp, into libNativeLegacyDisplay.late.a, force-loaded with
   # CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y. Needs a previous kernel in out/.../kernel as its reference candidate (first build: off).
@@ -119,7 +122,7 @@ kernel_args = ["cpus=1", "serial=3", "sheng-pmgr=2", "dyld_flags=8",
 chip_id = "0x27a"
 cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"
 psci_method = "smc"
-root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
+root_match_volume_uuid = "1BBDDC52-D2F7-A180-D6C3-9CA2B52FCEBC"
 unique_chip_id = "required"
 # DarwinBoot's window (one contiguous run of free memory). 2.75 GiB holds the kernel, a USB-sent RAM root of up to
 # about 1.7 GiB (scripts/build-ramroot.sh) and the rest for XNU; the largest DRAM run on ruan is 3 GiB at 0x8c0000000.

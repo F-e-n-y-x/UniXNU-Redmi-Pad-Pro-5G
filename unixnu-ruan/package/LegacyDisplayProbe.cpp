@@ -38,6 +38,7 @@ static IOService *pendingLegacyDisplay;
 
 // Everything NativeLegacyDisplay.cpp calls is declared extern "C" there, so this block stays open to the end of the file.
 extern "C" {
+void boot_progress_stage(const char *);
 volatile uint32_t native_legacy_stage;
 volatile int native_legacy_meta_status = -1;
 volatile uint32_t native_legacy_init_result, native_legacy_start_result, native_legacy_probe_match;
@@ -235,7 +236,74 @@ static void gpu_stream_tick(thread_call_param_t p0, thread_call_param_t p1)
 	}
 }
 
-// Adreno 710 Stage S5 Mode 16 In-Kernel Display Frame Blitter Hook (fb-gpu-stream=1 or fb-gpu=1)
+// fb-gpu=1 (rbu68, sheng's meaning; ruan's own CP_MEMCPY blitter is fb-gpu-stream=1 only): UniXNU-sheng's GPU hand-off. NativeGOPPresenter (drivers/GopFramebuffer, built by build-gop-legacy-display.py) is
+// offered each swap instead of the CPU copy; the Metal plugin in backboardd (NativeMetalBridgePhase.h serveScanout, open type 0x4148)
+// waits for it, copies the surface into the scanout on the A710 and completes the swap. Refused or failed offers fall back to the CPU copy.
+extern "C" void native_gop_presenter_static_init(void) __asm__("__GLOBAL__sub_I_NativeGOPPresenter.cpp") __attribute__((weak_import));
+extern "C" IOService *native_gop_presenter_create(void) __attribute__((weak_import));
+extern "C" bool native_gop_gpu_offer(IOService *, void *display, IOMemoryDescriptor *, uint64_t stride, uint32_t width, uint32_t height,
+                                     uint32_t format) __attribute__((weak_import));
+extern "C" void native_gop_presenter_set_source(IOService *presenter, IOService *nub) __attribute__((weak_import));
+static IOService *gpuHandoffPresenter;
+volatile uint32_t ruan_handoff_stage;   // 1 created, 2 started, 0x10|n failed at step n
+static unsigned fbGpuMode(void)
+{
+	unsigned fb_gpu = 0;
+	PE_parse_boot_argn("fb-gpu", &fb_gpu, sizeof(fb_gpu));
+	return fb_gpu;
+}
+static void ruan_handoff_start(IOService *nub)
+{
+	if (fbGpuMode() != 1 || gpuHandoffPresenter) return;
+	if (!&native_gop_presenter_create || !&native_gop_presenter_set_source) {ruan_handoff_stage = 0x11; return;}
+	IOService *handoff = native_gop_presenter_create();
+	// Not under the display subsystem's node (sheng int-075/077: SpringBoard found no display with the presenter there).
+	IOService *home = IOService::getResourceService();
+	bool attached = false;
+	ruan_handoff_stage = 1;
+	if (handoff && home) native_gop_presenter_set_source(handoff, nub);
+	if (handoff && home && handoff->init() && (attached = handoff->attach(home)) && handoff->start(home)) {gpuHandoffPresenter = handoff; ruan_handoff_stage = 2;}
+	else {if (attached) handoff->detach(home); OSSafeReleaseNULL(handoff); ruan_handoff_stage = 0x12;}
+}
+
+// rbu71: an offered frame the plugin has not finished within fb-gpu-timeout ms (default 50) is failed to the display
+// (native_legacy_gpu_complete with kIOReturnTimeout): the display then retires/kicks its queue and takes the CPU copy, so a lost GPU copy
+// can never stall the compositor (rbu70: offer 5 never completed and the UI froze). The presenter keeps that frame as offered and so
+// refuses new offers (CPU copies) until the plugin completes or abandons it; its late completion finds no request and does nothing.
+extern "C" volatile uint64_t native_gop_gpu_offers __attribute__((weak_import)), native_gop_gpu_completions __attribute__((weak_import)),
+    native_gop_gpu_failures __attribute__((weak_import)), native_gop_gpu_abandoned __attribute__((weak_import));
+extern void native_legacy_gpu_complete(void *display, int status);
+volatile uint64_t ruan_handoff_timeouts;
+static uint64_t handoffFinished(void)
+{
+	return &native_gop_gpu_completions ? native_gop_gpu_completions + native_gop_gpu_failures + native_gop_gpu_abandoned : 0;
+}
+static thread_call_t s_handoff_watch;
+static void *s_handoff_display;
+static uint64_t s_handoff_offers, s_handoff_finished;
+static void handoffExpired(thread_call_param_t, thread_call_param_t)
+{
+	// Still the same offer (no newer one) and nothing finished since it was made: fail it to the display.
+	if (!&native_gop_gpu_offers || native_gop_gpu_offers != s_handoff_offers || handoffFinished() != s_handoff_finished) return;
+	ruan_handoff_timeouts = ruan_handoff_timeouts + 1;
+	native_legacy_gpu_complete(s_handoff_display, (int)kIOReturnTimeout);
+}
+static void handoffWatch(void *display, uint64_t finishedBefore)
+{
+	unsigned ms = 50;
+	PE_parse_boot_argn("fb-gpu-timeout", &ms, sizeof(ms));
+	if (!ms) return;
+	if (!s_handoff_watch) s_handoff_watch = thread_call_allocate(handoffExpired, nullptr);
+	if (!s_handoff_watch || !&native_gop_gpu_offers) return;
+	s_handoff_display = display;
+	s_handoff_offers = native_gop_gpu_offers;
+	s_handoff_finished = finishedBefore;
+	uint64_t deadline;
+	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
+	thread_call_enter_delayed(s_handoff_watch, deadline);
+}
+
+// Adreno 710 Stage S5 Mode 16 In-Kernel Display Frame Blitter Hook (fb-gpu-stream=1)
 // Dispatches compositor surfaces directly to the Adreno 710 hardware blitter via CP_MEMCPY
 // and monotonic fences, eliminating CPU frame presentation overhead.
 bool native_legacy_gpu_offer(void *display, IOMemoryDescriptor *memory, uint64_t sourceStride, uint32_t width, uint32_t height, uint32_t format)
@@ -243,7 +311,15 @@ bool native_legacy_gpu_offer(void *display, IOMemoryDescriptor *memory, uint64_t
 	unsigned fb_gpu_stream = 0, fb_gpu = 0;
 	PE_parse_boot_argn("fb-gpu-stream", &fb_gpu_stream, sizeof(fb_gpu_stream));
 	PE_parse_boot_argn("fb-gpu", &fb_gpu, sizeof(fb_gpu));
-	if (fb_gpu_stream != 1 && fb_gpu != 1) {
+	if (fb_gpu == 1) {
+		const uint64_t finishedBefore = handoffFinished();
+		const bool offered = gpuHandoffPresenter && &native_gop_gpu_offer &&
+		    native_gop_gpu_offer(gpuHandoffPresenter, display, memory, sourceStride, width, height, format);
+		if (!offered) native_legacy_gpu_fallback_observed(-3);
+		else handoffWatch(display, finishedBefore);
+		return offered;
+	}
+	if (fb_gpu_stream != 1) {
 		native_legacy_gpu_fallback_observed(-1);
 		return false;
 	}
@@ -413,17 +489,29 @@ void native_adreno_note_property_read(const char *key) {
 }
 
 extern "C" IOUserClient *native_adreno_user_client_create(task_t, void *, UInt32, OSDictionary *) __attribute__((weak_import));
+// The real driver's open (NativeAdrenoPublish.cpp, renamed by scripts/build-ruan-adreno.py): progress markers, the tunnel and BOs for
+// Turnip. It answers kIOReturnNotReady until gpu 18 (native_adreno_publish) has run; without libRuanAdreno.a the stand-in below stays.
+extern "C" IOReturn ruan_adreno_driver_new_user_client(IOService *, task_t, void *, UInt32, OSDictionary *, IOUserClient **, unsigned)
+    __attribute__((weak_import));
 
+extern "C" {uint32_t ruan_adreno_marks_seen[0x7000 / 32];}
 IOReturn native_adreno_new_user_client(IOService *provider, task_t owningTask, void *securityID,
                                        UInt32 type, OSDictionary *properties, IOUserClient **handler,
                                        unsigned limit) {
-	(void)securityID; (void)limit;
 	if (handler) *handler = nullptr;
 	native_adreno_metal_opens++;
 	if (owningTask) {
 		proc_t p = (proc_t)get_bsdtask_info(owningTask);
 		if (p) proc_name(proc_pid(p), native_adreno_last_client, sizeof(native_adreno_last_client));
 	}
+	// Every progress marker ever sent (open types 0x4147xxxx, xxxx < 0x7000), as a bitmap the USB `gpu` command prints (rbu67): the driver's
+	// own ring keeps only the newest 16, and the plugin's 68xx come minutes before the smoke tool's last ones.
+	if ((type >> 16) == 0x4147u && (type & 0xffffu) && (type & 0xffffu) < 0x7000u) {
+		const uint32_t v = type & 0xffffu;
+		__atomic_fetch_or(&ruan_adreno_marks_seen[v >> 5], 1u << (v & 31), __ATOMIC_RELAXED);
+	}
+	if (&ruan_adreno_driver_new_user_client)
+		return ruan_adreno_driver_new_user_client(provider, owningTask, securityID, type, properties, handler, limit);
 	if (!handler || !&native_adreno_user_client_create) return kIOReturnUnsupported;
 	IOUserClient *client = native_adreno_user_client_create(owningTask, securityID, type, properties);
 	if (!client) return kIOReturnNoMemory;
@@ -441,15 +529,19 @@ IOReturn native_adreno_new_user_client(IOService *provider, task_t owningTask, v
 }
 
 void ruan_gpu_publish_accelerator(void) {
+	boot_progress_stage("gpu_accel: enter");
 	if (!&native_adreno_accelerator_static_init || !&native_adreno_accelerator_allocate || !&native_adreno_accelerator_instance_size) {
 		ruan_metal_stage = 0;
 		ruan_metal_status = kIOReturnUnsupported;
+		boot_progress_stage("gpu_accel: unsupported");
 		return;
 	}
 	ruan_metal_stage = 1;
+	boot_progress_stage("gpu_accel: load IOGPUFamily");
 	int kext_status = OSKextLoadKextWithIdentifier("com.apple.iokit.IOGPUFamily");
 	if (kext_status != kIOReturnSuccess && kext_status != kOSReturnSuccess) {
 		ruan_metal_status = kext_status;
+		boot_progress_stage("gpu_accel: IOGPUFamily fail");
 		return;
 	}
 	const OSSymbol *name = OSSymbol::withCString("IOAcceleratorES");
@@ -457,45 +549,62 @@ void ruan_gpu_publish_accelerator(void) {
 	OSSafeReleaseNULL(name);
 	if (!parent || parent->getClassSize() != 136) {
 		ruan_metal_status = kIOReturnNotFound;
+		boot_progress_stage("gpu_accel: parent not found");
 		return;
 	}
 	ruan_metal_stage = 2;
+	boot_progress_stage("gpu_accel: preModLoad");
 	void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
 	if (!handle) {
 		ruan_metal_status = kIOReturnNoResources;
+		boot_progress_stage("gpu_accel: preModLoad fail");
 		return;
 	}
 	native_adreno_accelerator_static_init();
 	ruan_metal_status = OSMetaClass::postModLoad(handle);
-	if (ruan_metal_status != kIOReturnSuccess && ruan_metal_status != kOSReturnSuccess) return;
+	if (ruan_metal_status != kIOReturnSuccess && ruan_metal_status != kOSReturnSuccess) {
+		boot_progress_stage("gpu_accel: postModLoad fail");
+		return;
+	}
 	if (native_adreno_accelerator_instance_size() != 136) {
 		ruan_metal_status = kIOReturnInvalid;
+		boot_progress_stage("gpu_accel: size != 136");
 		return;
 	}
 	ruan_metal_stage = 3;
+	boot_progress_stage("gpu_accel: allocate");
 	IOService *accelerator = native_adreno_accelerator_allocate();
 	if (!accelerator) {
 		ruan_metal_status = kIOReturnNoMemory;
+		boot_progress_stage("gpu_accel: alloc fail");
 		return;
 	}
 	if (!accelerator->init()) {
 		accelerator->release();
 		ruan_metal_status = kIOReturnError;
+		boot_progress_stage("gpu_accel: init fail");
 		return;
 	}
 	accelerator->setProperty("MetalPluginName", "NativeAdrenoMetal");
 	accelerator->setProperty("MetalPluginClassName", "NativeAdrenoMetalDevice");
+	// As sheng: every Metal client gets this accelerator's user client in place of the sandbox verdict (UniXNU zzw-native-adreno-sandbox-grant.patch);
+	// the original profiles name AGXDeviceUserClient, not the RuanAdrenoDeviceUserClient the open returns.
+	accelerator->setProperty("NativeSandboxGrantProcess", "*");
 	ruan_metal_stage = 4;
+	boot_progress_stage("gpu_accel: attach");
 	if (!accelerator->attach(IOService::getPlatform())) {
 		accelerator->release();
 		ruan_metal_status = kIOReturnNotAttached;
+		boot_progress_stage("gpu_accel: attach fail");
 		return;
 	}
+	boot_progress_stage("gpu_accel: registerService");
 	accelerator->registerService();
 	s_accelerator = accelerator;
 	ruan_metal_registered = 1;
 	ruan_metal_stage = 5;
 	ruan_metal_status = kIOReturnSuccess;
+	boot_progress_stage("gpu_accel: done");
 }
 
 void native_legacy_gpu_fallback_observed(int reason) {
@@ -572,6 +681,7 @@ void native_legacy_display_probe(void) {
 		return native_legacy_verdict("preModLoad");
 	}
 	native_legacy_display_static_init();
+	if (fbGpuMode() == 1 && &native_gop_presenter_static_init) native_gop_presenter_static_init();   // its class, in the same module
 	native_legacy_meta_status = OSMetaClass::postModLoad(handle);
 	if (native_legacy_meta_status) {
 		return native_legacy_verdict("postModLoad");
@@ -601,78 +711,106 @@ void native_legacy_display_probe(void) {
 
 // bsd_autoconf (offline-legacy-start.patch), after IOKitBSDInit().
 void native_legacy_display_late_probe(void) {
+	boot_progress_stage("late_probe: start");
 	IOService *display = pendingLegacyDisplay;
 	if (!display) {
+		boot_progress_stage("late_probe: no display");
 		return native_legacy_verdict("no-pending-instance");
 	}
 	pendingLegacyDisplay = nullptr;
+	boot_progress_stage("late_probe: load IOSurface");
 	native_legacy_surface_status = OSKextLoadKextWithIdentifier("com.apple.iokit.IOSurface");
 	OSDictionary *matching = IOService::nameMatching("IOCoreSurfaceRoot");
-	IOService *surface = matching ? IOService::waitForMatchingService(matching, 5000000000ULL) : nullptr;
+	boot_progress_stage("late_probe: lookup IOCoreSurfaceRoot");
+	IOService *surface = matching ? (IOService *)IOService::copyMatchingService(matching) : nullptr;
+	if (!surface) {
+		OSDictionary *matching2 = IOService::nameMatching("IOSurfaceRoot");
+		if (matching2) {
+			surface = (IOService *)IOService::copyMatchingService(matching2);
+			matching2->release();
+		}
+	}
+	boot_progress_stage(surface ? "late_probe: surface found" : "late_probe: surface null");
 	native_legacy_surface_found = surface != nullptr;
 	OSSafeReleaseNULL(surface);
 	OSSafeReleaseNULL(matching);
 	PE_Video video = {};
-	if (native_legacy_surface_status || !native_legacy_surface_found || !usable_console(&video)) {
+	bool console_ok = usable_console(&video);
+	boot_progress_stage(console_ok ? "late_probe: console ok" : "late_probe: console fail");
+	if (!console_ok) {
+		boot_progress_stage("late_probe: console fail");
 		display->release();
 		native_legacy_released = 1;
-		return native_legacy_verdict("late-surface-or-console");
+		return native_legacy_verdict("late-console");
 	}
 	native_legacy_video_base = video.v_baseAddr;
-	// The real firmware framebuffer as the nub's only memory: no invented panel timing, compatible or register.
 	native_legacy_stage = 4;
-	IOPlatformDevice *nub = new IOPlatformDevice;
+	boot_progress_stage("late_probe: init nub");
+	IOService *nub = new IOService;
+	boot_progress_stage(nub ? "late_probe: nub alloc ok" : "late_probe: nub alloc fail");
 	IOService *parent = IOService::getResourceService();
 	IODeviceMemory *memory = IODeviceMemory::withRange(video.v_baseAddr, video.v_rowBytes * video.v_height);
 	OSArray *ranges = OSArray::withCapacity(1);
 	IORegistryEntry *arm_io = IORegistryEntry::fromPath("/arm-io", gIODTPlane);
 	bool nubAttached = false, nubStarted = false, attached = false, started = false;
 	if (nub && memory && ranges && parent && arm_io && nub->init()) {
+		boot_progress_stage("late_probe: nub init ok");
 		ranges->setObject(memory);
 		nub->setDeviceMemory(ranges);
 		nub->setName("NativeGOPFramebuffer");
+		// Every process may read the display nub (canvas-width/height): the posters were refused hundreds of times and died (rbu131u).
+		nub->setProperty("NativeSandboxGrantProcess", "*");
 		nubAttached = nub->attach(parent);
+		boot_progress_stage(nubAttached ? "late_probe: nub attached" : "late_probe: nub attach fail");
 		nubStarted = nubAttached && nub->start(parent);
-		// Phase 4: a display-subsystem node under the ADT's /arm-io, where the system looks for the display.
+		boot_progress_stage(nubStarted ? "late_probe: nub started" : "late_probe: nub start fail");
 		const char type[] = "display-subsystem";
 		OSData *data = OSData::withBytes(type, sizeof(type));
 		if (nubStarted && data && nub->setProperty("device_type", data)) {
 			nub->setName("gop-display", gIODTPlane);
 			native_legacy_dt_attached = nub->attachToParent(arm_io, gIODTPlane);
+			boot_progress_stage(native_legacy_dt_attached ? "late_probe: dt attached" : "late_probe: dt attach fail");
 		}
 		OSSafeReleaseNULL(data);
 		SInt32 score = 0;
 		native_legacy_probe_match = native_legacy_dt_attached && display->probe(nub, &score) == display;
+		boot_progress_stage(native_legacy_probe_match ? "late_probe: probe match ok" : "late_probe: probe match fail");
 		attached = native_legacy_probe_match && display->attach(nub);
+		boot_progress_stage(attached ? "late_probe: display attached" : "late_probe: display attach fail");
 		if (attached) {
 			native_legacy_stage = 5;
+			boot_progress_stage("late_probe: display->start enter");
 			started = display->start(nub);
 			native_legacy_start_result = started;
+			boot_progress_stage(started ? "late_probe: display->start ok" : "late_probe: display->start fail");
 		}
 	}
 	if (started) {
 		native_legacy_stage = 10;
 		OSSafeReleaseNULL(arm_io);
-		// Touch and buttons: the HID publisher (package/NativeHidInput.cpp + HidInputProbe.cpp, from UniXNU-j716f), started the
-		// way j716f does it, once the display is up (offline-hid-input=1 offline-hid-home=1 sheng-touch-hid=1).
+		boot_progress_stage("late_probe: ruan_handoff_start");
+		ruan_handoff_start(nub);
+		boot_progress_stage("late_probe: native_hid_input_probe");
 		extern void native_hid_input_probe(void);
 		native_hid_input_probe();
-		// Live USB terminal, screen capture and (opt-in) reboot to fastboot: package/UsbDebugCdc.cpp, off unless ruan-usbdbg=1.
+		boot_progress_stage("late_probe: native_usb_debug_probe");
 		extern void native_usb_debug_probe(void);
 		native_usb_debug_probe();
-		// Display Backlight (AppleARMBacklight & IODisplayParameters): package/RuanBacklight.cpp
+		boot_progress_stage("late_probe: ruan_backlight_start");
 		extern bool ruan_backlight_start(void) __attribute__((weak_import));
 		if (&ruan_backlight_start) ruan_backlight_start();
-		// Qualcomm WCN6750 Wi-Fi: package/RuanWifiProbe.c
+		boot_progress_stage("late_probe: ruan_wifi_init");
 		extern void ruan_wifi_init(void) __attribute__((weak_import));
 		if (&ruan_wifi_init) ruan_wifi_init();
-		// Qualcomm LPASS Quad WSA883x Audio: package/RuanAudioProbe.c
+		boot_progress_stage("late_probe: ruan_audio_init");
 		extern void ruan_audio_init(void) __attribute__((weak_import));
 		if (&ruan_audio_init) ruan_audio_init();
-		// Native Adreno GPU Accelerator Publication (IOAcceleratorES -> Metal discovery)
+		boot_progress_stage("late_probe: ruan_gpu_publish_accelerator");
 		ruan_gpu_publish_accelerator();
+		boot_progress_stage("late_probe: done");
 		return native_legacy_display_checkpoint();  // nub, memory and ranges stay owned by the registry
 	}
+	boot_progress_stage("late_probe: start was false");
 	native_legacy_stage = 6;
 	if (attached) display->detach(nub);
 	if (native_legacy_dt_attached) nub->detachFromParent(arm_io, gIODTPlane);
@@ -684,6 +822,7 @@ void native_legacy_display_late_probe(void) {
 	OSSafeReleaseNULL(arm_io);
 	display->release();
 	native_legacy_released = 1;
+	boot_progress_stage("late_probe: cleanup done");
 	native_legacy_verdict(native_legacy_probe_match ? "attach-or-start" : nubStarted ? "probe" : "nub");
 }
 }

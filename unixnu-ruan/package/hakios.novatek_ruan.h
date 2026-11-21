@@ -10,7 +10,10 @@
  */
 #include "hakios.novatek_ruan_fw.h"     /* novatek_ruan_fw[]: /vendor/firmware/novatek_ts_fw_boe.bin (not in git) */
 
-#define NVT_PIN_INT             36      /* novatek,irq-gpio = <&tlmm 36 0x2001>: low = a report waits */
+/* The live DT has novatek,irq-gpio = <&tlmm 0x36 0x2001> and interrupts = <0x36 2> (falling edge): 0x36 is GPIO 54, not 36.
+ * touch_fast=1 (RuanTouch.c) switches to 54; 36 stays the default until a boot confirms 54's edges. */
+static unsigned nvt_pin_int = 36;
+#define NVT_PIN_INT             nvt_pin_int
 #define NVT_EVENT_BUF           0x125800 /* NT36532 (single chip / cascade); NT36532E is 0x11C400 */
 #define NVT_BOOT_RDY            0x1FB50D
 #define NVT_TX_AUTO_COPY_EN     0x1FC925

@@ -125,14 +125,16 @@ NAMED = {184: ' virtual bool isMainDisplay();\n', 188: ' virtual IOReturn getDot
          296: ' virtual bool validateSwap(const OriginalLegacySwapRequest *);\n', 295: ' virtual void completeCurrentSwap();\n',
          337: ' virtual IOReturn collectCompletionReports(uint32_t,void *,uint32_t *,uint32_t)=0;\n',
          288: ' virtual bool startHardware();\n', 301: ' virtual bool getRefreshAttributes(uint64_t *,bool);\n',
-         354: ' virtual int applyStateRequest(OriginalLegacyStateRequest *,bool);\n'}
+         354: ' virtual int applyStateRequest(OriginalLegacyStateRequest *,bool);\n',
+         # rbu72: slot 345 (abstract) is the TimingEnable query the family makes after a swap-wait timeout; gopfb-zz-slot345-timing.patch answers it.
+         345: ' virtual bool isTimingEnabled()=0;\n'}
 for i in range(168, 358):
     header += NAMED.get(i) or (f' virtual __attribute__((noreturn)) void opaque{i}()=0;\n' if i in pure else
                                f' virtual __attribute__((deprecated("Unclassified ABI: never call from source"))) void opaque{i}();\n')
 header += '};\nstatic_assert(sizeof(IOMobileFramebufferLegacy)==0x18a0,"Actual original instance extent");\n'
 header += ('enum : unsigned {kRequestSurfaces = 2624, kRequestMasks = 792, kRequestRect0 = 17,\n'
            '                  kRequestRect1 = 81, kRequestOptions = 804, kRequestDims = 816};\n')
-header += '#define NATIVE_LEGACY_LEAVES(LEAF) ' + ' '.join('LEAF(%d)' % i for i in pure if i not in (213, 337)) + '\n'
+header += '#define NATIVE_LEGACY_LEAVES(LEAF) ' + ' '.join('LEAF(%d)' % i for i in pure if i not in (213, 337, 345)) + '\n'
 header += ('enum : unsigned {kLegacyStateRequested = 5836, kLegacyStatePowered = 5840};\n'
            '// Slot 354 reads the first 17 bytes; 28 is the size this port chose (alignment), not an original ABI fact.\n'
            'struct OriginalLegacyStateRequest {\n'
@@ -432,6 +434,15 @@ if accel_script.exists():
         shutil.copy2(accel_dir / 'original-bindings.o', accel_bindings_renamed)
         accel_objects = [accel_dir / 'NativeAdrenoAccelerator.late.o', accel_bindings_renamed]
 
+# The GPU hand-off presenter (UniXNU-sheng build-gop-legacy-display.py): NativeGOPPresenter, its static initializer run by
+# LegacyDisplayProbe.cpp beside the display's (fb-gpu=2: the Metal plugin's GPU copy into the scanout).
+print(run([sys.executable, str(ROOT / 'scripts/build-arm-driver.py'), 'NativeGOPPresenter'], text=True), end='')
+gop = ROOT / 'build/native-gop-presenter'
+gop_late = gop / 'NativeGOPPresenter.late.o'
+run([shutil.which('llvm-objcopy'), '--remove-section=__DATA,__mod_init_func', '--globalize-symbol=__GLOBAL__sub_I_NativeGOPPresenter.cpp',
+     str(gop / 'NativeGOPPresenter.o'), str(gop_late)])
+accel_objects.append(gop_late)
+
 archive = OUT / 'libNativeLegacyDisplay.late.a'
 archive.unlink(missing_ok=True)
 run([shutil.which('llvm-ar'), 'rcs', archive, late, OUT / 'original-bindings.o', probe_obj,
@@ -441,13 +452,14 @@ sources = [GOPFB / 'NativeLegacyDisplay.cpp', GOPFB / 'NativeLegacyRequest.h',
            GOPFB / 'OriginalMobileFramebufferABI.h', PROBE_SOURCE, OUT / 'OriginalLegacyFramebufferABI.h', *GOPFB_PATCHES,
            HID_SOURCE, PROBE_SOURCE.parent / 'HidInputProbe.cpp', OUT / 'OriginalHidDeviceABI.h',
            *(PROBE_SOURCE.parent / n for n in ('UsbDebugCdc.cpp', 'UsbDebugCdc.h', 'UsbDebugHw.h', 'UsbDebugCommands.h',
-                                               'UsbDebugWire.h', 'SmmuBypass.h', 'UsbDebugFiles.h'))]
+                                               'UsbDebugWire.h', 'SmmuBypass.h', 'UsbDebugFiles.h')),
+           GOPFB / 'NativeGOPPresenter.cpp', GOPFB / 'NativeGOPWire.h']
 (OUT / 'build-report.json').write_text(json.dumps(dict(
     source_sha256={str(path.relative_to(ROOT)): sha(path) for path in sources},
     original_candidate_sha256=sha(candidate), original_audit_sha256=sha(audit_out),
     compiled_object_sha256=sha(obj), late_object_sha256=sha(late), probe_object_sha256=sha(probe_obj),
     archive_sha256=sha(archive), bindings={name: hex(value) for name, value in bindings.items()},
     virtual_entries=358, owned_entries=owned, inherited_native_entries=native,
-    guarded_backend_leaves=[i for i in pure if i not in (213, 337)],
+    guarded_backend_leaves=[i for i in pure if i not in (213, 337, 345)],
     original_instructions_modified=False, display_presented=False), indent=2) + '\n')
 print(f'PASS: libNativeLegacyDisplay.late.a {sha(archive)} (owned {len(owned)} slots, {len(bindings)} bindings)')

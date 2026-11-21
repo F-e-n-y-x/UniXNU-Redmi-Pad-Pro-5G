@@ -1,4 +1,125 @@
-# iPadOS & macOS on Redmi Pad Pro 5G (ruan)
+<h1 align="center">iPadOS on Redmi Pad Pro 5G</h1>
+
+<p align="center">
+  <b>iPadOS 17.7.11 running natively on the Xiaomi Redmi Pad Pro 5G ("ruan")</b><br>
+  Snapdragon 7s Gen 2 (SM7435) · Adreno 710 GPU · built on <a href="https://github.com/UniXNU">UniXNU</a>
+</p>
+
+<p align="center">
+  <img src="docs/img/ipados-control-center-rbu127u.png" alt="Control Center on the tablet (rbu127u)" width="30%">
+  <img src="docs/img/usb-homescreen-full.png" alt="Home screen" width="30%">
+  <img src="docs/img/usb-settings-about-full.png" alt="Settings, About" width="30%">
+</p>
+
+> **Branches:** `agy-15-11-26` (this one) is the **iPadOS build**. `macos` is the **macOS build** for the same tablet.
+> Experimental research software: it boots a real Apple OS on non-Apple hardware. Back up your device first.
+
+## Contents
+
+- [What works](#what-works)
+- [How it works](#how-it-works)
+- [Quick start](#quick-start)
+- [Debugging](#debugging)
+- [Project layout](#project-layout)
+- [Roadmap](#roadmap)
+- [Credits](#credits)
+
+## What works
+
+Status on 2026-11-21 (builds rbu13x). ✅ tested on the tablet · 🧪 built, being tested · ⚠️ known problem · ❌ not started
+
+| Area | Status | Details |
+|---|---|---|
+| Boot | ✅ | Lock screen, home screen, Settings, Control Center (~5 min from power-on) |
+| Storage | ✅ | iPadOS root on the internal UFS partition `sda22` (`unixnu`, 32 GiB) |
+| CPU | ✅ | 4× Cortex-A78 + 4× A55; load governor, L3 vote, touch boost. Thermal cap 🧪 |
+| GPU | ✅ | Metal on Adreno 710 through Turnip (Vulkan) and AdrenoMetal |
+| GPU speed | 🧪 | 734 MHz, multi-level clocks with matching memory bandwidth, governor up to 816 MHz |
+| Display | ✅ | **Zero-copy scanout**: the display engine reads the GPU's frames directly, 60 Hz |
+| Smoothness | 🧪 | Fixed 60 Hz pacing, frames released at flip |
+| Touch | ✅ | Every touch reaches iOS; 1 ms polling on the correct interrupt pin |
+| Buttons, battery, USB debug | ✅ | |
+| Lock-screen wallpaper | ⚠️ | Wallpaper extensions are killed every ~5 s, and touching the lock screen can then crash SpringBoard. Fix being tested |
+| Data volume | ⚠️ | 1 GB RAM disk that resets on reboot. Persistent 16 GB storage is built, not yet tested |
+| Wi-Fi, audio, cameras, sensors, cellular | ❌ | |
+
+## How it works
+
+```
+Android bootloader ──fastboot boot──▶ UEFI (Mu) ──▶ DarwinBoot ──▶ XNU kernel (patched, prelinked)
+                                                                     │
+       iPadOS root (APFS) on UFS partition sda22 ◀───────────────────┘
+                                                                     │
+  launchd ─▶ backboardd / SpringBoard ─▶ Metal ─▶ AdrenoMetal ─▶ Turnip ─▶ Adreno 710
+                                                       │
+                        display engine (DPU) ◀── zero-copy scanout of each frame
+```
+
+- **Kernel:** Apple's XNU, built from source by UniXNU with ruan's patches (`unixnu-ruan/patches/xnu/`) and drivers (`unixnu-ruan/package/`). These cover UFS storage, touch, buttons, battery, the GPU power-up (GMU/HFI), CPU frequency, the USB debug port and the display.
+- **GPU:** iPadOS's Metal calls are translated to Vulkan and run by Mesa's Turnip driver on the Adreno 710.
+- **Display:** frames go straight from the GPU's memory to the panel. The display engine reads them through its own SMMU window, so the CPU copies nothing.
+- **Boot:** only RAM boots (`fastboot boot`). Android's partitions are untouched, apart from the shrunk `userdata` and the new `unixnu` partition.
+
+## Quick start
+
+Requirements: Linux host, `fastboot`, a USB cable, the UniXNU work tree at `/root/unixnu-work`, the iPadOS 17.7.11 (21H461) IPSW (UniXNU downloads it).
+
+```bash
+# 1. Build the root image, flash it to the unixnu partition, build and RAM-boot the kernel (tablet in fastboot)
+/root/unixnu-work/cycle-root.sh rbu140          # boot arguments: /root/unixnu-work/args-current.txt
+
+# 2. Kernel or boot-argument change only (root already flashed)
+RAMROOT=/root/unixnu-work/ramroot WORK=/root/unixnu-work/ramroot/work-full UFS=1 \
+UFS_ROOT=/root/unixnu-work/tr/out-rbu137root REBUILD_KERNEL=1 TAG=rbu140u OUT=/root/unixnu-work/tr/out-rbu140u \
+KERNEL_ARGS="$(cat /root/unixnu-work/args-current.txt)" unixnu-ruan/scripts/build-ramroot.sh usb
+/root/unixnu-work/boot-local.sh rbu140u
+```
+
+The kernel command line is limited to 1000 bytes, and the build adds about 490 of them.
+
+## Debugging
+
+The kernel exposes a USB serial debug port. Use `tools/ruan-usbdbg.py`:
+
+| Command | What it does |
+|---|---|
+| `shot -o screen.png` | Screenshot of what the panel shows |
+| `dmesg`, `cmd info` | Kernel log, and the saved log of the previous boot |
+| `pull-crashes` | All iOS crash reports (`.ips`) |
+| `cmd display` / `touch` / `dpu` | Frame pacing, touch, and display-engine registers |
+| `get <path>` | Copy a file off the tablet. The iOS system log is exported to `/private/var/mobile/Library/Caches/com.apple.backboardd/m2v/zz-oslog/oslog.txt.gz` |
+| `reboot-fastboot` | Back to fastboot |
+
+## Project layout
+
+| Path | Contents |
+|---|---|
+| `unixnu-ruan/` | The device port: `board.toml`, `package/` (drivers), `patches/xnu/`, `scripts/` (build) |
+| `docs/IPADOS-BRINGUP.md` | Full bring-up log |
+| `docs/research/unixnu-dissect/` | How UniXNU works (build, graphics, userland) compared with this port |
+| `docs/research/opt/` | Performance work (pacing, GPU, CPU, touch, memory, persistent data) with patches |
+| `docs/research/dpu-scanout-sm7435.md` | The zero-copy display port |
+| `tools/` | Host tools (USB debug, cycle scripts) |
+| `uefi/` | UEFI firmware build for ruan |
+| `hardware/` | Device tree dumps and hardware notes |
+
+## Roadmap
+
+1. Fix the lock-screen wallpaper crash (no GPU for wallpaper extensions, HEIC→PNG wallpapers, data protection).
+2. GPU speed: clock steps to 940 MHz with the governor and thermal cap; shader pipeline pack; on-chip tile rendering.
+3. Persistent 16 GB Data volume on `sda22`.
+4. 120 Hz panel mode.
+5. Wi-Fi, audio.
+
+## Credits
+
+- [UniXNU](https://github.com/UniXNU) and its device ports (sheng, dizi, amethyst, pong and others), which this port is built on.
+- HakiOS (garnet), for the early root tooling and the Novatek touch driver.
+- Mesa / Turnip, for the Adreno Vulkan driver.
+
+<details>
+<summary><b>Older notes (2026-11-13 … 11-19)</b></summary>
+
 
 **Current Active Target**: **iPadOS 17.7.11 (21H461)**, RAM-booted. Working: home screen, touch (NT36532), buttons, CPU frequency, USB debug. Battery readout: partly (see below). Adreno 710: the command processor runs and copies memory by DMA (`CP_MEM_WRITE`, `CP_MEMCPY`), but the screen is still drawn by the CPU; no Metal. Not started: Wi-Fi, audio (only status stubs, see the rbu24 correction below).
 
@@ -360,3 +481,5 @@ Derived from the garnet (POCO X6 5G, same SoC) platform in [JosephMontfort/hakio
   - Boot full iPadOS 17.7.11 kernel and build non-destructive RAM root.
 
 > Full iPadOS bring-up log (blockers, errors, causes, fixes): [docs/IPADOS-BRINGUP.md](docs/IPADOS-BRINGUP.md). Port sources: [unixnu-ruan/](unixnu-ruan/). Research plans: [docs/research/](docs/research/). Host tools: [tools/ruan-usbdbg.py](tools/ruan-usbdbg.py).
+
+</details>

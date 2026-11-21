@@ -1,0 +1,36 @@
+--- a/drivers/Adreno740/NativeAdrenoMemory.cpp	2026-11-18 01:03:46.414149250 +0530
++++ b/drivers/Adreno740/NativeAdrenoMemory.cpp	2026-11-18 01:17:09.406291911 +0530
+@@ -1,5 +1,6 @@
+ /* SPDX-License-Identifier: MIT */
+ #include "NativeAdrenoMemory.h"
++extern "C" void boot_progress_stage(const char *);   /* ruan BootProgress.c */
+ #include "NativeAdrenoPool.h"
+ /* Where a call that never returns is stuck: the free/unmap/release path stores a stage number here, the board page shows it. */
+ extern "C" {volatile uint32_t native_adreno_trace_stage;}
+@@ -366,6 +367,26 @@
+             status=maintainImported(0,bytes,NativeAdrenoClean);
+             NativeAdrenoNotePhase(NativeAdrenoPhaseAllocate,bytes);
+         }
++        /* ruan (rbu78): write-combined pages too. This kernel has no PPL, so the cacheable physical aperture of a page stays mapped after
++         * its attribute turns write-combined, and a dirty line left there (the zero fill, the page's last use) can be written back over
++         * what the client stores through its write-combined view: Turnip IBs read back with zeroed lines at submission (rbu77) and the
++         * CP hung in them. Clean and invalidate that alias once before the client sees the pages. */
++        /* gpu-wc-clean=0 turns it off; the first 8 report before and after as boot-progress events (rbu79: rbu78 reset twice). */
++        static uint32_t wcClean=~0u,wcNotes;
++        if(wcClean==~0u) {uint32_t v=1;PE_parse_boot_argn("gpu-wc-clean",&v,sizeof v);wcClean=v;}
++        if(status==kIOReturnSuccess && descriptor_ && write_combined && wcClean) {
++            char note[80];
++            const bool noted=wcNotes<8;
++            if(noted) {
++                ++wcNotes;
++                snprintf(note,sizeof note,"wc-clean %u: %zu bytes, %zu spans, first %llx",wcNotes,bytes,span_count_,
++                         span_count_?(unsigned long long)spans_[0].physical:0ull);
++                boot_progress_stage(note);
++            }
++            status=maintainImported(0,bytes,NativeAdrenoCleanInvalidate);
++            if(noted) {snprintf(note,sizeof note,"wc-clean %u done: %x",wcNotes,status);boot_progress_stage(note);}
++            NativeAdrenoNotePhase(NativeAdrenoPhaseAllocate,bytes);
++        }
+         if(status!=kIOReturnSuccess) {write_combined_=false;(void)release();}
+     }
+     if(status!=kIOReturnSuccess) {
