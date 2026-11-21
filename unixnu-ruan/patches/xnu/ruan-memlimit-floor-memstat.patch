@@ -1,0 +1,37 @@
+ruan: ruan-memlimit-floor also clamps the memorystatus active/inactive limits (highwater kills, rbu122u).
+
+--- a/bsd/kern/kern_memorystatus.c
++++ b/bsd/kern/kern_memorystatus.c
+@@ -181,9 +181,22 @@
+  * soon be in effect down in the ledgers.
+  */
+ 
++/* ruan: ruan-memlimit-floor=<MB> also raises the memorystatus limits (highwater kills read these, not the ledger: rbu122u mediaserverd) */
++static int
++ruan_memlimit_clamp(int limit)
++{
++	static int floor_mb = -1;
++	if (floor_mb < 0) {
++		int v = 0;
++		PE_parse_boot_argn("ruan-memlimit-floor", &v, sizeof(v));
++		floor_mb = v;
++	}
++	return (limit > 0 && limit < floor_mb) ? floor_mb : limit;
++}
++
+ #define SET_ACTIVE_LIMITS_LOCKED(p, limit, is_fatal)                    \
+ MACRO_BEGIN                                                             \
+-(p)->p_memstat_memlimit_active = (limit);                               \
++(p)->p_memstat_memlimit_active = ruan_memlimit_clamp(limit);                               \
+    if (is_fatal) {                                                      \
+ 	   (p)->p_memstat_state |= P_MEMSTAT_MEMLIMIT_ACTIVE_FATAL;     \
+    } else {                                                             \
+@@ -193,7 +206,7 @@
+ 
+ #define SET_INACTIVE_LIMITS_LOCKED(p, limit, is_fatal)                  \
+ MACRO_BEGIN                                                             \
+-(p)->p_memstat_memlimit_inactive = (limit);                             \
++(p)->p_memstat_memlimit_inactive = ruan_memlimit_clamp(limit);                             \
+    if (is_fatal) {                                                      \
+ 	   (p)->p_memstat_state |= P_MEMSTAT_MEMLIMIT_INACTIVE_FATAL;   \
+    } else {                                                             \

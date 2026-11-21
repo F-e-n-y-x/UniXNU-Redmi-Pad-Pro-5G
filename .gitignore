@@ -1,10 +1,11 @@
-*.ipsw
-*.img
-*.apfs
-*.fd
-*.macho
-*.bin
+# Qualcomm/Xiaomi firmware extracted from the tablet: proprietary, keep out of git (regenerate with tools/make-binaries.py)
+uefi/Binaries/
 build/
-out*/
-__pycache__/
-*.pyc
+testing/*.mp4
+testing/*.mov
+crashes/
+
+
+.cache/
+*.lock
+

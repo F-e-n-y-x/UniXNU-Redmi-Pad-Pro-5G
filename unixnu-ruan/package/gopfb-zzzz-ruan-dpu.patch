@@ -1,0 +1,35 @@
+--- a/NativeLegacyDisplay.cpp
++++ b/NativeLegacyDisplay.cpp
+@@ -302,11 +302,11 @@
+     bool fenceCaptured=false,fenceSlow=false;
+     IOTimerEventSource *fenceTimer=nullptr;
+     bool directOn=false,directBoot=true;
+-    static constexpr uint32_t kVig[2]={0x4000,0x6000},kCtlFlush=0x15018,kBootIova=0xb8000000U,kBootStride=0x2fa0;
++    static constexpr uint32_t kVig[1]={0x4000},kCtlFlush=0x15018,kCtlFlushMask=0x1,kBootIova=0xb8000000U,kBootStride=0x1900;   // ruan: one VIG (dpu probe rbu127u)
+     void startDirect() {
+         unsigned mode=0;PE_parse_boot_argn("dpu-scanout",&mode,sizeof(mode));
+-        if(mode<2 || !&native_ufs_dpu_map || !&native_ufs_dpu_state || !(native_ufs_dpu_state>>31) || !primary)return;
+-        IODeviceMemory *memory=IODeviceMemory::withRange(0xae01000,0x8f000);
++        if(mode<2 || !&native_ufs_dpu_map || !&native_ufs_dpu_state || (native_ufs_dpu_state&0xffff0000U)!=0x80000000U || !primary)return;
++        IODeviceMemory *memory=IODeviceMemory::withRange(0xae01000,0x83000);
+         mdpMap=memory?memory->map(kIOMapAnywhere|kIOMapInhibitCache):nullptr;
+         if(memory)memory->release();
+         directPages=static_cast<uint64_t *>(IOMallocData(8192*sizeof(uint64_t)));
+@@ -337,7 +337,7 @@
+         shownStride=stride;
+         for(uint32_t vig:kVig){mdp[(vig+0x14)/4]=iova;mdp[(vig+0x24)/4]=stride&0xffff;}
+         __asm__ volatile("dsb sy" ::: "memory");
+-        mdp[kCtlFlush/4]=0x3;
++        mdp[kCtlFlush/4]=kCtlFlushMask;
+         __asm__ volatile("dsb sy" ::: "memory");
+     }
+     // The slot that holds this surface, mapping it into a free one (never the one on screen or the one waiting to latch) the first time.
+@@ -420,7 +420,7 @@
+         if(!latchRequest)return;
+         uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time()-latchStart,&ns);
+         gpuTraceEvent(GpuTraceDisplayLatch,0,traceId(latchRequest),mdp[kCtlFlush/4],ns,shownSlot,pendingSlot);
+-        if((mdp[kCtlFlush/4]&0x3) && ns<50000000ull){latchTimer->setTimeoutUS(500);return;}
++        if((mdp[kCtlFlush/4]&kCtlFlushMask) && ns<50000000ull){latchTimer->setTimeoutUS(500);return;}
+         if(ns>=50000000ull)native_legacy_direct[3]=native_legacy_direct[3]+1;
+         const uint32_t us=uint32_t(ns/1000);
+         if(us>native_legacy_direct[4])native_legacy_direct[4]=us;

@@ -1,0 +1,201 @@
+--- a/RuanGpuPower.c	2026-11-21 07:18:47.916696964 +0530
++++ b/RuanGpuPower.c	2026-11-21 07:20:11.518650144 +0530
+@@ -884,6 +884,7 @@
+ /* qcom,bus-table-ddr7 (KB/s); the pwrlevels' qcom,bus-freq-ddr7 index this */
+ static const uint32_t ruan_ddr7_kbps[] = {0, 781250, 2136718, 3000000, 3972656, 5285156, 6074218, 6671875, 8332031};
+ #define RUAN_DDR7_LEVELS (sizeof ruan_ddr7_kbps / sizeof ruan_ddr7_kbps[0])
++static unsigned perf_level;   /* the boot perf index once the multi-level tables are in, else 0 (ruan-gpu-dcvs needs it) */
+ 
+ /* KGSL rpmh_arc_cmds: entries up to the zero padding */
+ static unsigned ruan_arc_num(const struct ruan_cmddb_res *r)
+@@ -1073,6 +1074,7 @@
+ 		if (level < 1) level = 1;
+ 		if (level > RUAN_GPU_OPPS) level = RUAN_GPU_OPPS;
+ 		boot_vote[1] = level;
++		perf_level = level;
+ 		boot_vote[2] = ruan_gpu_opps[level - 1].bus;
+ 		char msg[64];
+ 		snprintf(msg, sizeof msg, "gpu perf: boot vote L%u %u kHz bw%u", level, ruan_gpu_opps[level - 1].khz, boot_vote[2]);
+@@ -2017,6 +2019,156 @@
+ // native_adreno_publish. Weak: a kernel without libRuanAdreno.a says "nolink".
+ extern int ruan_adreno_glue_run(unsigned stage, const struct ruan_adreno_glue_io *io, char *row, size_t row_bytes)
+     __attribute__((weak_import));
++/* ruan-gpu-dcvs=1: GPU governor + tsens thermal cap (docs/research/opt/governors.md). Needs ruan-gpu-perf=1 (perf_level != 0) and
++ * gpu 16/17/18, the modes that keep the windows mapped. Every ~16 ms: busy share from GMU power counter 0 (KGSL gen7_start: AO
++ * CX_BUSY_MASK 0x23b0e = 0xff000000, SELECT_0 0x1f841 low byte 0x20, ENABLE 0x1f840 = 1; XOCLK_0_L/H 0x1f844/5 count 19.2 MHz
++ * ticks while busy); the lowest level whose clock keeps that work ~60 % busy, up at once, one level down after 4 calm windows,
++ * floor 3 (500 MHz), ceiling ruan-gpu-max-level (default 9). Each change is HFI msg 30 {1, perf idx, bus idx}, as the boot vote.
++ * Thermal cap: gpuss-0/1 = tsens0 (TM 0xc263000) sensors 11/12; TM_Sn_STATUS 0xa0 + 4n, bits 11:0 signed deci-C, bit 21 valid.
++ * Over 85 C the ceiling is level 6, over 95 C level 3; each limit lifts 5 C lower. No reading holds level 6.
++ * Locking: the governor is the only HFI sender while it runs; ruan_gpu_run (every other sender, and the only code that unmaps
++ * va[] or puts the GMU in reset) stops and joins it first and restarts it at the end. */
++typedef struct thread *thread_t;
++extern int kernel_thread_start_priority(void (*)(void *, int), void *, int, thread_t *);
++extern void thread_deallocate(thread_t);
++extern uint64_t mach_absolute_time(void);
++extern void absolutetime_to_nanoseconds(uint64_t, uint64_t *);
++#define DCVS_FLOOR 3u
++#define DCVS_TSENS0_TM 0x0c263000u
++#define GMU_IO(dw) (*(volatile uint32_t *)(va[W_GMU] + GMU_REG(dw)))
++static volatile uint32_t dcvs_stop, dcvs_running;
++/* Diagnostics: [0] running, [1] level, [2] thermal ceiling, [3] level changes, [4] failed votes, [5] busy per mille (1 s average),
++ * [6] hottest GPU sensor in deci-C (INT32_MIN: no valid reading), [7] seconds, [8] windows without a valid tsens reading */
++volatile int32_t ruan_gpu_dcvs[9];
++
++/* The level for a window: lowest perf index in [lo, hi] whose clock runs cur's work (busy_pm per mille) at <= 60 % busy. */
++static unsigned dcvs_want(unsigned cur, unsigned busy_pm, unsigned lo, unsigned hi)
++{
++	uint64_t need = (uint64_t)ruan_gpu_opps[cur - 1].khz * busy_pm / 600u;
++	unsigned w = lo;
++	while (w < hi && ruan_gpu_opps[w - 1].khz < need) w++;
++	return w;
++}
++
++/* Thermal ceiling from the hottest GPU sensor (deci-C) with 5 C hysteresis, never above top. */
++static unsigned dcvs_cap(unsigned cap, int32_t dc, unsigned top)
++{
++	if (dc == INT32_MIN) return top < 6u ? top : 6u;
++	unsigned hot = dc > 950 ? 3u : dc > 850 ? 6u : top, cool = dc > 900 ? 3u : dc > 800 ? 6u : top;
++	if (hot < cap) cap = hot;
++	else if (cool > cap) cap = cool;
++	return cap < top ? cap : top;
++}
++
++static int32_t tsens_dc(volatile uint32_t *tm, unsigned s)
++{
++	for (unsigned i = 0; i < 3; i++) {   /* tsens.c: up to three reads for the valid bit */
++		uint32_t v = tm[(0xa0u + 4u * s) / 4u];
++		if (v & (1u << 21)) return (int32_t)(v << 20) >> 20;
++	}
++	return INT32_MIN;
++}
++
++static uint64_t dcvs_busy_ticks(void)
++{
++	uint32_t hi = GMU_IO(0x1f845), lo = GMU_IO(0x1f844), hi2 = GMU_IO(0x1f845);
++	if (hi2 != hi) lo = GMU_IO(0x1f844);
++	return (uint64_t)hi2 << 32 | lo;
++}
++
++static int dcvs_vote(unsigned l)
++{
++	const uint32_t v[3] = {1u, l, ruan_gpu_opps[l - 1].bus};
++	uint32_t out[16], fw_err = 0;
++	size_t count = 0;
++	return AdrenoHfiExchange(&gmu_hfi, 30, v, 3, 500, hfi_wait_once, out, 16, &count, &fw_err) == AdrenoHfiSuccess;
++}
++
++static void dcvs_thread(void *arg, int wres)
++{
++	(void)arg; (void)wres;
++	unsigned hi = RUAN_GPU_OPPS, cur = ruan_gpu_dcvs[1] ? (unsigned)ruan_gpu_dcvs[1] : perf_level, cap, down = 0, fails = 0, n = 0, busy_sum = 0;
++	PE_parse_boot_argn("ruan-gpu-max-level", &hi, sizeof hi);
++	if (hi > RUAN_GPU_OPPS) hi = RUAN_GPU_OPPS;
++	if (hi < DCVS_FLOOR) hi = DCVS_FLOOR;
++	cap = hi;
++	vm_offset_t tm = ml_io_map_unmappable((vm_offset_t)DCVS_TSENS0_TM, 0x1000, 7);
++	GMU_IO(0x23b0e) = 0xff000000u;
++	GMU_IO(0x1f841) = (GMU_IO(0x1f841) & ~0xffu) | 0x20u;
++	GMU_IO(0x1f840) = 1u;
++	__asm__ volatile("dsb sy" ::: "memory");
++	uint64_t ticks = dcvs_busy_ticks(), t0 = mach_absolute_time();
++	ruan_gpu_dcvs[0] = 1;
++	kprintf("ruan-gpu: dcvs on, L%u, floor %u ceiling %u, tsens %s\n", cur, DCVS_FLOOR, hi, tm ? "mapped" : "MAP FAILED");
++	while (!dcvs_stop) {
++		delay(16000);
++		uint64_t now = mach_absolute_time(), tk = dcvs_busy_ticks(), ns = 0;
++		absolutetime_to_nanoseconds(now - t0, &ns);
++		uint64_t busy_ns = (tk - ticks) * 10000u / 192u;   /* 19.2 MHz ticks */
++		unsigned busy = ns ? (unsigned)(busy_ns >= ns ? 1000u : busy_ns * 1000u / ns) : 0;
++		ticks = tk, t0 = now;
++
++		int32_t dc = INT32_MIN;
++		for (unsigned s = 11; tm && s <= 12; s++) {
++			int32_t t = tsens_dc((volatile uint32_t *)tm, s);
++			if (t > dc) dc = t;
++		}
++		if (dc == INT32_MIN) ruan_gpu_dcvs[8]++;
++		unsigned ncap = dcvs_cap(cap, dc, hi);
++		if (ncap != cap) kprintf("ruan-gpu: dcvs thermal ceiling L%u -> L%u at %d dC\n", cap, ncap, dc);
++		cap = ncap;
++
++		unsigned want = dcvs_want(cur, busy, DCVS_FLOOR, cap);
++		if (want < cur && cur <= cap) want = ++down >= 4 ? cur - 1 : cur;   /* calm: one step after 4 windows */
++		else down = 0;
++		if (want != cur) {
++			down = 0;
++			if (dcvs_vote(want)) {
++				cur = want, fails = 0;
++				ruan_gpu_dcvs[3]++;
++			} else {
++				ruan_gpu_dcvs[4]++;
++				if (++fails >= 3) {   /* a timeout poisons the HFI session: stop voting */
++					kprintf("ruan-gpu: dcvs stopped, 3 failed votes (L%u -> L%u)\n", cur, want);
++					break;
++				}
++			}
++		}
++		ruan_gpu_dcvs[1] = (int32_t)cur;
++		ruan_gpu_dcvs[2] = (int32_t)cap;
++		busy_sum += busy;
++		if (++n == 62) {   /* ~1 s */
++			ruan_gpu_dcvs[5] = (int32_t)(busy_sum / n);
++			ruan_gpu_dcvs[6] = dc;
++			ruan_gpu_dcvs[7]++;
++			n = 0, busy_sum = 0;
++		}
++	}
++	if (tm) ml_io_unmap(tm, 0x1000);
++	ruan_gpu_dcvs[0] = 0;
++	__atomic_store_n(&dcvs_running, 0, __ATOMIC_RELEASE);
++}
++
++static void dcvs_start(void)
++{
++	uint32_t on = 0;
++	thread_t t;
++	if (!PE_parse_boot_argn("ruan-gpu-dcvs", &on, sizeof on) || on != 1 || !perf_level || !va[W_GMU] || dcvs_running) return;
++	dcvs_stop = 0;
++	dcvs_running = 1;
++	if (kernel_thread_start_priority(dcvs_thread, NULL, 80, &t) == KERN_SUCCESS) thread_deallocate(t);
++	else dcvs_running = 0;
++}
++
++/* Before any other HFI send, unmap or GMU reset: a vote in flight takes at most 500 x 100 us. */
++static void dcvs_stop_join(void)
++{
++	if (!dcvs_running) return;
++	dcvs_stop = 1;
++	for (unsigned i = 0; __atomic_load_n(&dcvs_running, __ATOMIC_ACQUIRE) && i < 200; i++) delay(10000);
++	if (dcvs_running) kprintf("ruan-gpu: dcvs did not stop in 2 s\n");
++}
++
+ static int glue_gpu_rd(uint32_t reg, uint32_t *v) {return rd(NULL, GPB_WIN_GPU, reg * 4u, v);}
+ static int glue_gpu_wr(uint32_t reg, uint32_t v) {return wr(NULL, GPB_WIN_GPU, reg * 4u, v);}
+ static int glue_smmu_rd(uint32_t off, uint32_t *v) {return rd(NULL, W_SMMUF, off, v);}
+@@ -2055,6 +2207,7 @@
+ int
+ ruan_gpu_run(unsigned mode, int (*trace)(void *, const char *), void *ctx)
+ {
++	dcvs_stop_join();
+ 	trace_fn = trace, trace_ctx = ctx;
+ 	if (!mode || (mode > 18 && mode != RUAN_GPU_OFF)) {
+ 		snprintf(ruan_gpu_short, sizeof(ruan_gpu_short), "gpu m%u?", mode);
+@@ -2276,6 +2429,7 @@
+ 	    gpb_gdsc_on(r->gx_gdscr) ? "on" : "off", r->smmu == GPB_DONE ? "ok" : "-", mode == 4 ? (k->gmu_read ? " gmuR" : " gmu-") : "",
+ 	    mode == 5 ? (b->tcm_words && !b->tcm_bad && !b->why[0] ? " tcm" : " tcm-") : "");
+ 	result_line(ruan_gpu_short);
++	if (mode >= 16 && ruan_gpu_s3_gx_result.gx_on) dcvs_start();
+ 	trace_fn = NULL;
+ 	return (r->io_error || (mode >= 4 && (k->io_error || k->rcg_fail || !k->gmu_read)) || (mode >= 5 && b->why[0]) ||
+ 	    (mode == 6 && (c->why[0] || !c->hfi_ready)) ||
+@@ -2504,9 +2658,6 @@
+ }
+ 
+ extern void *initproc;
+-typedef struct thread *thread_t;
+-extern int kernel_thread_start_priority(void (*)(void *, int), void *, int, thread_t *);
+-extern void thread_deallocate(thread_t);
+ static void glue_late(void *arg, int wr)
+ {
+ 	(void)wr;

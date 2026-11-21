@@ -1,0 +1,141 @@
+--- a/scripts/build-ramroot.sh
++++ b/scripts/build-ramroot.sh
+@@ -29,11 +29,17 @@
+ #      UFS_ROOT=<out dir of a RAM root> (e.g. out-rbu74): the partition image carries THAT root (GPU stack included) as its OS window
+ #      (scripts/make-ufs-root.py), root_match_volume_uuid becomes its volume, and its root-usb.cdhash joins trust.bundle.
+ #      UFS_FIRST_LBA/UFS_LAST_LBA: the unixnu partition's real LBAs for board.toml [userdata] (not used by the boot image itself).
++#      PERSIST=1 (with UFS=1): Data on UFS (docs/research/opt/data-on-ufs.md Plan A). No USB image: a packed 16 GiB Data seed rides in
++#      the payload (board packed_data_ramdisk = true) and NativeRamBlock keeps its changed pages in ShengUfs's store window at the end
++#      of "unixnu" (ram-data=1 ram-data-uuid= data-persist=2 data-fua=1). The seed is the store's identity, so it is built once, at
++#      PERSIST_SEED (default /root/unixnu-work/ufs-variant/data-seed.apfs), and only rebuilt with REBUILD_SEED=1 (REBUILD_ROOT leaves
++#      it alone). PERSIST_RESET=1 (or 2: also Setup) adds data-reset=<it>: the first boot of a seed only, never after.
+ set -euo pipefail
+ MODE=${1:?usage: build-ramroot.sh mini|usb}
+ NAME=$MODE${TAG:+-$TAG}
+ extra=(); for arg in ${KERNEL_ARGS:-}; do extra+=("--kernel-arg=$arg"); done
+ case $MODE in mini|usb) ;; *) echo "build-ramroot.sh: mode is mini or usb" >&2; exit 2 ;; esac
++[ -z "${PERSIST:-}" ] || [ -n "${UFS:-}" ] || { echo "build-ramroot.sh: PERSIST=1 needs UFS=1" >&2; exit 2; }
+ W=/root/unixnu-work; U=$W/UniXNU; D=$W/UniXNU-ruan; O=$U/out/ruan/ipados-17.7.11-21H461/ruan
+ I=$U/out/ipsw/21H461; R=${RAMROOT:-$W/ramroot}; OUT=${OUT:-$R/out}
+ MKXNUIMG=${MKXNUIMG:-"/DATA/tower/Projects/Redmi Pad Pro 5G/macOS/uefi/mkxnuimg-ruan.py"}
+@@ -47,7 +53,7 @@
+ base=$OUT/root-$MODE; rd=(--kernel-arg rd=md0)
+ if [ -n "${UFS:-}" ]; then
+ 	[ $MODE = usb ] || { echo "build-ramroot.sh: UFS=1 needs usb" >&2; exit 2; }
+-	DATA_CONTAINER=1 RAMBLOCK=1; base=$OUT/data-usb; rd=()
++	if [ -n "${PERSIST:-}" ]; then DATA_CONTAINER= RAMBLOCK=; base=$OUT/data-seed; else DATA_CONTAINER=1 RAMBLOCK=1; base=$OUT/data-usb; fi; rd=()
+ 	REBUILD_KERNEL=${REBUILD_KERNEL-1}   # its out/.../kernel starts as a copy of the RAM kernel (below); REBUILD_KERNEL= skips
+ 	if [ -n "${UFS_ROOT:-}" ]; then
+ 		# the root container's volume UUID (first APSB), for root_match_volume_uuid
+@@ -62,7 +68,9 @@
+ )
+ 		[ -n "$UFS_ROOT_UUID" ]; ln -f $UFS_ROOT/root-usb.cdhash $OUT/root-usb.cdhash
+ 	fi
+-	V=$W/ufs-variant; [ -f $V/device/board.toml ] && [ -z "${REBUILD_KERNEL:-}" ] || $D/scripts/make-ufs-board.sh
++	# the board is made again when PERSIST changes (packed_data_ramdisk, make-ufs-board.sh)
++	packed=0; [ -n "${PERSIST:-}" ] && packed=1
++	V=$W/ufs-variant; [ -f $V/device/board.toml ] && [ -z "${REBUILD_KERNEL:-}" ] && [ "$(grep -c '^packed_data_ramdisk = true' $V/device/board.toml)" = $packed ] || $D/scripts/make-ufs-board.sh
+ 	export UNIXNU_OUT=$V/out UNIXNU_DEVICE=$V/device
+ 	O=$V/out/ruan/ipados-17.7.11-21H461/ruan_ufs
+ 	# build-gop-legacy-display.py and build-ufs-original-bindings.py take a previous ruan kernel as their reference candidate.
+@@ -75,7 +83,17 @@
+ 		native-ufs-allow-unverified=1 pmgr=2; do extra+=("--kernel-arg=$arg"); done
+ fi
+ root=$base.apfs
+-if [ -n "${UFS:-}" ]; then
++if [ -n "${PERSIST:-}" ]; then
++	seed=${PERSIST_SEED:-$V/data-seed.apfs}
++	if [ ! -f "$seed" ] || [ -n "${REBUILD_SEED:-}" ]; then
++		# a new seed does not match the store any more: without the reset the store is kept unused and Data writes wait (NativeRamBlock)
++		[ -n "${PERSIST_RESET:-}" ] || { echo "build-ramroot.sh: a new Data seed starts Data over: add PERSIST_RESET=1" >&2; exit 1; }
++		python3 $D/scripts/make-ufs-data.py "$WORK" "$seed"
++	fi
++	cp -f "$seed" "$root"; cp -f "${seed%.apfs}.uuid" $base.uuid
++	for arg in ram-data=1 ram-data-uuid=$(cat $base.uuid) data-persist=2 data-fua=1 ${PERSIST_RESET:+data-reset=$PERSIST_RESET}; do
++		extra+=("--kernel-arg=$arg"); done
++elif [ -n "${UFS:-}" ]; then
+ 	if [ ! -f "$root" ] || [ -n "${REBUILD_ROOT:-}" ]; then python3 $D/scripts/make-ufs-data.py "$WORK" "$root"; fi
+ elif [ ! -f "$root" ] || [ -n "${REBUILD_ROOT:-}" ]; then
+ 	if [ $MODE = mini ]; then
+@@ -86,7 +104,7 @@
+ 		rm -f $OUT/root-usb.cdhash; [ -n "${OVERLAY:-}" ] && cp "$OVERLAY/cdhashes" $OUT/root-usb.cdhash
+ 	fi
+ fi
+-[ $MODE = usb ] && [ ! -f $base.desc ] && { echo "build-ramroot.sh: $base.desc missing: REBUILD_ROOT=1" >&2; exit 1; }
++[ $MODE = usb ] && [ -z "${PERSIST:-}" ] && [ ! -f $base.desc ] && { echo "build-ramroot.sh: $base.desc missing: REBUILD_ROOT=1" >&2; exit 1; }
+ # DarwinBoot places the root inside owned_memory_size (board.toml) beside the kernel and its data: a root that does not fit hangs
+ # at the UniXNU menu with nothing on screen (rbar2 with 768 MiB Data, 2919 MiB > 2816 MiB, 2026-11-14). 128 MiB stays for the rest.
+ if [ $MODE = usb ]; then
+@@ -126,7 +144,7 @@
+ assert storage[0] and storage[0] == storage[1], 'IOStorageFamily moved: the NativeRamBlock bindings are stale'
+ PY
+ fi
+-initrd=$root; [ $MODE = usb ] && initrd=$base.desc
++initrd=$root; [ $MODE = usb ] && [ -z "${PERSIST:-}" ] && initrd=$base.desc
+ # With the root's own module the bundle is no longer one of the IPSW's two (board allow-list): pass it as the owner's bundle.
+ trust_arg=--trust-cache; [ -f $OUT/root-usb.cdhash ] && trust_arg=--owner-trust-cache
+ ./unixnu build payload --uefi ../uefi-ruan --unique-chip-id "$(cat $W/unique-chip-id.txt)" \
+@@ -148,7 +166,7 @@
+ cd "$(dirname "$MKXNUIMG")"
+ MU=$W/uefi-ruan FD=$FD python3 "$MKXNUIMG" -p $X/payload.xnup -o $img | tail -1
+ rm -rf $X/check
+-cd $OUT && sha256sum "$(basename $img)" "$(basename $root)" trust.bundle $( [ $MODE = usb ] && basename $base.desc ) $( [ -n "${DATA_CONTAINER:-}" ] && basename $base.split ) > SHA256SUMS-$NAME
++cd $OUT && sha256sum "$(basename $img)" "$(basename $root)" trust.bundle $( [ $MODE = usb ] && [ -z "${PERSIST:-}" ] && basename $base.desc ) $( [ -n "${DATA_CONTAINER:-}" ] && basename $base.split ) > SHA256SUMS-$NAME
+ cat SHA256SUMS-$NAME
+ grep -o '"kernel_args": "[^"]*"' $O/payload/payload.json
+ if [ -n "${UFS_IMAGE:-}" ] && [ -n "${UFS_ROOT:-}" ]; then
+--- a/scripts/make-ufs-board.sh
++++ b/scripts/make-ufs-board.sh
+@@ -49,6 +49,8 @@
+       '# placeholder = 32 GiB of 4 KiB blocks. ShengUfs finds the partition by name (native-ufs-partition=unixnu).\n'
+       f'[userdata]\npartition = "unixnu"\nfirst_lba = {os.environ.get("UFS_FIRST_LBA", "22147072")}\n'
+       f'last_lba = {os.environ.get("UFS_LAST_LBA", "30535674")}\nlba_bytes = 4096\n')
++if os.environ.get('PERSIST'):   # build-ramroot.sh PERSIST=1: the payload's Data seed is packed (DBRDISK1): /chosen/memory-map/PackedRAMDisk
++    edit('[payload.adt]\n', '[payload.adt]\npacked_data_ramdisk = true\n')
+ if os.environ.get('UFS_ROOT_UUID'):   # build-ramroot.sh UFS_ROOT=: ruan's own root volume in the OS window
+     edit('root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"', f'root_match_volume_uuid = "{os.environ["UFS_ROOT_UUID"]}"')
+     edit('"device:patches/xnu/ufs.series"]', '"device:patches/xnu/ufs-own-root.series"]')
+--- a/scripts/make-ufs-data.py
++++ b/scripts/make-ufs-data.py
+@@ -5,15 +5,19 @@
+ WORK/data + data.manifest, from its last --data-container build), with DATA_SLACK free 4 KiB blocks (default 1 GiB: the RAM root's
+ ~2.5 GiB is free in this variant).
+ 
+-usage: make-ufs-data.py WORK OUT_IMAGE      writes OUT_IMAGE, OUT_IMAGE.desc (DBUSBRD1) and OUT_IMAGE.split"""
++usage: make-ufs-data.py WORK OUT_IMAGE      writes OUT_IMAGE, OUT_IMAGE.desc (DBUSBRD1) and OUT_IMAGE.split
++       PERSIST=1 make-ufs-data.py WORK OUT_IMAGE    writes OUT_IMAGE = the Data container packed (DBRDISK1, only its nonzero pages)
++       for the boot payload, and OUT_IMAGE.uuid (its volume UUID). DATA_SLACK default 4194304 (16 GiB): NativeRamBlock keeps the
++       changed pages in ShengUfs's store window at the end of "unixnu" (data-persist=2, docs/research/opt/data-on-ufs.md)."""
+ import importlib.util
+ import os
+ import struct
+ import sys
++import uuid
+ import zlib
+ from pathlib import Path
+ 
+-os.environ.setdefault('DATA_SLACK', str(262144))
++os.environ.setdefault('DATA_SLACK', str(4194304 if os.environ.get('PERSIST') else 262144))
+ spec = importlib.util.spec_from_file_location('make_ramroot', Path(__file__).with_name('make-ramroot.py'))
+ mr = importlib.util.module_from_spec(spec)
+ spec.loader.exec_module(mr)
+@@ -27,6 +31,19 @@
+ mr.fix_spaceman(data)
+ if mr.apfsck(data):
+     sys.exit(f'{data}: apfsck finds the Data container corrupt')
++if os.environ.get('PERSIST'):
++    sys.path.insert(0, '/root/unixnu-work/UniXNU/drivers/DarwinBoot/Test')
++    import packed_ramdisk
++    with open(data, 'rb') as f:
++        head = f.read(64 << 20)
++    # the Data volume's UUID: its APFS volume superblock (APSB), bytes 240..256 (as build-ramroot.sh reads it from data-usb.apfs)
++    found = {str(uuid.UUID(bytes=head[at + 240:at + 256])).upper() for at in range(0, len(head), 4096) if head[at + 32:at + 36] == b'APSB'}
++    assert len(found) == 1, f'Data container: expected one volume UUID, found {found}'
++    image.unlink(missing_ok=True)       # pack() refuses an existing output
++    meta = packed_ramdisk.pack(data, image)
++    image.with_suffix('.uuid').write_text(found.pop() + '\n')
++    print(f'{image}: packed seed {image.stat().st_size >> 20} MiB of a {data.stat().st_size >> 30} GiB Data container, {meta}')
++    sys.exit(0)
+ split = mr.DATA_ALIGN
+ crc = zlib.crc32(bytes(split))
+ with open(image, 'wb') as out, open(data, 'rb') as src:

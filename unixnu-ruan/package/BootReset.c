@@ -137,25 +137,35 @@ int boot_reset_watchdog(uint32_t deadline, char *text, unsigned cap) {
 }
 
 // Writes "bootloader" into the reboot-reason cell, verifies it, then PSCI SYSTEM_RESET. Returns only when something refused (text says what);
-/* Always-on pet, from Allenwdk/UniXNU-uke package/BootWatchdogPolicy.c: Gunyah keeps a virtual watchdog for this VM that only UEFI and
- * Android's gh_virt_wdt pet; nothing petted it here unless ruan-autoreset-wdt was set, a likely cause of the random resets. Raise the
- * bite time to 300 s first (x1 = 0xffff, the cookie UEFI passes, x2 = ms) so a hang shows as a freeze, then ping every second. */
-volatile int32_t boot_reset_pet_stats[3];   // [0] set-time result, [1] last ping result, [2] pings
-static void pet_thread(void *arg, wait_result_t wr) {
-  (void)arg; (void)wr;
-  for (;;) {
-    boot_reset_pet_stats[1] = (int32_t)smc2(GunyahWdtPing, 0, 0, NULL);
-    boot_reset_pet_stats[2] = boot_reset_pet_stats[2] + 1;
-    assert_wait_timeout((event_t)&boot_reset_pet_stats, THREAD_UNINT, 1000, NSEC_PER_MSEC);
-    thread_block(THREAD_CONTINUE_NULL);
-  }
+// Always-on pet, from Allenwdk/UniXNU-uke & Linux drivers/watchdog/gunyah_wdt.c:
+// Gunyah keeps a virtual watchdog for this VM that only UEFI and Android's gh_virt_wdt pet.
+// 1. Disable the watchdog or raise its bite time to 300 s (timeout_ms, pretimeout_ms = 300000).
+// 2. Ping it continuously every 1 second from monitor() in BootProgress.c.
+volatile int32_t boot_reset_pet_stats[4];   // [0] disable rc, [1] set-time rc, [2] last ping rc, [3] pings
+int boot_reset_wdt_disable(char *text, unsigned cap) {
+  int rc = (int)smc2(GunyahWdtControl, GunyahWdtDisable, 0, NULL);
+  if (text && cap) snprintf(text, cap, "gunyah wdt: disable rc=%d", rc);
+  return rc;
 }
+
+void boot_reset_pet_ping(void) {
+  boot_reset_pet_stats[2] = (int32_t)smc2(GunyahWdtPing, 0, 0, NULL);
+  boot_reset_pet_stats[3] = boot_reset_pet_stats[3] + 1;
+}
+
 int boot_reset_pet_start(char *text, unsigned cap) {
-  boot_reset_pet_stats[0] = (int32_t)smc2(GunyahWdtSetTime, 0xffff, 300000, NULL);
-  thread_t thread;
-  if (kernel_thread_start_priority(pet_thread, NULL, MAXPRI_KERNEL, &thread) != KERN_SUCCESS) {snprintf(text, cap, "wdt pet: no thread"); return 1;}
-  thread_deallocate(thread);
-  snprintf(text, cap, "wdt pet: bite 300 s (set %d), ping every 1 s", boot_reset_pet_stats[0]);
+  // 1. Try to disable Gunyah watchdog
+  boot_reset_pet_stats[0] = (int32_t)smc2(GunyahWdtControl, GunyahWdtDisable, 0, NULL);
+  // 2. Set bite time to 300,000 ms (5 min): x1 MUST be 0xffff, x2 is bite_ms (from gh_virt_wdt.ko gh_set_wdt_bite)
+  boot_reset_pet_stats[1] = (int32_t)smc2(GunyahWdtSetTime, 0xffff, 300000, NULL);
+  // 3. Set bark time (pre-timeout) to 300,000 ms: x1 is bark_ms, x2 MUST be 0xffff (gh_set_wdt_bark)
+  smc2(GunyahWdtSetTime, 300000, 0xffff, NULL);
+  // 4. Initial ping
+  boot_reset_pet_ping();
+  if (text && cap) {
+    snprintf(text, cap, "wdt pet: dis=%d bite300s=%d ping=%d",
+             boot_reset_pet_stats[0], boot_reset_pet_stats[1], boot_reset_pet_stats[2]);
+  }
   return 0;
 }
 

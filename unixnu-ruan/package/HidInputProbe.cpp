@@ -161,7 +161,7 @@ void native_hid_input_probe(void) {
     }
     if(native_hid_load_status==0) {
         OSDictionary *match=IOService::serviceMatching("IOHIDResource");
-        IOService *resource=match?IOService::waitForMatchingService(match,5000000000ULL):nullptr;
+        IOService *resource=match?(IOService *)IOService::copyMatchingService(match):nullptr;
         native_hid_resource_found=resource!=nullptr;
         unsigned sendHome=0;PE_parse_boot_argn("offline-hid-home",&sendHome,sizeof(sendHome));
         if(resource && sendHome==1 && native_hid_class_sizes[4]==208) {
