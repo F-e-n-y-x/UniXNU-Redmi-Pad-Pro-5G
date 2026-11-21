@@ -1,0 +1,22 @@
+diff --git a/bridge/patches/0065-ruan-ios-read-pages.patch b/bridge/patches/0065-ruan-ios-read-pages.patch
+new file mode 100644
+index 0000000..8721fa2
+--- /dev/null
++++ b/bridge/patches/0065-ruan-ios-read-pages.patch
+@@ -0,0 +1,16 @@
++ruan: 0064 defines copied::read_pages for Linux and macOS only, so the iOS 17 bridge (build-adreno-metal-bridge.py --target ios) fails
++with E0425; the macOS mach_vm_read_overwrite version serves iOS too.
++
++--- a/crates/metal2vulkan-runtime/src/copied.rs
+++++ b/crates/metal2vulkan-runtime/src/copied.rs
++@@ -2669,8 +2669,8 @@
++     true
++ }
++ 
++-/// [`read_pages`] on macOS.
++-#[cfg(target_os = "macos")]
+++/// [`read_pages`] on macOS and iOS (mach_vm_read_overwrite exists on both).
+++#[cfg(any(target_os = "macos", target_os = "ios"))]
++ pub(crate) fn read_pages(pages: NonNull<u8>, into: &mut [u8]) -> bool {
++     unsafe extern "C" {
++         /// `<mach/mach_init.h>`: the port of this process's task.

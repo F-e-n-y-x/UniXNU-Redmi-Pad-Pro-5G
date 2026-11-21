@@ -1,0 +1,78 @@
+ruan: scale the pageout free-page limits to the page size (4 KiB on ruan, 16 KiB on every iOS device they were tuned for).
+
+xnu's !OSX caps (reserved 100, min 1500, target 2000 pages) gave ruan an 8 MB free target: the USB heartbeat's free=1232..4371
+is the pageout daemon holding that floor, not a leak. ruan-vm-free-scale=<n> (default 4, 1 = stock) multiplies the caps; the
+values go to the kernel log once (ruan-vm: free reserved .. min .. target ..).
+
+--- a/osfmk/vm/vm_pageout.c
++++ b/osfmk/vm/vm_pageout.c
+@@ -3824,21 +3824,36 @@
+ }
+ 
+ 
++/*
++ * ruan: the !OSX limits below count 16 KiB pages (every iOS device); ruan's kernel (BCM2837 config) has 4 KiB pages, so they
++ * held a quarter of the bytes: an 8 MB free target, the [hb] free=1500..2000 floor. ruan-vm-free-scale=<n> multiplies the
++ * three limits (default 16384 / PAGE_SIZE = 4, the iPad's 32 MB target; 1 = stock).
++ */
++static unsigned int
++ruan_vm_free_scale(void)
++{
++	unsigned int scale = 16384 / PAGE_SIZE;
++	PE_parse_boot_argn("ruan-vm-free-scale", &scale, sizeof(scale));
++	return (scale >= 1 && scale <= 16) ? scale : 1;
++}
++
+ void
+ vm_page_free_reserve(
+ 	int pages)
+ {
+ 	int             free_after_reserve;
++	const unsigned int scale = ruan_vm_free_scale();
++	const unsigned int reserved_limit = VM_PAGE_FREE_RESERVED_LIMIT * scale;
+ 
+ 	if (VM_CONFIG_COMPRESSOR_IS_PRESENT) {
+-		if ((vm_page_free_reserved + pages + COMPRESSOR_FREE_RESERVED_LIMIT) >= (VM_PAGE_FREE_RESERVED_LIMIT + COMPRESSOR_FREE_RESERVED_LIMIT)) {
+-			vm_page_free_reserved = VM_PAGE_FREE_RESERVED_LIMIT + COMPRESSOR_FREE_RESERVED_LIMIT;
++		if ((vm_page_free_reserved + pages + COMPRESSOR_FREE_RESERVED_LIMIT) >= (reserved_limit + COMPRESSOR_FREE_RESERVED_LIMIT)) {
++			vm_page_free_reserved = reserved_limit + COMPRESSOR_FREE_RESERVED_LIMIT;
+ 		} else {
+ 			vm_page_free_reserved += (pages + COMPRESSOR_FREE_RESERVED_LIMIT);
+ 		}
+ 	} else {
+-		if ((vm_page_free_reserved + pages) >= VM_PAGE_FREE_RESERVED_LIMIT) {
+-			vm_page_free_reserved = VM_PAGE_FREE_RESERVED_LIMIT;
++		if ((vm_page_free_reserved + pages) >= reserved_limit) {
++			vm_page_free_reserved = reserved_limit;
+ 		} else {
+ 			vm_page_free_reserved += pages;
+ 		}
+@@ -3848,15 +3863,15 @@
+ 	vm_page_free_min = vm_page_free_reserved +
+ 	    VM_PAGE_FREE_MIN(free_after_reserve);
+ 
+-	if (vm_page_free_min > VM_PAGE_FREE_MIN_LIMIT) {
+-		vm_page_free_min = VM_PAGE_FREE_MIN_LIMIT;
++	if (vm_page_free_min > VM_PAGE_FREE_MIN_LIMIT * scale) {
++		vm_page_free_min = VM_PAGE_FREE_MIN_LIMIT * scale;
+ 	}
+ 
+ 	vm_page_free_target = vm_page_free_reserved +
+ 	    VM_PAGE_FREE_TARGET(free_after_reserve);
+ 
+-	if (vm_page_free_target > VM_PAGE_FREE_TARGET_LIMIT) {
+-		vm_page_free_target = VM_PAGE_FREE_TARGET_LIMIT;
++	if (vm_page_free_target > VM_PAGE_FREE_TARGET_LIMIT * scale) {
++		vm_page_free_target = VM_PAGE_FREE_TARGET_LIMIT * scale;
+ 	}
+ 
+ 	if (vm_page_free_target < vm_page_free_min + 5) {
+@@ -3864,6 +3879,8 @@
+ 	}
+ 
+ 	vm_page_throttle_limit = vm_page_free_target - (vm_page_free_target / 2);
++	printf("ruan-vm: free reserved %u min %u target %u (scale %u, %u-byte pages)\n", vm_page_free_reserved, vm_page_free_min,
++	    vm_page_free_target, scale, (unsigned)PAGE_SIZE);
+ }
+ 
+ /*
