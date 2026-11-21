@@ -79,9 +79,18 @@ rp_compute(uint32_t hsync_ctl, uint32_t vsync_period, uint32_t dsi_total, uint32
 	out->vtotal = vt;
 	out->vsync_period = vt * htotal;
 	out->dsi_total = ((vt - 1) << 16) | (dsi_total & 0xffffu);
-	// programmable fetch starts N lines before the frame end: keep N (sde programmable_fetch_config)
-	out->prog_fetch = (intf_config & (1u << 31)) ? prog_fetch - (RP_VTOTAL60 - vt) * htotal : prog_fetch;
-	if ((intf_config & (1u << 31)) && prog_fetch <= (RP_VTOTAL60 - vt) * htotal) return -6;
+	// Programmable fetch starts N lines before the frame end, inside the front porch. Android caps N at the front porch
+	// (sde_encoder_phys_vid programmable_fetch_get_num_lines: actual_vfp_lines = min(v_front_porch, needed)) and programs
+	// (vtotal - N) * htotal + 1. UEFI's 60 Hz N is 2783 of a 2784-line porch (rbu172p read 0x18c56b), so at 120 Hz it becomes the
+	// whole 26-line porch: keeping N refused the switch (rc -6, rbu172p).
+	out->prog_fetch = prog_fetch;
+	if (intf_config & (1u << 31)) {
+		const uint32_t vfp = vt - (RP_VPW + RP_VBP + RP_VACTIVE);
+		if (!prog_fetch || prog_fetch - 1 > RP_VTOTAL60 * htotal) return -6;
+		uint32_t lines = (RP_VTOTAL60 * htotal - (prog_fetch - 1)) / htotal;
+		if (lines > vfp) lines = vfp;
+		out->prog_fetch = (vt - lines) * htotal + 1;
+	}
 	return 0;
 }
 
@@ -98,6 +107,9 @@ main(void)
 	assert(p.vtotal - 2732 == 26);                                           // DT dfps VFP at 120 Hz
 	assert(rp_compute(1660u << 16, 1660u * 5516, 5515u << 16, 2732u << 16, 1u << 31, 5515u * 1660 + 1, 120, &p) == 0);
 	assert(p.prog_fetch == 2757u * 1660 + 1);                                // still one line before the end
+	// rbu172p's live values: htotal 594 (INTF HSYNC 0x252000a), PROG_FETCH 0x18c56b = (5516 - 2783) * 594 + 1
+	assert(rp_compute(0x252000au, 594u * 5516, 5515u << 16 | 0x251, 2732u << 16 | 0xac, 1u << 31, 0x18c56bu, 120, &p) == 0);
+	assert(p.prog_fetch == (2758u - 26) * 594 + 1);                          // capped at the 26-line porch
 	assert(rp_compute(1660u << 16, 1660u * 5515, 5515u << 16, 2732u << 16, 0, 0, 120, &p) == -1);   // not UEFI's 60 Hz mode
 	assert(rp_compute(1660u << 16, 1660u * 5516, 5515u << 16, 2732u << 16, 0, 0, 60, &p) == 0 && p.vtotal == 5516);
 	puts("RuanPanel120 selftest ok");

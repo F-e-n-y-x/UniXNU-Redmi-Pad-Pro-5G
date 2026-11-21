@@ -34,6 +34,8 @@ extern "C" volatile uint32_t native_legacy_direct[14] __attribute__((weak_import
 extern "C" int ruan_backlight_set_level(uint32_t level) __attribute__((weak_import));
 extern "C" int ruan_backlight_reg(uint8_t reg, int value) __attribute__((weak_import));
 extern "C" struct ruan_backlight_state g_ruan_backlight __attribute__((weak_import));
+extern "C" char ruan_bl_mirror_status[96] __attribute__((weak_import));
+extern "C" volatile int32_t ruan_panel120_stats[16] __attribute__((weak_import));   // RuanPanel120.c, USB `panel120`   // RuanBacklight.cpp, the second SY7758
 
 extern "C" {
 #include "SmmuBypass.h"
@@ -44,6 +46,7 @@ extern void boot_progress_stage(const char *text) __attribute__((weak_import));
 
 // package/LegacyDisplayProbe.cpp (ruan): the GOP scanout NativeLegacyDisplay copies frames into.
 extern volatile uint64_t native_legacy_gop_virtual __attribute__((weak_import));
+extern "C" void native_legacy_direct_snapshot(void) __attribute__((weak_import));   // GopFramebuffer: copy the scanned-out surface into the boot memory
 extern volatile uint64_t native_legacy_gop_physical __attribute__((weak_import));
 extern volatile uint64_t native_legacy_gop_bytes __attribute__((weak_import));
 extern volatile uint32_t native_legacy_gop_width __attribute__((weak_import));
@@ -582,6 +585,7 @@ static void handleCommand(TerminalSession &s, const char *raw) {
                      g_ruan_backlight.dev_id, (unsigned long long)g_ruan_backlight.updates_count, g_ruan_backlight.errors,
                      g_ruan_backlight.last_irq, g_ruan_backlight.status);
             s.reply.writeStr(buf);
+            if (&ruan_bl_mirror_status) {snprintf(buf, sizeof(buf), "[usb] BACKLIGHT %s\r\n", ruan_bl_mirror_status); s.reply.writeStr(buf);}
         }
     } else if (strEq(raw, "battery") || strEq(raw, "power")) {
         // g_ruan_battery declared at file scope in extern "C" block above (weak_import)
@@ -801,6 +805,15 @@ static void handleCommand(TerminalSession &s, const char *raw) {
             snprintf(buf, sizeof(buf), "[usb] %s\r\n", row);
             s.reply.writeStr(buf);
         }
+    } else if (strEq(raw, "panel120")) {
+        // [0] 0x120 switched, 0x60 dry run ok, negative = refused step (docs/research/120hz/plan.md); [7]/[8] mHz before/after
+        if (&ruan_panel120_stats) {
+            const volatile int32_t *p = ruan_panel120_stats;
+            snprintf(buf, sizeof(buf), "[usb] PANEL120: result %#x hsync %#x vper %u->%u dsi_total %#x->%#x activeV %#x cfg %#x prog %#x mHz %d->%d line %d underrun %d->%d dsi_err %#x st %#x\r\n",
+                     (unsigned)p[0], (unsigned)p[1], (unsigned)p[2], (unsigned)p[9], (unsigned)p[3], (unsigned)p[10], (unsigned)p[4], (unsigned)p[5],
+                     (unsigned)p[6], (int)p[7], (int)p[8], (int)p[11], (int)p[12], (int)p[13], (unsigned)p[14], (unsigned)p[15]);
+        } else snprintf(buf, sizeof(buf), "[usb] PANEL120: not linked\r\n");
+        s.reply.writeStr(buf);
     } else if (strEq(raw, "cpufreq")) {
         char row[160] = "not linked";
         if (&ruan_cpufreq_report) ruan_cpufreq_report(row, sizeof(row));
