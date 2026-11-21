@@ -1,0 +1,166 @@
+ruan: CPU placement hints (SM7435: cpu0-3 A55 = E, cpu4-7 A78 = P). All off without the boot-args: ruan-pcores=1 (backboardd and
+SpringBoard get the P-cluster task hint), ruan-cpu0-park=1 (cpu0 kept busy, as UniXNU-sheng/picasso), ruan-cpu-report=N
+(per-CPU busy and the UI tasks' P-core time every N s). See macOS/docs/research/cpu-placement/plan.md.
+
+--- a/osfmk/kern/sched_prim.c
++++ b/osfmk/kern/sched_prim.c
+@@ -9203,3 +9203,159 @@
+ }
+ 
+ #endif /* DEVELOPMENT || DEBUG */
++
++#if (DEVELOPMENT || DEBUG) && __AMP__
++/*
++ * ruan CPU placement (SM7435: cpu0-3 Cortex-A55 = E cluster, cpu4-7 Cortex-A78 = P cluster). All off without the boot-args.
++ *   ruan-pcores=1      backboardd and SpringBoard get the P-cluster task hint of sysctl kern.sched_task_set_cluster_type:
++ *                      sched_edge_choose_processor() then puts every thread of theirs, real-time ones included, on the A78s.
++ *                      Checked once a second, so a respawned backboardd gets it again. Children inherit it (task.c).
++ *   ruan-cpu0-park=1   a lowest-priority thread bound to cpu0 keeps it busy, so work spilled to the E cluster lands on cpu1-3
++ *                      first (cpu0 takes every SPI). UniXNU-sheng/picasso cpu0-park; only when the boot cluster is E.
++ *   ruan-cpu-report=N  every N seconds to the kernel log: per-CPU busy per mille, whether the Edge matrix is set up
++ *                      (armcpu-edge=1), and backboardd/SpringBoard CPU time in total and on P cores.
++ */
++#include <kern/startup.h>
++
++extern char *proc_best_name(struct proc *p);
++
++#define RUAN_UI_TASKS 8
++
++static uint32_t ruan_pcores, ruan_cpu_report;
++
++static bool
++ruan_ui_task(task_t task)
++{
++	void *p = get_bsdtask_info(task);
++	if (p == NULL || !task->ipc_active || task_is_exec_copy(task)) {
++		return false;
++	}
++	const char *name = proc_best_name(p);
++	return strcmp(name, "backboardd") == 0 || strcmp(name, "SpringBoard") == 0;
++}
++
++static void
++ruan_cpu_report_cpus(uint64_t *idle, uint64_t *last)
++{
++	char line[160] = "";
++	int at = 0;
++	uint64_t now = mach_absolute_time(), dt = now - *last;
++
++	for (int c = 0; c < (int)ml_get_cpu_count() && c < MAX_CPUS; c++) {
++		processor_t processor = cpu_to_processor(c);
++		struct recount_usage usage = {};
++		uint64_t now_idle = 0;
++		if (processor == PROCESSOR_NULL) {
++			continue;
++		}
++		recount_processor_usage(&processor->pr_recount, &usage, &now_idle);
++		uint64_t di = now_idle - idle[c];
++		idle[c] = now_idle;
++		unsigned busy = (*last == 0 || di >= dt) ? 0 : (unsigned)((dt - di) * 1000 / dt);
++		at += snprintf(line + at, sizeof(line) - at, " c%d %u", c, busy);
++		if (at >= (int)sizeof(line)) {
++			break;
++		}
++	}
++	*last = now;
++	int edge = -1;
++#if CONFIG_SCHED_EDGE
++	/* sched_edge_cpu_init_completed() allows P->E migration; before it (no armcpu-edge=1) every edge is closed */
++	if (pset_node1.psets != PROCESSOR_SET_NULL) {
++		edge = pset_node1.psets->sched_edges[pset0.pset_id].sce_migration_allowed |
++		    pset0.sched_edges[pset_node1.psets->pset_id].sce_migration_allowed;
++	}
++#endif /* CONFIG_SCHED_EDGE */
++	printf("ruan-cpu: busy/1000%s | boot %c edge %d\n", line, pset0.pset_cluster_type == PSET_AMP_E ? 'E' : 'P', edge);
++}
++
++static void
++ruan_cpu_placement_thread(void *arg __unused, wait_result_t wr __unused)
++{
++	uint64_t idle[MAX_CPUS] = {}, last = 0;
++	uint32_t ticks = 0;
++
++	thread_set_thread_name(current_thread(), "ruan_cpu_placement");
++	for (;;) {
++		bool report = ruan_cpu_report && ++ticks >= ruan_cpu_report;
++		task_t ui[RUAN_UI_TASKS];
++		unsigned n = 0;
++		task_t task;
++
++		/* References only under tasks_threads_lock; the task lock is taken after it is dropped */
++		lck_mtx_lock(&tasks_threads_lock);
++		queue_iterate(&tasks, task, task_t, tasks) {
++			if (n < RUAN_UI_TASKS && ruan_ui_task(task)) {
++				task_reference(task);
++				ui[n++] = task;
++			}
++		}
++		lck_mtx_unlock(&tasks_threads_lock);
++
++		processor_set_t pset_p = ruan_pcores ? find_pset_of_type(PSET_AMP_P) : PROCESSOR_SET_NULL;
++		for (unsigned i = 0; i < n; i++) {
++			task = ui[i];
++			if (pset_p != PROCESSOR_SET_NULL && !(task->t_flags & TF_USE_PSET_HINT_CLUSTER_TYPE)) {
++				task_lock(task);
++				task->t_flags |= TF_USE_PSET_HINT_CLUSTER_TYPE;
++				task->pset_hint = pset_p;
++				task_unlock(task);
++				printf("ruan-cpu: %s[%d] -> P cluster (pset %d)\n", proc_best_name(get_bsdtask_info(task)),
++				    task_pid(task), pset_p->pset_id);
++			}
++			if (report) {
++				struct recount_times_mach sum = {}, perf = {};
++				uint64_t all_ns, p_ns;
++				recount_task_times_perf_only(task, &sum, &perf);
++				absolutetime_to_nanoseconds(sum.rtm_user + sum.rtm_system, &all_ns);
++				absolutetime_to_nanoseconds(perf.rtm_user + perf.rtm_system, &p_ns);
++				printf("ruan-cpu: %s[%d] cpu %llu ms, on P %llu ms, hint %c\n", proc_best_name(get_bsdtask_info(task)),
++				    task_pid(task), all_ns / NSEC_PER_MSEC, p_ns / NSEC_PER_MSEC,
++				    (task->t_flags & TF_USE_PSET_HINT_CLUSTER_TYPE) ? 'P' : '-');
++			}
++			task_deallocate(task);
++		}
++		if (report) {
++			ticks = 0;
++			ruan_cpu_report_cpus(idle, &last);
++		}
++		assert_wait_timeout((event_t)&ruan_cpu_report, THREAD_UNINT, 1000, NSEC_PER_MSEC);
++		thread_block(THREAD_CONTINUE_NULL);
++	}
++}
++
++static void
++ruan_cpu0_park(void *arg __unused, wait_result_t wr __unused)
++{
++	thread_set_thread_name(current_thread(), "ruan_cpu0_park");
++	thread_bind(master_processor);
++	thread_block(THREAD_CONTINUE_NULL);
++	for (;;) {
++		__asm__ volatile ("yield");
++	}
++}
++
++static void
++ruan_cpu_placement_start(void)
++{
++	uint32_t park = 0;
++	thread_t thread;
++
++	PE_parse_boot_argn("ruan-pcores", &ruan_pcores, sizeof(ruan_pcores));
++	PE_parse_boot_argn("ruan-cpu-report", &ruan_cpu_report, sizeof(ruan_cpu_report));
++	PE_parse_boot_argn("ruan-cpu0-park", &park, sizeof(park));
++	if (ruan_pcores && !enable_task_set_cluster_type) {
++		/* the task hint is read only with this on (enable_skstsct=1 does the same) */
++		enable_task_set_cluster_type = 1;
++	}
++	if ((ruan_pcores || ruan_cpu_report) &&
++	    kernel_thread_start_priority(ruan_cpu_placement_thread, NULL, BASEPRI_KERNEL, &thread) == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	}
++	if (park == 1 && pset0.pset_cluster_type == PSET_AMP_E &&
++	    kernel_thread_start_priority(ruan_cpu0_park, NULL, 1, &thread) == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	}
++}
++STARTUP(EARLY_BOOT, STARTUP_RANK_LAST, ruan_cpu_placement_start);
++#endif /* (DEVELOPMENT || DEBUG) && __AMP__ */
