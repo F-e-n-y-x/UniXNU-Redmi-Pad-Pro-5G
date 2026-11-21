@@ -1,4 +1,92 @@
-# iPadOS & macOS on Redmi Pad Pro 5G (ruan)
+<h1 align="center">macOS on Redmi Pad Pro 5G</h1>
+
+<p align="center">
+  <b>A native macOS port for the Xiaomi Redmi Pad Pro 5G ("ruan"), on a CPU without pointer authentication</b><br>
+  Snapdragon 7s Gen 2 (SM7435) · Cortex-A78/A55 (ARMv8.2, no PAC) · Adreno 710 · built on <a href="https://github.com/UniXNU">UniXNU</a>
+</p>
+
+> **Branches:** `macos` (this one) is the **macOS build**. `agy-15-11-26` is the **iPadOS build** for the same tablet, which already boots to the
+> home screen; the drivers (UFS, touch, GPU, display, CPU) are shared.
+> Experimental research software. Nothing here has booted macOS on the tablet yet.
+
+## Contents
+
+- [The problem: no PAC](#the-problem-no-pac)
+- [The approach](#the-approach)
+- [Status](#status)
+- [Build and boot](#build-and-boot)
+- [Project layout](#project-layout)
+- [Roadmap](#roadmap)
+- [Credits](#credits)
+
+## The problem: no PAC
+
+Modern macOS is built only for `arm64e`. Every system binary uses **pointer authentication (PAC)**, an ARMv8.3 feature. The tablet's
+Cortex-A78/A55 cores are ARMv8.2: they have no PAC, and the Gunyah hypervisor can't emulate it. Most PAC instructions fall in the HINT space and
+run as no-ops on older CPUs. The rest (`PACGA`, `AUT*`/`BRAA`/`RETAA`…, `LDRAA`) are undefined, so they trap or crash.
+
+## The approach
+
+Two layers, following darwin-lisa / Bergamota (details in [`docs/research/macos-no-pac.md`](docs/research/macos-no-pac.md)):
+
+1. **Kernel built without PAC:** XNU 12377 (macOS 27.3) built as plain `arm64` (`HAS_NATIVE_PAC=0`) with ruan's board patches, plus a **PAC trap
+   emulator** in the exception handler (`_pac_emulate_user_trap` in `sleh.c`).
+2. **Userland rewritten:** every PAC instruction in the dyld shared cache and the system binaries is rewritten to a plain equivalent (`pacstrip`).
+   The few that can't be rewritten trap into the kernel emulator.
+
+## Status
+
+From [`docs/research/macos-no-pac.md`](docs/research/macos-no-pac.md) §15 (2026-11-19). ✅ built · ⏳ not tested on the tablet
+
+| Component | Status | Artifact |
+|---|---|---|
+| XNU 12377 board patches (8) | ✅ | `UniXNU-ruan-macos/patches/xnu-12377/` |
+| PAC trap emulator | ✅ | linked into the kernel |
+| macOS 27.3 prelinked kernel | ✅ | `out/ruan/macos-27.3-26C5035r/ruan_macos/kernel/kernel.macho` (136 MB) |
+| dyld shared cache stripped | ✅ | 81 subcaches, 32.7 M instructions patched, 2 114 left to emulate |
+| Recovery-root binaries stripped | ✅ | 546 binaries |
+| Data seed (setup done, daemons off) | ✅ | `macos-extract/data-usb.apfs` |
+| Root + Data RAM image, DarwinBoot payload, boot image | ✅ | `macos-extract/`, `ramroot/out-macos/` |
+| First boot on the tablet | ⏳ | not run yet |
+
+## Build and boot
+
+The work tree is `/root/unixnu-work` (`UniXNU-macos`, `UniXNU-ruan-macos`). The finished RAM-boot set is staged in `macos-extract/` at the worktree root (large, not in git):
+
+```bash
+cd macos-extract && sha256sum -c SHA256SUMS-macos   # verify the set
+./zima-ramroot-macos.sh                              # RAM-boot it (tablet in fastboot); nothing is flashed
+```
+
+The tablet's USB debug tool (`tools/ruan-usbdbg.py`: `shot`, `dmesg`, `cmd info`, `pull-crashes`) works the same as on the iPadOS build.
+
+## Project layout
+
+| Path | Contents |
+|---|---|
+| `docs/research/macos-no-pac.md` | Research, blueprint and deliverables for macOS without PAC |
+| `docs/research/macos-sonoma-sequoia-port.md` | Notes on older macOS versions |
+| `docs/research/agy-macos-no-pac-task.md` | Task brief |
+| `unixnu-ruan/` | Shared device port (drivers, kernel patches, build scripts) |
+| `uefi/` | UEFI firmware and boot-image tools (`mkxnuimg-ruan.py`) |
+| `tools/` | Host tools |
+
+## Roadmap
+
+1. First RAM boot of the macOS 27.3 kernel: reach launchd and the emulator's trap counters.
+2. Boot the recovery root to a shell, then WindowServer.
+3. Bring over the iPadOS build's working pieces: UFS root, zero-copy display, Metal on Adreno, touch.
+4. Install to the `unixnu` partition.
+
+## Credits
+
+- [UniXNU](https://github.com/UniXNU) and its ports. sheng-macos-link-lab booted a macOS desktop on hardware with PAC.
+- darwin-lisa / Bergamota, for the PAC neutralization approach.
+- The iPadOS build on this repository (`agy-15-11-26`), for the shared ruan drivers.
+
+<details>
+<summary><b>Older notes (iPadOS/macOS bring-up, 2026-11-13 … 11-19)</b></summary>
+
 
 **Current Active Target**: **iPadOS 17.7.11 (21H461)**, RAM-booted. Working: home screen, touch (NT36532), buttons, CPU frequency, USB debug. Battery readout: partly (see below). Adreno 710: the command processor runs and copies memory by DMA (`CP_MEM_WRITE`, `CP_MEMCPY`), but the screen is still drawn by the CPU; no Metal. Not started: Wi-Fi, audio (only status stubs, see the rbu24 correction below).
 
@@ -360,3 +448,5 @@ Derived from the garnet (POCO X6 5G, same SoC) platform in [JosephMontfort/hakio
   - Boot full iPadOS 17.7.11 kernel and build non-destructive RAM root.
 
 > Full iPadOS bring-up log (blockers, errors, causes, fixes): [docs/IPADOS-BRINGUP.md](docs/IPADOS-BRINGUP.md). Port sources: [unixnu-ruan/](unixnu-ruan/). Research plans: [docs/research/](docs/research/). Host tools: [tools/ruan-usbdbg.py](tools/ruan-usbdbg.py).
+
+</details>

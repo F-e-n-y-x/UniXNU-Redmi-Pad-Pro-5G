@@ -517,7 +517,7 @@ UniXNU's standard macOS toolchain invokes `make-macos-data-seed.py`, which relie
 
 ---
 
-## 15. Current Status & What's Blocked
+## 15. Deliverables & Artifact Verification
 
 ### 15.1 Summary of Deliverables
 
@@ -526,16 +526,54 @@ UniXNU's standard macOS toolchain invokes `make-macos-data-seed.py`, which relie
 | **XNU 12377 Board Patches** | **COMPLETE** | `/root/unixnu-work/UniXNU-ruan-macos/patches/xnu-12377/` | 8 patches applying cleanly with zero conflicts |
 | **Kernel PAC Trap Emulator** | **COMPLETE** | Linked in `mach.development.bcm2837.unstripped.noctf` | `_pac_emulate_user_trap` active in `sleh.c` |
 | **Chained Fixups & Relocations** | **COMPLETE** | `LC_SEGMENT_SPLIT_INFO` present, `imports_count == 0` | Rebase-only chained fixups |
-| **macOS 27.3 Prelinked Kernel** | **COMPLETE** | `out/ruan/macos-27.3-26C5035r/ruan_macos/kernel/kernel.macho` | 136 MB, SHA256 `9d7e7785332225b5...` |
+| **macOS 27.3 Prelinked Kernel** | **COMPLETE** | `out/ruan/macos-27.3-26C5035r/ruan_macos/kernel/kernel.macho` | 135.7 MB (142,278,656 B), SHA256 `9d7e7785332225b5...` |
 | **PAC Stripping Tools** | **COMPLETE** | `/root/unixnu-work/UniXNU-ruan-macos/tools/pacstrip-cache.py` | Validated section-aware rewriting logic |
-| **Linux Data Seed Strategy** | **DOCUMENTED** | `docs/research/macos-no-pac.md` Section 14 | Template cloning & RamBlock injection planned |
+| **dyld Shared Cache Stripping** | **COMPLETE** | `macos-extract/26C5035r__Mac17,11/` | All 81 subcaches stripped (32,692,853 patched, 2,114 emulated) |
+| **Userland Mach-O Stripping** | **COMPLETE** | `macos-extract/recovery-tree/` | All 546 binaries stripped (1,397,571 patched, 4 emulated) |
+| **Linux Data Seed Container** | **COMPLETE** | `macos-extract/data-usb.apfs` (258 MiB) | `.AppleSetupDone`, disabled daemons, UUID `F8F27480-6A31-2156-1ACE-A905E4E7CFCF` |
+| **Combined USB Root APFS Image** | **COMPLETE** | `macos-extract/root-usb.apfs` (1299.5 MiB) | Root + Data at split `1091567616`, CRC32 `0xbdfa36f1` |
+| **DarwinBoot USB Descriptor** | **COMPLETE** | `macos-extract/root-usb.desc` (32 B) | Format `DBUSBRD1`, size `1362616320` |
+| **DarwinBoot FAT Payload** | **COMPLETE** | `ramroot/out-macos/payload.xnup` (187 MiB) | `kernel.macho`, `adt`, `trust.bundle`, `unixnu.toml` |
+| **UEFI Firmware Volume** | **COMPLETE** | `uefi-ruan/Build/.../SILICIUM_UEFI.fd` | Probes `0xA8000000` (256 MB) & `0xF4000000` (64 MB) |
+| **Android Boot Image** | **COMPLETE** | `macos-extract/ruan-ramroot-usb-macos.img` | 37.65 MB (39,477,248 B), gzip kernel at `0xA8000000` |
+| **RAM-Boot Staging Script** | **COMPLETE** | `macos-extract/zima-ramroot-macos.sh` | Verified via `sha256sum -c SHA256SUMS-macos` |
 
-### 15.2 Current Blockers & Next Actions
-1. **Target Hardware In Use**:
-   Per user instructions, the physical Redmi Pad Pro 5G is currently charging / reserved for Claude's active iPadOS test sessions. **No reboot, flash, or command has been sent to the tablet or Pi 5.**
-2. **Next Steps for macOS Bring-Up**:
-   - Extract `dyld_shared_cache_arm64e` from the macOS 27.3 IPSW (`UniversalMac_27.3_26C5035r_Restore.ipsw`).
-   - Run `pacstrip-cache.py` over the extracted cache to produce the non-PAC shared cache.
-   - Package `boot.img` with Mu-Silicium UEFI, SM7435 DTB, and the compiled `kernel.macho`.
-   - Prepare the minimal Data seed image using the Linux template workflow.
-   - Once cleared by the user, perform the first RAM-only test boot (`fastboot boot boot.img`).
+---
+
+## 16. macOS RAM-Boot Architecture & Deployment Guide
+
+### 16.1 Boot Flow & Memory Allocation
+```
+[Host: fastboot boot ruan-ramroot-usb-macos.img] (37.65 MB)
+          │
+          ▼
+[Stock ABL] (Decompresses gzipped blob into RAM)
+          │
+          ▼
+[BootShim.S] (FD to 0xA7100000, XNUP payload to 0xA8000000)
+          │
+          ▼
+[Mu-Silicium UEFI] (SILICIUM_UEFI.fd initializes GOP fb @ 0xB8000000)
+          │
+          ▼
+[UniXNURamDiskDxe] (Detects XNUP at 0xA8000000, mounts 187 MiB FAT32)
+          │
+          ▼
+[DarwinBoot EFI Loader] (Reads initrd descriptor DBUSBRD1: size 1362616320)
+          │ (Allocates 2.816 GB memory window, advertises product unixnu-ramdisk)
+          ▼
+[Host: fastboot stage root-usb.apfs] (Sends 1.30 GiB root over USB)
+          │
+          ▼
+[DarwinBoot CRC Verification] (Checks CRC32 0xbdfa36f1, accepts fastboot continue)
+          │
+          ▼
+[Apple XNU Kernel (EL1)]
+          │ (Parses ram-data-split=1091567616: md0 = Root, md1 = Data)
+          │ (Mounts md0 on /, mounts md1 on /private/var via NativeRamBlock)
+          ▼
+[/sbin/launchd (PID 1)] (Reads stripped shared cache, PAC emulator active)
+```
+
+### 16.2 Hardware Safety
+The tablet remains completely untouched and has not been rebooted or flashed. Testing can proceed immediately whenever authorized by executing `./zima-ramroot-macos.sh`.
