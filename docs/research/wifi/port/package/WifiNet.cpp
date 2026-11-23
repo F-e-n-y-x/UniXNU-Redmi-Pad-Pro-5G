@@ -37,6 +37,9 @@ extern "C" {
 #include <stdarg.h>
 #include "nw_abi.h"
 #include "nw_control_endpoint.h"
+// ruan: the IPv4 default route for the USB `net` report (AsteroidsWifiFiles.c, built with the BSD flags that see struct rtentry): 0 with
+// its interface, gateway (network order) and flags, or -1 without one.
+extern "C" int ruan_wifi_default_route(ifnet_t *ifp, uint32_t *gateway, uint32_t *flags);
 
 #if defined(XNU_TARGET_OS_OSX) && XNU_TARGET_OS_OSX
 // macOS: en0 is ShengEthernet (an IOEthernetController of the original IONetworkingFamily, ShengEthernet.cpp), which carries this
@@ -205,6 +208,9 @@ void post_link(bool up) {
 #else
   if (!gIf) return;
   ifnet_set_flags(gIf, up ? IFF_RUNNING : 0, IFF_RUNNING);
+  // ruan (rbu188): the link quality the network stack ranks interfaces by (Apple's Wi-Fi drivers report it); left UNKNOWN, en0 had an
+  // address but no TCP and no DNS went out. Good while the link is up. Inferred, not verified on the device.
+  ifnet_set_link_quality(gIf, up ? IFNET_LQM_THRESH_GOOD : IFNET_LQM_THRESH_UNKNOWN);
   struct { struct net_event_data data; } payload; memset(&payload, 0, sizeof payload);
   payload.data.if_family = IFNET_FAMILY_ETHERNET; payload.data.if_unit = 0; snprintf(payload.data.if_name, sizeof payload.data.if_name, "en");
   struct kev_msg msg; memset(&msg, 0, sizeof msg);
@@ -316,7 +322,7 @@ void on_link_update(const nw_wifi_status *status) {
 }
 // What the address configuration exchanges, as it crosses the interface: DHCP messages (type, transaction, offered address) and ARP, the first
 // ones of each direction, and per-kind counts for the traffic line.
-struct Kinds { uint32_t arp, ip4, dhcp, ip6, other; } gKindsIn, gKindsOut;
+struct Kinds { uint32_t arp, ip4, dhcp, ip6, other, syn, dns; } gKindsIn, gKindsOut;   // ruan: + TCP SYNs, UDP port 53
 void note_frame(const uint8_t *e, size_t n, bool out) {
   Kinds &k = out ? gKindsOut : gKindsIn; const unsigned type = n >= 14 ? (e[12] << 8 | e[13]) : 0; const char *dir = out ? "out" : "in";
   if (type == 0x0806) {
@@ -326,6 +332,8 @@ void note_frame(const uint8_t *e, size_t n, bool out) {
   if (type == 0x86dd) { k.ip6++; return; }
   if (type != 0x0800 || n < 34) { k.other++; return; }
   k.ip4++; const uint8_t *ip = e + 14; const unsigned ihl = (ip[0] & 15) * 4;
+  if (ip[9] == 6 && n >= 14 + ihl + 14 && (ip[ihl + 13] & 0x12) == 0x02) k.syn++;   // a connection opened (SYN without ACK)
+  if (ip[9] == 17 && n >= 14 + ihl + 8 && ((ip[ihl] << 8 | ip[ihl + 1]) == 53 || (ip[ihl + 2] << 8 | ip[ihl + 3]) == 53)) k.dns++;
   if (ip[9] != 17 || n < 14 + ihl + 8) return;
   const uint8_t *udp = ip + ihl; const unsigned sp = udp[0] << 8 | udp[1], dp = udp[2] << 8 | udp[3];
   if (!((sp == 67 || sp == 68) && (dp == 67 || dp == 68))) return;
@@ -886,7 +894,8 @@ void log_traffic() {
       static_cast<unsigned long long>(stats.packets_out), gRxFrames, gRxErrors, gRxLastError);
   log(6, "wifi-net: tx %s", tx);
   log(6, "wifi-net: in arp %u ip4 %u dhcp %u ip6 %u other %u", gKindsIn.arp, gKindsIn.ip4, gKindsIn.dhcp, gKindsIn.ip6, gKindsIn.other);
-  log(6, "wifi-net: out arp %u ip4 %u dhcp %u ip6 %u other %u", gKindsOut.arp, gKindsOut.ip4, gKindsOut.dhcp, gKindsOut.ip6, gKindsOut.other);
+  log(6, "wifi-net: out arp %u ip4 %u dhcp %u ip6 %u other %u syn %u dns %u", gKindsOut.arp, gKindsOut.ip4, gKindsOut.dhcp, gKindsOut.ip6,
+      gKindsOut.other, gKindsOut.syn, gKindsOut.dns);
   log(6, "wifi-net: input stalls %u, kicks %u, cleared after a kick %u, longest %u s", gStall.count, gStall.kicks, gStall.cleared, gStall.longest);
   log(6, "wifi-net: rx no buffer %u, chained %u, longest frame %u; tx refused %u", gRxNoBuffer, gRxChains, gRxLongest, gTxRefused);
   log(6, "wifi-net: rx batches %u largest %u", gRxBatches, gRxLargestBatch);
@@ -1019,6 +1028,44 @@ void autoJoin(void *, wait_result_t) {
 
 // Rows for the board log (none before the network side started): what the receive path handed to the stack, the sizes of its
 // batches and, with log-wifi=1, where its time on the WiFi thread went and in which order TCP segments arrived (note_order).
+// ruan: USB `net` (UsbDebugCdc.cpp): what the system does with en0. Rows: the interface (flags, family/subfamily, link quality, IPv4
+// address), the IPv4 default route (rtalloc1 of 0.0.0.0: interface, gateway, flags), the packet kinds out and in (TCP SYNs, DNS), the
+// station as the wireless daemon is told.
+extern "C" unsigned sheng_wifi_net_report(char rows[][160], unsigned max) {
+  unsigned n = 0;
+  if (!max) return 0;
+  if (!gIf) { snprintf(rows[n++], 160, "en0 not made (ruan-wifi=5 brings it up once the radio is on)"); return n; }
+  char address[20] = "none"; ifaddr_t *list = nullptr;
+  if (!ifnet_get_address_list_family(gIf, &list, AF_INET) && list) {
+    if (list[0]) { struct sockaddr_in a; memset(&a, 0, sizeof a);
+      if (!ifaddr_address(list[0], reinterpret_cast<struct sockaddr *>(&a), sizeof a)) { const uint8_t *b = reinterpret_cast<const uint8_t *>(&a.sin_addr);
+        snprintf(address, sizeof address, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]); } }
+    ifnet_free_address_list(list); }
+  const uint16_t flags = ifnet_flags(gIf);
+  snprintf(rows[n++], 160, "en0 flags %x (up %d running %d) family %u subfamily %u type %u mtu %u link quality %d index %u ipv4 %s", flags,
+           (flags & IFF_UP) != 0, (flags & IFF_RUNNING) != 0, ifnet_family(gIf), ifnet_subfamily(gIf), ifnet_type(gIf), ifnet_mtu(gIf),
+           ifnet_link_quality(gIf), ifnet_index(gIf), address);
+  if (n < max) {
+    ifnet_t via = nullptr; uint32_t gateway = 0, rtFlags = 0;
+    if (ruan_wifi_default_route(&via, &gateway, &rtFlags)) snprintf(rows[n++], 160, "default route: none");
+    else {
+      const uint8_t *b = reinterpret_cast<const uint8_t *>(&gateway);
+      snprintf(rows[n++], 160, "default route: via %s%u gateway %u.%u.%u.%u flags %x%s", via ? ifnet_name(via) : "?", via ? ifnet_unit(via) : 0,
+               b[0], b[1], b[2], b[3], rtFlags, via == gIf ? " (en0)" : "");
+    }
+  }
+  if (n < max) snprintf(rows[n++], 160, "out: arp %u ip4 %u dhcp %u tcp syn %u dns %u ip6 %u | in: arp %u ip4 %u dhcp %u dns %u ip6 %u", gKindsOut.arp,
+                        gKindsOut.ip4, gKindsOut.dhcp, gKindsOut.syn, gKindsOut.dns, gKindsOut.ip6, gKindsIn.arp, gKindsIn.ip4, gKindsIn.dhcp,
+                        gKindsIn.dns, gKindsIn.ip6);
+  if (n < max) {
+    nw_wifi_status st; visible_status(st);
+    snprintf(rows[n++], 160, "station: state %u (daemon state %d) ssid %.*s %u MHz %d dBm power %d suppressed %d assoc result %d keyed %d",
+             st.state, map_state(st.state), st.ssid_len <= 32 ? static_cast<int>(st.ssid_len) : 0, reinterpret_cast<const char *>(st.ssid),
+             st.freq_mhz, st.signal_dbm, gPower, gLinkSuppressed, gAssocResult, gKeyed);
+  }
+  return n;
+}
+
 extern "C" unsigned sheng_wifi_rx_rows(char rows[][120], unsigned max) {
   unsigned n = 0;
   if (!gGrp) return 0;

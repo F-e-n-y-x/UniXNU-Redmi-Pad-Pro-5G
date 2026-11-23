@@ -1,0 +1,94 @@
+diff --git a/fileset_emit.py b/fileset_emit.py
+index a82ddaf..5ebb842 100755
+--- a/fileset_emit.py
++++ b/fileset_emit.py
+@@ -583,6 +583,8 @@ class Emit:
+         struct.pack_into('<II', self.data, at + 16, len(rebuilt), len(payload))
+         flags, = struct.unpack_from('<I', self.data, at + 24)
+         struct.pack_into('<I', self.data, at + 24, flags | MH_DYLIB_IN_CACHE)
++        # DarwinBoot ParseKernel requires the com.apple.kernel member's cpusubtype to equal the collection's.
++        struct.pack_into('<I', self.data, at + 8, struct.unpack_from('<I', self.data, 8)[0])
+ 
+     def patch_headers(self):
+         """Repoint the kernel entry, add native segments, grow linkedit, move the entry PC."""
+diff --git a/fileset_segmented.py b/fileset_segmented.py
+index 00ae54b..6bf5169 100644
+--- a/fileset_segmented.py
++++ b/fileset_segmented.py
+@@ -290,6 +290,8 @@ class SegmentedEmit(Emit):
+         struct.pack_into('<II', self.data, self.fileoff+16, len(rebuilt), len(commands))
+         flags, = struct.unpack_from('<I', self.data, self.fileoff+24)
+         struct.pack_into('<I', self.data, self.fileoff+24, flags | MH_DYLIB_IN_CACHE)
++        # DarwinBoot ParseKernel requires the com.apple.kernel member's cpusubtype to equal the collection's.
++        struct.pack_into('<I', self.data, self.fileoff+8, struct.unpack_from('<I', self.data, 8)[0])
+         # corecrypto authenticates the relocated __text bytes in a fileset.
+         code = next(s for s in self.native.sections if s['segment'] == '__TEXT_EXEC' and s['name'] == '__text')
+         seals = [s for s in self.native.sections if s['name'] == '__fips_hmacs']
+diff --git a/kc_image.py b/kc_image.py
+index 1407d8e..8d4ec3c 100644
+--- a/kc_image.py
++++ b/kc_image.py
+@@ -4,7 +4,7 @@ import struct
+ 
+ LC_SEGMENT_64, LC_SYMTAB, LC_FUNCTION_STARTS = 0x19, 0x2, 0x26
+ LC_DYLD_CHAINED_FIXUPS, LC_FILESET_ENTRY = 0x80000034, 0x80000035
+-PTR_ARM64E_KERNEL, PTR_64_KERNEL_CACHE = 7, 8
++PTR_64_OFFSET, PTR_ARM64E_KERNEL, PTR_64_KERNEL_CACHE = 6, 7, 8
+ 
+ 
+ class Image:
+@@ -146,7 +146,8 @@ class Image:
+                 continue
+             at = table + relative
+             _, page_size, fmt, segment_offset, _, pages = struct.unpack_from('<IHHQIH', self.data, at)
+-            if fmt not in (PTR_ARM64E_KERNEL, PTR_64_KERNEL_CACHE):
++            # Format 6: what ld -kernel writes for a plain arm64 (non-PAC) kernel.
++            if fmt not in (PTR_64_OFFSET, PTR_ARM64E_KERNEL, PTR_64_KERNEL_CACHE):
+                 raise ValueError(f'Unsupported chained pointer format {fmt}')
+             for page, start in enumerate(struct.unpack_from(f'<{pages}H', self.data, at + 22)):
+                 if start == 0xffff:
+@@ -161,6 +162,10 @@ class Image:
+                         if (value >> 30) & 3:
+                             raise ValueError('Only cache level 0 is supported')
+                         target, step = self.base + (value & 0x3fffffff), (value >> 51) & 0xfff
++                    elif fmt == PTR_64_OFFSET:
++                        if value >> 63:
++                            raise ValueError('Chained binds are not supported')
++                        auth, target, step = 0, self.base + ((value & 0xfffffffff) | ((value >> 36) & 0xff) << 56), (value >> 51) & 0xfff
+                     else:
+                         if (value >> 62) & 1:
+                             raise ValueError('Chained binds are not supported')
+diff --git a/test_fileset_emit.py b/test_fileset_emit.py
+index d3ffe3e..dd1aab2 100644
+--- a/test_fileset_emit.py
++++ b/test_fileset_emit.py
+@@ -67,6 +67,21 @@ class FilesetEmitTests(unittest.TestCase):
+         with self.assertRaisesRegex(ValueError, 'cache level'):
+             decode(1 << 30)
+ 
++    def test_plain_arm64_format6_fixups(self):
++        # ld -fixup_chains -kernel for arm64 (no PAC): DYLD_CHAINED_PTR_64_OFFSET, never authenticated.
++        base = 0xfffffff007004000
++        segment = struct.pack('<II16sQQQQIIII', 0x19, 72, b'__TEXT', base, 0x8000, 0, 0x8000, 7, 5, 0, 0)
++        commands = [segment, struct.pack('<4I', 0x80000034, 16, 0x6000, 0x100)]
++        raw = bytearray(0x8000)
++        raw[:32 + 88] = struct.pack('<8I', 0xfeedfacf, 0x100000c, 0, 2, 2, 88, 0, 0) + b''.join(commands)
++        struct.pack_into('<7I', raw, 0x6000, 0, 0x20, 0, 0, 0, 0, 0)           # header: starts at +0x20, no imports
++        struct.pack_into('<2I', raw, 0x6020, 1, 8)                               # one segment, its starts at +8
++        struct.pack_into('<IHHQIHH', raw, 0x6028, 24, 0x4000, 6, 0, 0, 1, 0x10)  # format 6, page 0 starts at 0x10
++        struct.pack_into('<Q', raw, 0x10, 0x1234 | 2 << 51)                      # target 0x1234, next 8 bytes on
++        struct.pack_into('<Q', raw, 0x18, 0x40)
++        self.assertEqual(Image(bytes(raw)).fixups(), {base + 0x10: (base + 0x1234, 0, None, None, None),
++                                                      base + 0x18: (base + 0x40, 0, None, None, None)})
++
+     def test_copied_header_preserves_counts_uuid_and_versions(self):
+         base, at, slide = 0x100000000, 0x8000, 0x200000
+         segment = struct.pack('<II16sQQQQIIII', 0x19, 72, b'__TEXT',
+@@ -93,6 +108,7 @@ class FilesetEmitTests(unittest.TestCase):
+         emit.patch_entry_header()
+         moved = Image(bytes(emit.data), at)
+         self.assertTrue(struct.unpack_from('<I', emit.data, at + 24)[0] & MH_DYLIB_IN_CACHE)
++        self.assertEqual(emit.data[at + 8:at + 12], emit.data[8:12])  # DarwinBoot: member subtype == collection's
+         self.assertIsNone(moved.command(0x80000034))
+         self.assertEqual(moved.symbols(), {base + 0x1000 + slide: ['_name']})
+         for cmd in (0x1b, 0x2a):

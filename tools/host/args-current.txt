@@ -1,0 +1,1 @@
+boot-progress=1 smp-gic=1 cpus=8 smp=1 launchd_disable_all_timeouts=1 armcpu-edge=1 gpu-fence-wake=0 gpu-prime=0 gpu-prime-system=0 ruan-wifi=5 no-lc=1 ruan-ls-rescan=1 ruan-vm-free-scale=1

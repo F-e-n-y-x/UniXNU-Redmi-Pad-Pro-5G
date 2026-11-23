@@ -1,0 +1,63 @@
+ruan: count IOMobileFramebuffer user-client external methods by selector (rbu80)
+
+backboardd renders ~0.35 fps on rbu79 and never registers a vsync client; this records which display methods it calls and what they
+answer (USB `display`). Counters only.
+
+--- a/iokit/Kernel/IOUserClient.cpp
++++ b/iokit/Kernel/IOUserClient.cpp
+@@ -4328,6 +4328,31 @@
+ #endif /* defined(XNU_TARGET_OS_OSX) */
+ }
+ 
++/*
++ * ruan (rbu80): which IOMobileFramebuffer user-client methods the system calls and what they answer, for the USB `display` command:
++ * per selector (0..127) the calls, the failed ones and the last IOReturn. Counters only; the call itself is unchanged.
++ */
++extern "C" {
++uint32_t ruan_iomfb_calls[128], ruan_iomfb_errors[128];
++int32_t ruan_iomfb_last[128];
++}
++static void
++ruan_iomfb_note(IOUserClient * client, uint32_t selector, IOReturn ret)
++{
++	if (selector >= 128 || !client) {
++		return;
++	}
++	const char * name = client->getMetaClass()->getClassName();
++	if (!name || strncmp(name, "IOMobileFramebuffer", 19) != 0) {
++		return;
++	}
++	ruan_iomfb_calls[selector]++;
++	ruan_iomfb_last[selector] = ret;
++	if (ret != kIOReturnSuccess) {
++		ruan_iomfb_errors[selector]++;
++	}
++}
++
+ /* Routine io_service_open_ndr */
+ /*
+  * The native GPU driver names, by the property NativeSandboxGrantProcess on its accelerator service, the processes (a comma-separated list of
+@@ -4994,6 +5019,7 @@
+ 
+ 	if (kIOReturnSuccess == ret) {
+ 		ret = client->callExternalMethod(selector, &args);
++		ruan_iomfb_note(client, selector, ret);
+ 	}
+ 
+ 	*scalar_outputCnt = args.scalarOutputCount;
+@@ -5115,6 +5141,7 @@
+ 	}
+ 	if (kIOReturnSuccess == ret) {
+ 		ret = client->callExternalMethod( selector, &args );
++		ruan_iomfb_note(client, selector, ret);
+ 	}
+ 
+ 	*scalar_outputCnt = args.scalarOutputCount;
+@@ -5229,6 +5256,7 @@
+ 	}
+ 	if (kIOReturnSuccess == ret) {
+ 		ret = client->callExternalMethod( selector, &args );
++		ruan_iomfb_note(client, selector, ret);
+ 	}
+ 
+ 	*scalar_outputCnt = args.scalarOutputCount;

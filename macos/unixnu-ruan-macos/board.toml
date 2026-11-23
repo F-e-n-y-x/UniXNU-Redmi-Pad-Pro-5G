@@ -1,0 +1,205 @@
+schema_version = 2
+
+[board]
+# Draft: kernel and payload inputs are filled from ruan's live DT; no image has been booted.
+example = false
+name = "ruan"
+soc = "SM7435"
+soc_source = "sm7435"
+os_profile = "macos-27.3-26C5035r"
+description = "Xiaomi Redmi Pad Pro 5G (ruan, SM7435 Parrot, 4x A55 + 4x A78, no PAC, Adreno 710): first-boot draft"
+kit = "ruan"
+
+[components]
+# First milestone: kernel on the UEFI framebuffer, one CPU. Storage (ShengUfs), touch and GPU come later.
+# AppleKeyStoreState: scripts/build-ram-root-probe.py links its object without the module initialiser (the probe registers
+# the class); its own archive is built but not linked.
+# RamBlock: its source only (scripts/build-ram-root-probe.py builds NativeRamBlock for the Data container).
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "GopFramebuffer", "XnuPrelink", "DarwinBoot", "AppleKeyStoreState", "RamBlock"]
+
+[kernel]
+defconfig = "ruan_defconfig"
+config_fragments = ["arch:configs/common.config", "soc:configs/sm7435.config", "os:configs/ipados.config"]
+patch_series = ["arch:patches/xnu/series", "device:patches/xnu/soc.series", "os:patches/xnu/series", "device:patches/xnu/series"]
+# A board list replaces the arch profile's (profiles/arch/arm64/profile.toml): its eight entries, then the PMGR bridge
+# (scripts/build-platform-power.py, from UniXNU-j716f).
+archives = [
+  "build-corecrypto-14.py",
+  "build-corecrypto-14.py --namespace",
+  "component:ArmDTPlatform",
+  "component:ArmCpu",
+  "component:SoftwareAES",
+  "build-software-aes-bindings.py",
+  "build-libpthread-kernel.py",
+  "build-platform-power.py",
+  # Builds libAppleKeyStoreState.a, which nothing links (no config selects it); build-ram-root-probe.py takes the object.
+  "component:AppleKeyStoreState",
+  # Required for an included component; nothing links its unbound archive: build-ram-root-probe.py builds and binds its own.
+  "component:RamBlock",
+  # RAM-root diagnostic (package/RamRootProbe.c) and the key store stand-in; linked through CONFIG_XNU_EXTRA_LD_ARCHIVES.
+  "build-ram-root-probe.py",
+  # gpu 17/18 (ruan-adreno=1): UniXNU's Adreno740 driver + ArmSmmu4K/AdrenoPM4 kits (patches/adreno/) + package/RuanAdrenoGlue.cpp,
+  # force-loaded through CONFIG_XNU_EXTRA_LD_ARCHIVES (macOS/docs/research/GPU-METAL-PORT.md steps 2-3).
+  "build-ruan-adreno.py",
+  # The GOP display path (display-prep/PLAN.md): NativeLegacyDisplay (UniXNU GopFramebuffer) bound to the prelinked original
+  # IOMobileFramebufferLegacy + package/LegacyDisplayProbe.cpp, into libNativeLegacyDisplay.late.a, force-loaded with
+  # CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y. Needs a previous kernel in out/.../kernel as its reference candidate (first build: off).
+  "build-gop-legacy-display.py",
+]
+
+[device_tree]
+source = "device:dts/ruan.dts"
+include_dirs = ["soc:dts"]
+
+[firmware]
+# A copy of /DATA/tower/Projects/mu-silicium-ruan with the HakiOS hook reverted and the UniXNU modules added
+# (see README.md). config/dsc/fd match that checkout's ruanPkg.
+config = "ruan"
+dsc = "Platforms/Xiaomi/ruanPkg/ruan.dsc"
+fd = "Build/ruanPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
+# The Mu_Basecore patches build_uefi.py applies; the firmware step applies them to UniXNU's edk2 (same commit cfb93724) and reverts them.
+patches = ["Resources/MuPatches/AsmMacroLib.patch", "Resources/MuPatches/Auth-Service.patch", "Resources/MuPatches/Boot-Manager.patch", "Resources/MuPatches/Timer.patch", "Resources/MuPatches/Usb-Bus.patch"]
+# Submodules are already checked out in the copy; no submodule update.
+packages = ["{uefi}", "{uefi}/Platforms/Xiaomi", "{tree}/package", "{tree}/drivers/DarwinBoot", "{edk2}", "{uefi}/Common/Mu", "{uefi}/Common/Mu_OEM_Sample", "{uefi}/Silicon/Qualcomm", "{uefi}/Silicon/Silicium", "{uefi}/Silicium-ACPI", "{uefi}/Silicium-ACPI/Platforms/Xiaomi", "{uefi}/Silicium-ACPI/Silicon/Qualcomm"]
+
+[firmware.defines]
+DEVICE_MODEL = "ruan"
+# build_uefi.py passes this define itself; SecureBootHandler.c fails to preprocess without it.
+ENABLE_SECUREBOOT = "0"
+
+[payload]
+volume = "RUAN"
+# 51 MiB kernel + ADT; 64 MiB keeps the boot image under the 128 MiB boot partition.
+size_mib = 160
+loader = "firmware"
+title = "UniXNU"
+dram_size = "0x80000000"
+panic_screen = false
+timeout = 5
+text_fixups = []
+# One CPU until PSCI CPU_ON and the SM7435 SMP patch are checked on ruan. cpu0 is a Cortex-A55.
+# No -v: it now selects the text console (patches/xnu/ruan-boot-progress.patch), which may keep backboardd from presenting
+# (gts7xlwifi notes). boot-progress=1 draws the stage page instead (package/BootProgress.c).
+# dyld_flags=8: dyld skips libignition (no Preboot/cryptex1 on the RAM root; UniXNU-fuxi's working setting), seeded into the
+# commpage by patches/xnu/ruan-pid1-dyld.patch.
+kernel_args = ["cpus=1", "serial=3", "sheng-pmgr=2", "dyld_flags=8",
+  # Display (as UniXNU-gts7xlwifi / j716f / sirius, 21H461): load IOMobileGraphicsFamily, register NativeLegacyDisplay in
+  # bsd_init, bind it to the GOP framebuffer under /arm-io (phase 4) after IOKitBSDInit, PM so backboardd powers it on,
+  # validate + CPU-copy every swap into 0xB8000000, a 60 Hz vsync. No -v: it makes DarwinBoot's console text mode and
+  # isMainDisplay() false, so backboardd never presents.
+  "offline-mobile-graphics-load=1", "offline-legacy-register=1", "offline-legacy-phase=4", "offline-legacy-gop=1",
+  "offline-legacy-pm=1", "offline-legacy-validate=1", "offline-legacy-transfer=1", "offline-legacy-cpu-present=1", "vsync=60",
+  # Key store stand-in (patches/xnu/ruan-keystore-probe.patch): SpringBoard/backboardd need a keybag that says "unlocked".
+  "aks=1", "offline-key-events=1"]
+
+[payload.adt]
+# qcom,msm-id of ruan's live DT (0x27a, SM7435).
+chip_id = "0x27a"
+cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"
+psci_method = "smc"
+root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
+unique_chip_id = "required"
+# DarwinBoot's window (one contiguous run of free memory). 2.75 GiB holds the kernel, a USB-sent RAM root of up to
+# about 1.7 GiB (scripts/build-ramroot.sh) and the rest for XNU; the largest DRAM run on ruan is 3 GiB at 0x8c0000000.
+# If DarwinBoot shows "NO WINDOW <size> BIG RUN <bytes>", set this below <bytes> (2 MiB steps). Default without it: 256 MiB.
+owned_memory_size = "0xB0000000"
+# Free DRAM outside the window becomes VM memory (patches/xnu/ruan-memory-outside.patch, opt-in with memory-outside=1):
+# DarwinBoot fills /chosen/darwinboot-memory-outside with the 16 largest EfiConventionalMemory runs outside the window
+# (MemoryWindow.h DarwinOutsideRanges, 64 KiB aligned, >= 1 MiB). The kernel takes the runs on one side of the window
+# within 4 GiB of it, minus the ranges below (/chosen/darwinboot-memory-outside-kept), page by page with a probe load.
+owned_memory_outside_ranges = 16
+# Never adopted, even if the UEFI map calls them free. Under Gunyah a page outside the HLOS stage-2 map or a TZ/XPU
+# region can reset the SoC instead of raising a catchable abort, so this errs wide:
+#   0x80000000+2 GiB  the whole low bank. It holds hyp_region (Gunyah, 0x80000000), XBL/AOP/cmd-db/SMEM/CPUCP/chipinfo,
+#                     ramoops, wlan/wpss/camera/video/cdsp/ipa/gpu-zap/mpss/adsp PIL (0x82A00000-0xA1400000), display
+#                     demura, global sync, the UEFI FD/stack/heaps (0xA7000000), "Kernel" 0xA8000000, the GOP scanout /
+#                     splash 0xB8000000+0x2B00000, OEM VM 0xBB000000, MTE 0xC0000000, VM PIL 0xE0000000 (cpusys_vm,
+#                     trust_ui_vm, its swiotlb/vblk/qrtr), TZ stats/tags/QTEE/TZApps 0xE8800000-0xF1400000, the XNU
+#                     payload 0xF4000000+64M and the DXE heap 0xF8000000. Beyond the kernel's 4 GiB reach anyway.
+#   0x830000000+256M  "HYP Reserved" in the UEFI map (Gunyah), incl. the /memory hole 0x83FC00000-0x840000000.
+#   0x8B9B00000+6M    hole in Android's /memory (not HLOS RAM: hypervisor / another VM).
+#   0x8BBF00000+65M   hole in Android's /memory up to the 0x8C0000000 bank.
+#   0x8B8B00000+16M   the GPU pool (gpu-dev, package/RuanGpuPower.c): the last 16 MiB of the HLOS bank 0x880000000-0x8B9B00000
+#                     (Android /memory), no fixed reserved-memory node above 0x800000000, inside the outside span XNU adopted
+#                     on rbu6 (so stage-2 mapped for HLOS and free in the UEFI map). Kept out of the VM so the GMU page tables,
+#                     DDR regions and later rings/SQE/zap get physically contiguous memory (the window has none to give).
+owned_memory_outside_reserved = ["0x80000000:0x80000000", "0x830000000:0x10000000", "0x8B9B00000:0x600000", "0x8BBF00000:0x4100000",
+                                 "0x8B8B00000:0x1000000"]
+
+# Display scale for MobileGestalt/FrontBoard: 1600x2560 at 2x = 800x1280 points, as UniXNU-j716f (same 1600x2560 GOP).
+[adt.chosen.u32]
+display-scale = 2
+display-rotation = 0
+
+# mount -P 1, launchd's first boot task with launchd-normal-boot=1, exits 66 without /chosen/boot-manifest-hash ("failed to get
+# boot-manifest-hash"; bbn, 2026-11-14), as on UniXNU-e5 and sirius, which set one too. No Preboot volume holds a directory of
+# that name: the firmware bind mount then finds no mount point (ENOENT), which mount accepts outside os_env_type 1 (there is
+# no /filesystems/fstab, so it is 0). SHA-384 of "ruan.RamRoot.BootSet.v1\0", like sirius' bring-up boot-set identity.
+[adt.chosen.bytes]
+boot-manifest-hash = "1c8bbe348e5d743467f407081083934a9f457033289edf6b8f827257d231feb5d9955f88d7f319527df3366163105bd4"
+
+# /filesystems/DoNotUseSEP (empty), Apple's no-SEP switch, as UniXNU-gts7xlwifi: APFS refuses an unencrypted Data-role volume
+# ("unencrypted data volume is not allowed" @apfs_vfsops.c:2276) unless it is present. The RAM root's Data volume has that
+# role (make-ramroot.py set_data_role) so ruan-ram-data-mount.patch can mount it by role. No fstab child: mount -P keeps
+# os_env_type 0.
+[adt.filesystems.bytes]
+DoNotUseSEP = ""
+
+[package]
+unixnu = "../UniXNU-macos"
+
+[package.defconfig]
+"macos-27.3-26C5035r" = "ruan_macos_arm64_defconfig"
+"ipados-17.7.11-21H461" = "ruan_defconfig"
+
+[os_overrides."macos-27.3-26C5035r"]
+remove = ["payload.skip_setup_tool", "payload.runtime.appsync"]
+
+# ruan has no FEAT_PAuth (A78/A55): the kernel is plain arm64 (no ptrauth codegen, HAS_APPLE_PAC/HAS_NATIVE_PAC unset).
+# The OS profile stays arm64e (its arch root, configs and the arm64e userland); only the kernel build arch changes, and the
+# arch patch series is the arm64e one (its native-pac-* code is under HAS_NATIVE_PAC = __arm64e__, so it compiles out) plus
+# patches/xnu-12377/arch-arm64.series (format 6 chained fixups for the plain kernel in the fileset).
+# The previous arm64e set: board.toml.arm64e-bak, configs/ruan_macos_defconfig.
+[os_overrides."macos-27.3-26C5035r".os]
+arch = "arm64"
+
+[os_overrides."macos-27.3-26C5035r".kernel]
+defconfig = "ruan_macos_arm64_defconfig"
+config_fragments = ["arch:configs/common.config", "os:configs/macos.config"]
+patch_series = ["arch:patches/xnu/series", "device:patches/xnu-12377/arch-arm64.series", "device:patches/xnu-12377/soc.series", "os:patches/xnu/series", "device:patches/xnu-12377/series"]
+archives = [
+  "build-corecrypto-14.py",
+  "build-corecrypto-14.py --namespace",
+  "component:ArmDTPlatform",
+  "component:ArmCpu",
+  "component:SoftwareAES",
+  "build-software-aes-bindings.py",
+  "build-libpthread-kernel.py",
+  "component:AppleKeyStoreState",
+  "component:RamBlock",
+  "build-gop-legacy-display-27.py",
+]
+
+[os_overrides."macos-27.3-26C5035r".payload]
+size_mib = 187
+kernel_args = [
+  "debug=0x14e", "cpus=1", "serial=3", "sheng-pmgr=2",
+  "offline-mobile-graphics-load=1", "offline-legacy-register=1", "offline-legacy-phase=4", "offline-legacy-gop=1",
+  "offline-legacy-pm=1", "offline-legacy-validate=1", "offline-legacy-transfer=1", "offline-legacy-cpu-present=1",
+  "aks=1", "offline-key-events=1", "vc-text=1", "exec-log=1", "timebase-hz=24000000",
+  # 4 KiB kernel pages in a fileset: the kernel __TEXT sits inside the collection's __PRELINK_TEXT, which arm_vm_init maps
+  # first without the contiguous hint, then __TEXT with it; arm_vm_prot_finalize re-protects __PRELINK_TEXT without the hint on
+  # live tables and trips arm_vm_init.c:1376 (tablet 2026-11-21). Same switch as UniXNU's vermeer/reference 4K boards.
+  "use_contiguous_hint=0",
+  # USB CDC debug terminal (package/UsbDebugCdc.cpp, tools/ruan-usbdbg.py), its reboot.fastboot, and the ramoops console zone
+  # (package/RuanMacBootProgress.c: console tee, [ev] and [hb] lines) it streams and replays.
+  "ruan-usbdbg=1", "ruan-usbdbg-reboot=1", "ruan-ramoops=1"
+]
+
+[os_overrides."macos-27.3-26C5035r".payload.adt]
+chip_id = "6050"
+
+# SDR sRGB panel (UniXNU-sm-t733 display policy, as gts7xlwifi/j716f/sirius): MobileGestalt's hasExtendedColorDisplay
+# compares this with P3; the OS profile's iPad7,1 value is P3. Merged key by key over the profile's [adt.product.string].
+[adt.product.string]
+artwork-display-gamut = "sRGB"

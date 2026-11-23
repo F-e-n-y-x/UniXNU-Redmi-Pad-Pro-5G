@@ -1,0 +1,69 @@
+DarwinBoot USB receiver: "upload" (fastboot get_staged FILE) sends back the 2 MiB at 0x80D00000 (PROPOSALS.md P1, step 1)
+
+Apply in UniXNU/drivers/DarwinBoot (git apply -p1), on top of the local UsbRamdisk.h (the USB RAM disk receiver).
+ruan's stock DT reserves ramoops@80D00000 (2 MiB: two 256 KiB dmesg records, the 512 KiB console zone at 0x80D80000, 1 MiB pmsg).
+The host runs `fastboot -s unixnu-ramdisk get_staged prev.bin` before `stage`; scripts/read-ramoops.py parses it. Read only.
+Needs 0004-ruanpkg-ramoops-map.patch: without the memory-map entry UEFI has no mapping there and the copy faults.
+
+--- a/DarwinBootPkg/Driver/UsbRamdisk.h
++++ b/DarwinBootPkg/Driver/UsbRamdisk.h
+@@ -14,6 +14,9 @@
+ //   fastboot getvar product   unixnu-ramdisk
+ //   fastboot stage IMAGE      download:<size>, the bytes; OKAY when the CRC32 matches the descriptor
+ //   fastboot continue         the boot goes on
++//   fastboot get_staged FILE  upload: the 2 MiB at USBRD_LOG_BASE, read only (ruan: the stock ramoops region, where Android's
++//                             and a ruan-ramoops=1 XNU's last log survive a warm reset; the platform's memory map must
++//                             describe it, ruanPkg MemoryMapLib "RAM Oops")
+ // No command writes storage: "reboot" resets, every other command is refused. Without the protocol, or when no host
+ // sends the image in time, Boot() fails and the firmware is kept.
+ 
+@@ -24,6 +27,8 @@
+ #define USBRD_IDLE_US        100
+ #define USBRD_HOST_WAIT_US   (600ULL * 1000000)  // for the host to connect and finish, between commands
+ #define USBRD_DATA_WAIT_US   (20ULL * 1000000)   // without a byte during a download
++#define USBRD_LOG_BASE       0x80D00000ULL       // ruan: reserved-memory ramoops@80D00000 of the stock device tree
++#define USBRD_LOG_SIZE       SIZE_2MB
+ 
+ typedef struct {
+   CHAR8   Magic[8];
+@@ -223,6 +228,31 @@
+   return !EFI_ERROR (UsbRdSend (Rd, "OKAY", ""));
+ }
+ 
++// "upload": DATA<size>, the log region in USBRD_CHUNK pieces (through the transfer buffer: the controller sends from
++// memory it owns), then OKAY. FALSE when the host went away.
++STATIC
++BOOLEAN
++UsbRdUpload (USBRD *Rd)
++{
++  CHAR8       Reply[16];
++  UINT64      Sent;
++  UINT64      Want;
++  UINT64      Bytes;
++  EFI_STATUS  Status;
++
++  AsciiSPrint (Reply, sizeof (Reply), "%08x", (UINT32)USBRD_LOG_SIZE);
++  if (EFI_ERROR (UsbRdSend (Rd, "DATA", Reply))) { return FALSE; }
++  for (Sent = 0; Sent < USBRD_LOG_SIZE; Sent += Want) {
++    Want = MIN (USBRD_LOG_SIZE - Sent, USBRD_CHUNK);
++    CopyMem (Rd->Rx, (CONST VOID *)(UINTN)(USBRD_LOG_BASE + Sent), (UINTN)Want);
++    Status = Rd->Usb->Send (USBRD_EP_IN, (UINTN)Want, Rd->Rx);
++    if (!EFI_ERROR (Status)) { Status = UsbRdWait (Rd, USBRD_EP_IN, USBRD_DATA_WAIT_US, &Bytes); }
++    if (EFI_ERROR (Status)) { return FALSE; }
++  }
++  DiagDraw (L"USB RAMDISK: LOG REGION SENT, 2 MiB", 2);
++  return !EFI_ERROR (UsbRdSend (Rd, "OKAY", ""));
++}
++
+ // Serve fastboot commands until the image is in Destination and the host said "continue".
+ STATIC
+ EFI_STATUS
+@@ -259,6 +289,8 @@
+       } else {
+         Received = UsbRdDownload (Rd, Destination, Size, Crc);
+       }
++    } else if (AsciiStrCmp (Command, "upload") == 0) {
++      UsbRdUpload (Rd);
+     } else if (AsciiStrCmp (Command, "continue") == 0) {
+       if (Received) {
+         UsbRdSend (Rd, "OKAY", "");

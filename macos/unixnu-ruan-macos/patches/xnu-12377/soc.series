@@ -1,0 +1,4 @@
+# SoC patch series for SM7435 on XNU 12377
+sheng-platform-power.patch
+zzye-sheng-cpu-idle.patch
+zzyf-sheng-amp.patch

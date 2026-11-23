@@ -89,3 +89,25 @@ int asteroids_wifi_join_read(uint8_t **data, size_t *size)
     const int error = read_path("/private/etc/wifi/join.txt", data, size);
     return error == ENOENT ? read_path("/private/var/wifi-test/join.txt", data, size) : error;
 }
+
+/* ruan: the IPv4 default route, for WifiNet.cpp's USB `net` report (struct rtentry is visible to the BSD flags this file is built with).
+ * The interface pointer is only compared and named, never kept. */
+#include <net/route.h>
+#include <netinet/in.h>
+int ruan_wifi_default_route(ifnet_t *ifp, uint32_t *gateway, uint32_t *flags);
+int ruan_wifi_default_route(ifnet_t *ifp, uint32_t *gateway, uint32_t *flags)
+{
+    struct sockaddr_in any;
+    memset(&any, 0, sizeof any);
+    any.sin_len = sizeof any;
+    any.sin_family = AF_INET;
+    struct rtentry *rt = rtalloc1((struct sockaddr *)&any, 0, 0);
+    if (!rt) return -1;
+    RT_LOCK(rt);
+    *ifp = rt->rt_ifp;
+    *flags = rt->rt_flags;
+    *gateway = rt->rt_gateway && rt->rt_gateway->sa_family == AF_INET ? ((struct sockaddr_in *)(void *)rt->rt_gateway)->sin_addr.s_addr : 0;
+    RT_UNLOCK(rt);
+    rtfree(rt);
+    return 0;
+}

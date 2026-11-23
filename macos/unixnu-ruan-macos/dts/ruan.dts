@@ -1,0 +1,37 @@
+/dts-v1/;
+/include/ "sm7435.dtsi"
+
+// Xiaomi Redmi Pad Pro 5G (ruan). Values from ruan's live DT (/sys/firmware/fdt, 2026-11-13):
+// CPUs 0x000..0x700 (cpu0-3 capacity 1024 = A55, cpu4-7 1945 = A78), GICv3 0x17200000/0x17260000 stride 0x20000,
+// PSCI 1.0 smc, timer PPIs 13/14/11/12 at 19.2 MHz all match sm7435.dtsi.
+/ {
+    model = "Xiaomi Redmi Pad Pro 5G (ruan)";
+    compatible = "xiaomi,ruan", "qcom,parrot", "qcom,sm7435";
+
+    // Low DRAM bank 0x80000000..0x100000000. 0xe8e00000..0xea700000 (TZ/QTEE) is a hole that the UEFI
+    // memory map keeps out of DarwinBoot's window; the high banks at 0x800000000 are not described yet.
+    memory@80000000 {
+        device_type = "memory";
+        reg = <0 0x80000000 0 0x80000000>;
+    };
+
+    reserved-memory {
+        #address-cells = <2>;
+        #size-cells = <2>;
+        ranges;
+
+        splash_region: splash_region@b8000000 {
+            reg = <0 0xb8000000 0 0x2b00000>;
+            label = "cont_splash_region";
+        };
+    };
+};
+
+&cpu0 { unixnu,die-cluster-id = <0>; unixnu,cluster-core-id = <0>; };
+&cpu1 { unixnu,die-cluster-id = <0>; unixnu,cluster-core-id = <1>; };
+&cpu2 { unixnu,die-cluster-id = <0>; unixnu,cluster-core-id = <2>; };
+&cpu3 { unixnu,die-cluster-id = <0>; unixnu,cluster-core-id = <3>; };
+&cpu4 { unixnu,die-cluster-id = <1>; unixnu,cluster-core-id = <0>; };
+&cpu5 { unixnu,die-cluster-id = <1>; unixnu,cluster-core-id = <1>; };
+&cpu6 { unixnu,die-cluster-id = <1>; unixnu,cluster-core-id = <2>; };
+&cpu7 { unixnu,die-cluster-id = <1>; unixnu,cluster-core-id = <3>; };

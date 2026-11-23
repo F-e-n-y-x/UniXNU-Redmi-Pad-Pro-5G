@@ -67,7 +67,7 @@ static void ls_rescan(void)
 
 // Jobs kept disabled on a kept Data volume too (make-ramroot.py DISABLED_JOBS reaches only a fresh seed): each label is set to true in
 // launchd's disabled.plist, the other keys stay. Idempotent; launchd reads the file at its next start (the next boot).
-static const char *const ensure_disabled[] = {"com.apple.passd"};   // passd crash-loops in FinanceKit
+static const char *const ensure_disabled[] = {"com.apple.passd", "com.apple.parsecd", "com.apple.DumpPanic", "com.apple.photoanalysisd", "com.apple.mediaanalysisd", "com.apple.mediaanalysisd.service", "com.apple.knowledgeconstructiond", "com.apple.intelligenceplatformd", "com.apple.spotlightknowledged", "com.apple.spotlight.IndexAgent", "com.apple.biomesyncd", "com.apple.proactiveeventtrackerd", "com.apple.spindump", "com.apple.mobile.softwareupdated", "com.apple.OTATaskingAgent"};   // passd crash-loops in FinanceKit; the rest from make-ramroot.py DISABLED_JOBS (smoothness), applied to a kept Data volume
 static void disable_jobs(void)
 {
     static const char path[] = "/private/var/db/com.apple.xpc.launchd/disabled.plist", temp[] = "/private/var/db/com.apple.xpc.launchd/.disabled.plist.ruan";

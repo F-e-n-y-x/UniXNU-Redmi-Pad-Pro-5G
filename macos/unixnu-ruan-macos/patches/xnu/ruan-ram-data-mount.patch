@@ -1,0 +1,92 @@
+ruan: ram-data=1 mounts the RAM root container's Data volume read-write on /private/var before launchd, by role
+
+With launchd-normal-boot=1 launchd runs the real boot tasks, which need a writable /private/var (bbn, 2026-11-14). md0 is a
+plain memdev, not an IOMedia, so APFS publishes no BSD node per volume: /dev/md0s2 was ENOENT (data, 2026-11-14 04:21).
+The Data volume (scripts/make-ramroot.py --data, apfs_role Data) is mounted from the root volume by role instead,
+KERNEL_MOUNT_DATAVOL -> VFSIOC_MOUNT_BYROLE from a kernel thread, as APFS requires (macOS' vfs_mount_rosv_data; the iOS APFS kext has handle_mount_by_role), whose
+mount_common branch is compiled for iOS here. ram-data-dev=<bsd name> mounts a device node with UniXNU's owner Data mount
+payload instead. No panic on failure: "ram-data: <what> on /private/var rw: error N, mounted from <f_mntfromname>".
+
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -8227,6 +8227,69 @@
+ 	boot_progress_stage("temporary watchdog launch policy ready");
+ #endif
+ #endif
++	/* ruan: ram-data=1 mounts the RAM root container's Data volume (scripts/make-ramroot.py --data: the second volume, role
++	 * Data) read-write on /private/var before launchd. md0 is a plain memdev, not an IOMedia, so APFS publishes no BSD node
++	 * per volume (/dev/md0s2 was ENOENT, test 2026-11-14 04:21); the volume is mounted by role from the root volume instead
++	 * (KERNEL_MOUNT_DATAVOL, VFSIOC_MOUNT_BYROLE: macOS' vfs_mount_rosv_data, enabled for iOS in vfs_syscalls.c below),
++	 * from a kernel thread (package/RamRootProbe.c ram_data_mount_by_role).
++	 * ram-data-dev=<bsd name> mounts a device node instead. No panic on failure: the page shows what was tried. */
++	{
++		unsigned ram_data = 0;
++		if (PE_parse_boot_argn("ram-data", &ram_data, sizeof(ram_data)) && ram_data) {
++			char dev[40] = "", device_path[64], line[128];
++			int ram_data_error;
++			int ram_data_uuid = PE_parse_boot_arg_str("ram-data-uuid", dev, sizeof(dev)) && dev[0];
++			if (ram_data_uuid) {
++				/* ruan: the Data container's volume on NativeRamBlock's IOMedia (build-ram-root-probe.py), found by
++				 * its APFS volume UUID once APFS has published it; up to 20 s. */
++				extern int native_ram_block_volume_device(const char *, dev_t *, char *, size_t);
++				extern void IOSleep(unsigned int);
++				dev_t volume = NODEV;
++				strlcpy(device_path, "RamBlock volume (not found)", sizeof(device_path));
++				for (int wait = 0; wait < 200 &&
++				    !native_ram_block_volume_device(dev, &volume, device_path, sizeof(device_path)); wait++) {
++					IOSleep(100);
++				}
++			} else if (PE_parse_boot_arg_str("ram-data-dev", dev, sizeof(dev)) && dev[0]) {
++				snprintf(device_path, sizeof(device_path), "/dev/%s", dev);
++			}
++			if (ram_data_uuid || dev[0]) {
++				uint8_t payload[0x150] = {0};
++				user64_addr_t spec = (user_addr_t)scratch_addr + 0x160;
++				uint16_t mode = 1;
++				uint32_t anonymous_owner = 99;
++				memcpy(payload, &spec, sizeof(spec));
++				memcpy(payload + 16, &mode, sizeof(mode));
++				memcpy(payload + 0x144, &anonymous_owner, sizeof(anonymous_owner));
++				memcpy(payload + 0x148, &anonymous_owner, sizeof(anonymous_owner));
++				struct mount_args request = {.type = (user_addr_t)scratch_addr + 0x100,
++					                     .path = (user_addr_t)scratch_addr + 0x120, .flags = MNT_NOSUID | MNT_NODEV,
++					                     .data = (user_addr_t)scratch_addr + 0x200};
++				int32_t mount_result = 0;
++				ram_data_error = copyout("apfs", request.type, 5);
++				if (!ram_data_error) ram_data_error = copyout("/private/var", request.path, 13);
++				if (!ram_data_error) ram_data_error = copyout(device_path, spec, strlen(device_path) + 1);
++				if (!ram_data_error) ram_data_error = copyout(payload, request.data, sizeof(payload));
++				if (!ram_data_error) ram_data_error = mount(p, &request, &mount_result);
++			} else {
++				/* APFS' handle_mount_by_role refuses any caller but the kernel ("Can only be called from kernel",
++				 * error 45, aks2 2026-11-14): this runs in PID 1, so package/RamRootProbe.c mounts from a kernel thread. */
++				extern int ram_data_mount_by_role(void);
++				strlcpy(device_path, "role Data of / (kernel thread)", sizeof(device_path));
++				ram_data_error = ram_data_mount_by_role();
++			}
++			vnode_t var = NULLVP;
++			const char *from = "-";
++			if (!ram_data_error && !vnode_lookup("/private/var", 0, &var, vfs_context_kernel())) {
++				from = vfs_statfs(vnode_mount(var))->f_mntfromname;
++			}
++			snprintf(line, sizeof(line), "ram-data: %s on /private/var rw: error %d, mounted from %s", device_path,
++			    ram_data_error, from);
++			if (var) vnode_put(var);
++			printf("%s\n", line);
++			boot_progress_stage(line);
++		}
++	}
+ #if CONFIG_MEMORYSTATUS
+ 	(void) memorystatus_init_at_boot_snapshot();
+ #endif /* CONFIG_MEMORYSTATUS */
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -1499,7 +1499,7 @@
+ 		error = VFS_IOCTL(mp, VFSIOC_MOUNT_SNAPSHOT,
+ 		    (caddr_t)fsmountargs, 0, ctx);
+ 	} else if (internal_flags & KERNEL_MOUNT_DATAVOL) {
+-#if CONFIG_ROSV_STARTUP
++#if CONFIG_ROSV_STARTUP || !XNU_TARGET_OS_OSX /* ruan: the RAM root's Data volume by role (ruan-ram-data-mount.patch) */
+ 		struct mount *origin_mp = (struct mount*)fsmountargs;
+ 		fs_role_mount_args_t frma = {origin_mp, VFS_DATA_ROLE};
+ 		error = VFS_IOCTL(mp, VFSIOC_MOUNT_BYROLE, (caddr_t)&frma, 0, ctx);

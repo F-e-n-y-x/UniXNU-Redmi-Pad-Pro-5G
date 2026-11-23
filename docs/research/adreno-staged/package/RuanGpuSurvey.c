@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Stage S0 of the ruan Adreno 710 bring-up (gpu-prep/adreno/PLAN.md): a READ-ONLY look at the GPU clock controller's power
 // domains, the first thing amethyst's GpuPowerProbe read (modes 1-3) before it powered anything. Runs only with
-// ruan-gpu-survey=1. No writes anywhere. The addresses are the live DT's (macOS/hardware/private/ruan-live.dts):
+// ruan-gpu-survey=1. No writes anywhere. The addresses are the live DT's (macOS/docs/hardware/private/ruan-live.dts):
 //   clock-controller@3d90000 "qcom,parrot-gpucc" reg 0x3d90000+0xa000           (dts:6663-6665)
 //   qcom,gdsc@3d99108 gpu_cc_cx_gdsc, qcom,gdsc@3d9905c gpu_cc_gx_gdsc          (dts:12205-12252)
 //   syscon@3d9953c/3d99504/3d99058/3d99358/3d9958c (the GDSCs' hw-ctrl/collapse/retention cells, same block)
