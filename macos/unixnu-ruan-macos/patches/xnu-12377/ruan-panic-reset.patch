@@ -1,0 +1,54 @@
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -1366,10 +1366,41 @@
+ 	__builtin_unreachable();
+ }
+ 
++/*
++ * ruan bring-up: after a panic, wait ~15 s (time to photograph the screen), then PSCI SYSTEM_RESET. RuanMacUfs.cpp writes
++ * "bootloader" into the PMIC reboot-reason cell at boot, so the reset lands in fastboot. One SMC, no allocation, safe in panic
++ * context. ruan-panic-fastboot=0 keeps the old spin; another value is the wait in seconds.
++ */
++static void
++ruan_panic_reset(void)
++{
++	unsigned wait_s = 15;
++	if (PE_parse_boot_argn("ruan-panic-fastboot", &wait_s, sizeof(wait_s)) && wait_s == 0) {
++		return;
++	}
++	uint64_t freq;
++	__asm__ volatile ("mrs %0, cntfrq_el0" : "=r"(freq));
++	if (freq == 0) {
++		freq = 24000000;
++	}
++	uint64_t start;
++	__asm__ volatile ("isb; mrs %0, cntpct_el0" : "=r"(start));
++	for (;;) {
++		uint64_t now;
++		__asm__ volatile ("isb; mrs %0, cntpct_el0" : "=r"(now));
++		if (now - start >= freq * wait_s) {
++			break;
++		}
++	}
++	register uint64_t x0 __asm__("x0") = 0x84000009ULL;   /* PSCI SYSTEM_RESET */
++	__asm__ volatile ("smc #0" : "+r"(x0) : : "x1", "x2", "x3", "memory");
++}
++
+ /* We rely on this symbol being visible in the debugger for triage automation */
+ void __attribute__((noinline, optnone))
+ panic_spin_forever(void)
+ {
++	ruan_panic_reset();
+ 	for (;;) {
+ #if defined(__arm__) || defined(__arm64__)
+ 		/* On arm32, which doesn't have a WFE timeout, this may not return.  But that should be OK on this path. */
+@@ -1390,6 +1421,9 @@
+ static void
+ kdp_machine_reboot_type(unsigned int type, uint64_t debugger_flags)
+ {
++	if (type == kPEPanicRestartCPU || type == kPEHangCPU) {
++		ruan_panic_reset();   /* the platform restart does nothing on ruan */
++	}
+ 	if ((type == kPEPanicRestartCPU) && (debugger_flags & DEBUGGER_OPTION_SKIP_PANICEND_CALLOUTS)) {
+ 		PEHaltRestart(kPEPanicRestartCPUNoCallouts);
+ 	} else {

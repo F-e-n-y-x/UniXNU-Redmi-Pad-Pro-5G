@@ -1,0 +1,55 @@
+--- a/osfmk/vm/vm_shared_region.c
++++ b/osfmk/vm/vm_shared_region.c
+@@ -95,6 +95,17 @@
+ 
+ /* trace level, output is sent to the system log file */
+ int shared_region_trace_level = SHARED_REGION_TRACE_ERROR_LVL;
++/* ruan bring-up: ruan-srtrace=N logs shared-region mappings, slides and the first N slid pointers (macOS arm64e cache on arm64). */
++#include <pexpert/pexpert.h>
++static int ruan_srtrace = -1;
++static int
++ruan_srtrace_on(void)
++{
++	if (ruan_srtrace < 0 && !PE_parse_boot_argn("ruan-srtrace", &ruan_srtrace, sizeof(ruan_srtrace))) {
++		ruan_srtrace = 0;
++	}
++	return ruan_srtrace;
++}
+ 
+ /* should local (non-chroot) shared regions persist when no task uses them ? */
+ int shared_region_persistence = 0;      /* no by default */
+@@ -1764,6 +1775,11 @@
+ 				__IGNORE_WCASTALIGN(map_port = (ipc_port_t) file_object->pager);
+ 			}
+ 
++			if (ruan_srtrace_on()) {
++				printf("ruan-sr: map[%d] addr 0x%llx size 0x%llx off 0x%llx maxprot 0x%x initprot 0x%x slide_size 0x%llx\n", i,
++				    (long long)mappings[i].sms_address, (long long)mappings[i].sms_size, (long long)mappings[i].sms_file_offset,
++				    mappings[i].sms_max_prot, mappings[i].sms_init_prot, (long long)mappings[i].sms_slide_size);
++			}
+ 			/*
+ 			 * Remember which mappings need sliding.
+ 			 */
+@@ -3572,6 +3588,11 @@
+ 			}
+ #else /* ruan: plain arm64 kernel: the slid auth pointer is stored unsigned (it was never written, so the cache kept raw fixups) */
+ 			memcpy(rebaseLocation, &value, sizeof(value));
++			if (ruan_srtrace_on() > 0) {
++				ruan_srtrace--;
++				printf("ruan-sr: v5 auth 0x%llx -> 0x%llx (page 0x%llx)\n", (long long)(rebaseLocation - page_content),
++				    (long long)value, (long long)uservaddr);
++			}
+ #endif /* __has_feature(ptrauth_calls) */
+ 		} else {
+ 			// the value already has the correct low bits, so just add in the high8 if it exists
+@@ -3994,6 +4015,10 @@
+ 		("vm_shared_region_slide: -> slide %#x, entry_start %#llx, entry_size %#llx, slide_start %#llx, slide_size %#llx\n",
+ 		slide, entry_start_address, entry_size, slide_start, slide_size));
+ 
++	if (ruan_srtrace_on()) {
++		printf("ruan-sr: slide 0x%x entry 0x%llx+0x%llx slide_info 0x%llx+0x%llx prot 0x%x\n", slide, (long long)entry_start_address,
++		    (long long)entry_size, (long long)slide_start, (long long)slide_size, prot);
++	}
+ 	sr = vm_shared_region_get(current_task());
+ 	if (sr == NULL) {
+ 		/*

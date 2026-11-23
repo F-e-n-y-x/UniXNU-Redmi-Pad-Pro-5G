@@ -1,0 +1,15 @@
+--- a/osfmk/vm/vm_shared_region.c
++++ b/osfmk/vm/vm_shared_region.c
+@@ -3679,6 +3679,12 @@
+ 				} else {
+ 					memcpy(rebaseLocation, &value, sizeof(value));
+ 				}
++#else /* ruan: plain arm64 kernel (4 KiB parts): store the slid auth pointer unsigned (UFS boot 8: never stored before) */
++				memcpy(rebaseLocation, &value, sizeof(value));
++				if (ruan_srtrace_on() > 0) {
++					ruan_srtrace--;
++					printf("ruan-sr: part auth -> 0x%llx\n", (long long)value);
++				}
+ #endif /* __has_feature(ptrauth_calls) */
+ 			} else {
+ 				value += high8;

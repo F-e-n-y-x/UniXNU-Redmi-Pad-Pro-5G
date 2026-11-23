@@ -1,0 +1,20 @@
+--- a/osfmk/vm/vm_shared_region.c
++++ b/osfmk/vm/vm_shared_region.c
+@@ -3349,6 +3349,8 @@
+ 			} else {
+ 				memcpy(rebaseLocation, &value, sizeof(value));
+ 			}
++#else /* ruan: plain arm64 kernel: the slid auth pointer is stored unsigned (it was never written, so the cache kept raw fixups) */
++			memcpy(rebaseLocation, &value, sizeof(value));
+ #endif /* __has_feature(ptrauth_calls) */
+ 		} else {
+ 			// The new value for a rebase is the low 51-bits of the threaded value plus the slide.
+@@ -3568,6 +3570,8 @@
+ 			} else {
+ 				memcpy(rebaseLocation, &value, sizeof(value));
+ 			}
++#else /* ruan: plain arm64 kernel: the slid auth pointer is stored unsigned (it was never written, so the cache kept raw fixups) */
++			memcpy(rebaseLocation, &value, sizeof(value));
+ #endif /* __has_feature(ptrauth_calls) */
+ 		} else {
+ 			// the value already has the correct low bits, so just add in the high8 if it exists

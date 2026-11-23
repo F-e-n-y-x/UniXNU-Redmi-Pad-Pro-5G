@@ -15,3 +15,4 @@ tree at `/root/unixnu-work` (on this PC a symlink to `macOS/host-work/`) (`W=` a
 | `args-current.txt` | The boot args `cycle-args.sh` starts from (the 2026-11-21 set: 60 Hz, Wi-Fi stage 5, no Bluetooth/video surveys). |
 | `run-last-good.sh` | How the last stable image (`rbu188u`) was made: kernel payload on the `rbu187` UFS root. |
 | `export-core-patches.sh U OUT` | Save a UniXNU checkout's local changes (superproject + submodules, untracked files included) as patches for `apply.sh`. |
+| `mount-host-work.sh` | **Run after each PC start.** Mounts `host-work/apple-trees.ext4` and bind-mounts `host-work` at `/root/unixnu-work` (XNU builds fail on the space in the project path). |

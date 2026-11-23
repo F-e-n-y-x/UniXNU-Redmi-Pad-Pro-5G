@@ -1,0 +1,16 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -6287,6 +6287,13 @@
+ 	}
+ 
+ 	if (__improbable((v < pmap->min) || (v >= pmap->max) || (v < pt_attr_pagezero_size(pt_attr)))) {
++		if (pmap != kernel_pmap) {
++			/* ruan bring-up: log and refuse instead of panicking (macOS UFS boot 9), so the faulting process and its address show up. */
++			printf("ruan: %s: illegal VA 0x%llx in user pmap %p (min 0x%llx max 0x%llx pagezero 0x%llx) pid %d\n", __func__,
++			    (unsigned long long)v, pmap, (unsigned long long)pmap->min, (unsigned long long)pmap->max,
++			    (unsigned long long)pt_attr_pagezero_size(pt_attr), task_pid(current_task()));
++			return KERN_INVALID_ADDRESS;
++		}
+ 		panic("%s: attempt to map illegal VA 0x%llx in pmap %p", __func__, (unsigned long long)v, pmap);
+ 	}
+ 

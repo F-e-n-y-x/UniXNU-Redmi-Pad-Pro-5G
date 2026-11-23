@@ -40,6 +40,12 @@ extern "C" volatile uint32_t ruan_touch_maxfingers __attribute__((weak_import));
 extern "C" volatile uint32_t ruan_touch_lastmulti[4] __attribute__((weak_import));
 extern "C" volatile int32_t ruan_panel120_stats[32] __attribute__((weak_import));   // RuanPanel120.c, USB `panel120`   // RuanBacklight.cpp, the second SY7758
 
+// ruan macOS: PAC trap emulator counters (ruan-pac-emulator.patch); weak, absent on iPadOS kernels.
+struct dlisa_pac_count { int pid; uint64_t count; };
+struct dlisa_pac_pc { int pid; uint64_t pc; uint64_t count; };
+extern "C" __attribute__((weak_import)) struct dlisa_pac_count dlisa_pac_counts[8];
+extern "C" __attribute__((weak_import)) struct dlisa_pac_pc dlisa_pac_pcs[32];
+extern "C" __attribute__((weak_import)) uint64_t dlisa_pac_total;
 extern "C" {
 #include "SmmuBypass.h"
 #include "RuanBattery.h"
@@ -640,6 +646,19 @@ static void handleCommand(TerminalSession &s, const char *raw) {
         s.reply.writeStr(buf);
         snprintf(buf, sizeof(buf), "[usb] %s\r\n[usb] %s\r\n", gUsbHudLine0, gUsbHudLine1);
         s.reply.writeStr(buf);
+    } else if (strEq(raw, "pac")) {
+        // ruan macOS: the PAC trap emulator's counters (patches/xnu-12377/ruan-pac-emulator.patch): total, per task, top PCs.
+        snprintf(buf, sizeof(buf), "[usb] PAC total=%llu\r\n", &dlisa_pac_total ? (unsigned long long)dlisa_pac_total : 0ULL);
+        s.reply.writeStr(buf);
+        if (&dlisa_pac_counts) for (unsigned i = 0; i < 8; i++) if (dlisa_pac_counts[i].count) {
+            snprintf(buf, sizeof(buf), "[usb] PAC pid=%d count=%llu\r\n", dlisa_pac_counts[i].pid, (unsigned long long)dlisa_pac_counts[i].count);
+            s.reply.writeStr(buf);
+        }
+        if (&dlisa_pac_pcs) for (unsigned i = 0; i < 32; i++) if (dlisa_pac_pcs[i].count) {
+            snprintf(buf, sizeof(buf), "[usb] PAC pc pid=%d pc=0x%llx count=%llu\r\n", dlisa_pac_pcs[i].pid,
+                     (unsigned long long)dlisa_pac_pcs[i].pc, (unsigned long long)dlisa_pac_pcs[i].count);
+            s.reply.writeStr(buf);
+        }
     } else if (strEq(raw, "bootargs")) {
         snprintf(buf, sizeof(buf), "[usb] bootargs=%s\r\n", PE_boot_args());
         s.reply.writeStr(buf);

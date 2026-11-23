@@ -67,8 +67,8 @@ bool native_adreno_fences_detail(uint32_t *, uint32_t *, uint32_t *) { return fa
 int native_gpu_trace_enabled(void) { return 0; }
 void native_gpu_trace_record(uint32_t, uint32_t, const uint64_t *, uint32_t) {}
 // No NativeUfs DPU window (dpu-scanout stays 0): a zero state and a mapper that maps nothing decline direct scanout.
-volatile uint32_t native_ufs_dpu_state;
-uint32_t native_ufs_dpu_map(unsigned, const uint64_t *, unsigned) { return 0; }
+__attribute__((weak)) volatile uint32_t native_ufs_dpu_state;
+__attribute__((weak)) uint32_t native_ufs_dpu_map(unsigned, const uint64_t *, unsigned) { return 0; }
 
 // The compositor's IOSurface stride field can hold pixels while the driver compares it with width*4 (UniXNU-alioth
 // LinkStubs.c): take it as pixels when the allocation and the row count prove it. The raw getter is bound by
