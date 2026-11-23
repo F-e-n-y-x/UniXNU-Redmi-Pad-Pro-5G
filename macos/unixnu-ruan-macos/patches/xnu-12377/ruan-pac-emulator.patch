@@ -1,0 +1,410 @@
+diff --git a/osfmk/arm64/pac_emulate.h b/osfmk/arm64/pac_emulate.h
+new file mode 100644
+--- /dev/null
++++ b/osfmk/arm64/pac_emulate.h
+@@ -0,0 +1,49 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * Emulate the arm64e instructions that have no 4-byte replacement, for a CPU
++ * without pointer authentication. These are the traps pac_rewrite()/insn.py
++ * leaves behind (PAC_REWRITE_TRAP): the undefined-instruction handler calls
++ * pac_emulate() for them. Phase 1's scan of the real iOS 26.5.2 cache found
++ * exactly three kinds across the whole shared cache:
++ *
++ *   LDRAA / LDRAB  authenticated load, offset outside the in-place LDUR/LDR
++ *                  window (W=0 & offset < -256, or W=1 & offset not in
++ *                  [-256,255]); the pager rewrites the rest.
++ *   FJCVTZS        FEAT_JSCVT double -> int32 with JavaScript rounding; the
++ *                  A78 lacks the feature.
++ *
++ * In the rewritten world no pointer is ever signed (every PAC* became a NOP),
++ * so authentication is the identity: LDRAA/LDRAB are a plain base+offset load.
++ *
++ * The core is pure and host-testable (test_pac_emulate.c): it touches no XNU
++ * types and reads memory only through a caller-supplied callback, so the kernel
++ * can route the load through a faulting-safe path and the test through a buffer.
++ */
++#ifndef PAC_EMULATE_H
++#define PAC_EMULATE_H
++
++#include <stdbool.h>
++#include <stdint.h>
++
++enum pac_emulate_result {
++	PAC_EMULATE_UNHANDLED = 0,	/* not one of the instructions we emulate; leave the trap alone */
++	PAC_EMULATE_OK = 1,		/* emulated; PC already advanced past it */
++	PAC_EMULATE_FAULT = 2,		/* the memory access faulted; deliver the original fault */
++};
++
++struct pac_emulate_ctx {
++	uint64_t x[31];		/* X0..X30 */
++	uint64_t sp;		/* current stack pointer (Rn==31 means SP for LDRAA/LDRAB) */
++	uint64_t pc;		/* the trapping instruction's address; advanced by 4 on success */
++	uint64_t d[32];		/* V0..V31, low 64 bits: the double source for FJCVTZS */
++	uint32_t nzcv;		/* PSTATE flags in bits 31..28 (N,Z,C,V); FJCVTZS rewrites them */
++
++	/* Read 8 bytes at addr. Returns 0 on success (value in *out), non-zero to fault. */
++	int (*load64)(void *mem_ctx, uint64_t addr, uint64_t *out);
++	void *mem_ctx;
++};
++
++/* Emulate one instruction. On PAC_EMULATE_OK the context (registers, flags, pc) is updated. */
++enum pac_emulate_result pac_emulate(uint32_t insn, struct pac_emulate_ctx *ctx);
++
++#endif /* PAC_EMULATE_H */
+
+diff --git a/osfmk/arm64/pac_emulate.c b/osfmk/arm64/pac_emulate.c
+new file mode 100644
+--- /dev/null
++++ b/osfmk/arm64/pac_emulate.c
+@@ -0,0 +1,126 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * Emulate LDRAA/LDRAB and FJCVTZS for a CPU without pointer authentication.
++ * See pac_emulate.h. No floating point is used: FJCVTZS decodes the IEEE-754
++ * double by its integer fields, so this is safe to run in the kernel (which
++ * does not save/restore the FPU on its own paths) and identical on the host.
++ *
++ * The decode masks match tools/pacstrip/insn.py and kernel/pacstrip/pac_rewrite.c:
++ *   LDRAA/LDRAB  mask 0xFF200400  value 0xF8200400
++ *   FJCVTZS      mask 0xFFFFFC00  value 0x1E7E0000
++ */
++#include "pac_emulate.h"
++
++#define PAC_NZCV_Z (1u << 30)	/* PSTATE.Z within the NZCV field (bits 31..28 = N,Z,C,V) */
++
++/* LDRAA/LDRAB: base in Xn (or SP for n==31), authenticated (identity here) + scaled offset. */
++static enum pac_emulate_result
++emulate_ldra(uint32_t insn, struct pac_emulate_ctx *ctx)
++{
++	unsigned rt = insn & 0x1F;
++	unsigned rn = insn >> 5 & 0x1F;
++	unsigned writeback = insn >> 11 & 1;
++	/* 10-bit signed offset S:imm9, scaled by 8 */
++	int32_t raw = (int32_t)(((insn >> 22 & 1) << 9) | (insn >> 12 & 0x1FF));
++	int32_t offset = (raw & 0x200 ? raw - 0x400 : raw) * 8;
++
++	uint64_t base = rn == 31 ? ctx->sp : ctx->x[rn];
++	uint64_t address = base + (int64_t)offset;
++
++	uint64_t value;
++	if (ctx->load64(ctx->mem_ctx, address, &value) != 0) {
++		return PAC_EMULATE_FAULT;
++	}
++
++	if (rt != 31) {
++		ctx->x[rt] = value;
++	}
++	if (writeback) {
++		if (rn == 31) {
++			ctx->sp = address;
++		} else {
++			ctx->x[rn] = address;
++		}
++	}
++	ctx->pc += 4;
++	return PAC_EMULATE_OK;
++}
++
++/* FJCVTZS: double in Dn -> signed int32 in Wd (round toward zero, modulo 2^32);
++ * PSTATE flags become 0:Z:00, Z=1 iff the value was an exact in-range integer. */
++static enum pac_emulate_result
++emulate_fjcvtzs(uint32_t insn, struct pac_emulate_ctx *ctx)
++{
++	unsigned rd = insn & 0x1F;
++	unsigned rn = insn >> 5 & 0x1F;
++	uint64_t bits = ctx->d[rn];
++
++	uint64_t sign = bits >> 63;
++	uint32_t exp = (uint32_t)(bits >> 52 & 0x7FF);
++	uint64_t mant = bits & 0xFFFFFFFFFFFFFULL;
++
++	uint32_t result;	/* the 32-bit value written to Wd */
++	int exact;
++
++	if (exp == 0x7FF) {			/* NaN or infinity */
++		result = 0;
++		exact = 0;
++	} else if (exp == 0 && mant == 0) {	/* +0 or -0 */
++		result = 0;
++		exact = (sign == 0);		/* -0 reports inexact (safe: the slow path still yields 0) */
++	} else {
++		uint64_t significand;
++		int eff_e;			/* value = significand * 2^eff_e */
++		if (exp == 0) {			/* subnormal */
++			significand = mant;
++			eff_e = -1074;
++		} else {			/* normal: implicit leading 1 */
++			significand = (1ULL << 52) | mant;
++			eff_e = (int)exp - 1023 - 52;
++		}
++
++		uint64_t magnitude;		/* trunc(|value|), low 64 bits suffice for the mod-2^32 result */
++		int had_frac;
++		int in_range;
++		if (eff_e >= 0) {
++			/* |value| >= 2^52, always out of int32 range; low 32 bits of the shift are the result */
++			magnitude = eff_e >= 64 ? 0 : significand << eff_e;
++			had_frac = 0;
++			in_range = 0;
++		} else {
++			int shift = -eff_e;
++			if (shift >= 64) {
++				magnitude = 0;
++				had_frac = significand != 0;
++			} else {
++				magnitude = significand >> shift;
++				had_frac = (significand & ((1ULL << shift) - 1)) != 0;
++			}
++			uint64_t limit = sign ? 0x80000000ULL : 0x7FFFFFFFULL;
++			in_range = magnitude <= limit;
++		}
++
++		uint32_t low = (uint32_t)magnitude;
++		result = sign ? (uint32_t)(-(int32_t)low) : low;	/* two's complement, modulo 2^32 */
++		exact = !had_frac && in_range;
++	}
++
++	if (rd != 31) {
++		ctx->x[rd] = result;		/* writing Wd zero-extends into Xd */
++	}
++	ctx->nzcv = exact ? PAC_NZCV_Z : 0;	/* FJCVTZS sets NZCV to 0:Z:00, so N=C=V=0 */
++	ctx->pc += 4;
++	return PAC_EMULATE_OK;
++}
++
++enum pac_emulate_result
++pac_emulate(uint32_t insn, struct pac_emulate_ctx *ctx)
++{
++	if ((insn & 0xFF200400u) == 0xF8200400u) {
++		return emulate_ldra(insn, ctx);
++	}
++	if ((insn & 0xFFFFFC00u) == 0x1E7E0000u) {
++		return emulate_fjcvtzs(insn, ctx);
++	}
++	return PAC_EMULATE_UNHANDLED;
++}
+
+diff --git a/osfmk/arm64/pac_trap.h b/osfmk/arm64/pac_trap.h
+new file mode 100644
+--- /dev/null
++++ b/osfmk/arm64/pac_trap.h
+@@ -0,0 +1,18 @@
++/* SPDX-License-Identifier: MIT */
++/* Kernel entry point for EL0 arm64e instruction emulation (see pac_trap.c). */
++#ifndef PAC_TRAP_H
++#define PAC_TRAP_H
++
++#include <stdbool.h>
++#include <stdint.h>
++#include <mach/arm/thread_status.h>	/* arm_saved_state_t */
++
++/*
++ * Called from handle_uncategorized() in osfmk/arm64/sleh.c for an EL0
++ * undefined-instruction trap. Returns true if the instruction was one of the
++ * arm64e forms the PAC-stripping pager cannot rewrite (LDRAA/LDRAB/FJCVTZS) and
++ * was emulated (the saved state is advanced); false to deliver the exception.
++ */
++bool pac_emulate_user_trap(arm_saved_state_t *state, uint32_t instr);
++
++#endif /* PAC_TRAP_H */
+
+diff --git a/osfmk/arm64/pac_trap.c b/osfmk/arm64/pac_trap.c
+new file mode 100644
+--- /dev/null
++++ b/osfmk/arm64/pac_trap.c
+@@ -0,0 +1,166 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * Kernel glue between XNU's EL0 undefined-instruction handler and pac_emulate().
++ *
++ * This file is compiled into osfmk and called from handle_uncategorized() in
++ * osfmk/arm64/sleh.c (see the darwin-lisa patch series). It marshals the trapped
++ * thread's saved register state into a struct pac_emulate_ctx, runs the pure
++ * emulator, and writes the result back. The emulator itself (pac_emulate.c) is
++ * host-tested; this file only moves registers.
++ *
++ * Reading Dn is safe here: EL0 synchronous exceptions spill the NEON block to
++ * thread->machine.uNeon via SPILL_REGISTERS before C code runs, so uNeon is the
++ * current FP state at trap time.
++ */
++#include <stdint.h>
++#include <stdbool.h>
++#include <kern/thread.h>
++#include <arm64/proc_reg.h>
++#include <mach/arm/thread_status.h>
++#include <vm/vm_map_xnu.h>	/* copyin() */
++
++#include <kern/processor.h>	/* darwin-lisa: dlisa_cpu_active_thread() */
++#include <kern/task.h>	/* darwin-lisa: task_pid() for the counts */
++
++#include "pac_emulate.h"
++#include "pac_trap.h"
++
++/*
++ * darwin-lisa: how many instructions this emulator ran, by task (pid): a process whose hot path still has PAC
++ * instructions traps on every one of them, and runs 10-100 times slower than it should. hakios.cpufreq.c prints
++ * these with the cpuload=N lines ("tl: pac").
++ */
++#define DLISA_PAC_TASKS 8
++struct dlisa_pac_count { int pid; uint64_t count; };
++struct dlisa_pac_count dlisa_pac_counts[DLISA_PAC_TASKS];
++uint64_t dlisa_pac_total;
++
++/* ... and by instruction address (pid, pc): which code still traps ("tl: pacpc") */
++#define DLISA_PAC_PCS 32
++struct dlisa_pac_pc { int pid; uint64_t pc; uint64_t count; };
++struct dlisa_pac_pc dlisa_pac_pcs[DLISA_PAC_PCS];
++
++static void
++dlisa_pac_note_pc(int pid, uint64_t pc)
++{
++	unsigned least = 0;
++
++	for (unsigned i = 0; i < DLISA_PAC_PCS; i++) {
++		if (dlisa_pac_pcs[i].count != 0 && dlisa_pac_pcs[i].pid == pid && dlisa_pac_pcs[i].pc == pc) {
++			dlisa_pac_pcs[i].count++;
++			return;
++		}
++		if (dlisa_pac_pcs[i].count < dlisa_pac_pcs[least].count) {
++			least = i;
++		}
++	}
++	dlisa_pac_pcs[least].pid = pid;
++	dlisa_pac_pcs[least].pc = pc;
++	dlisa_pac_pcs[least].count = 1;
++}
++
++static void
++dlisa_pac_note(uint64_t pc)
++{
++	int pid = task_pid(current_task());
++	unsigned least = 0;
++
++	dlisa_pac_total++;
++	dlisa_pac_note_pc(pid, pc);
++	for (unsigned i = 0; i < DLISA_PAC_TASKS; i++) {
++		if (dlisa_pac_counts[i].pid == pid && dlisa_pac_counts[i].count != 0) {
++			dlisa_pac_counts[i].count++;
++			return;
++		}
++		if (dlisa_pac_counts[i].count < dlisa_pac_counts[least].count) {
++			least = i;
++		}
++	}
++	dlisa_pac_counts[least].pid = pid;
++	dlisa_pac_counts[least].count = 1;
++}
++
++/* darwin-lisa: the thread running on a processor, THREAD_NULL when it is idle (for hakios.cpufreq.c's "tl: busy";
++ * struct processor is osfmk's, the BSD side sees only its forward declaration) */
++thread_t dlisa_cpu_active_thread(unsigned cpu);
++
++thread_t
++dlisa_cpu_active_thread(unsigned cpu)
++{
++	processor_t p = cpu < MAX_CPUS ? processor_array[cpu] : PROCESSOR_NULL;
++	thread_t t;
++
++	if (p == PROCESSOR_NULL) {
++		return THREAD_NULL;
++	}
++	t = p->active_thread;
++	return t == p->idle_thread ? THREAD_NULL : t;
++}
++
++static int
++pac_trap_load64(void *mem_ctx, uint64_t addr, uint64_t *out)
++{
++	uint64_t value;
++	(void)mem_ctx;
++	if (copyin((user_addr_t)addr, &value, sizeof(value)) != 0) {
++		return -1;
++	}
++	*out = value;
++	return 0;
++}
++
++/*
++ * Try to emulate a trapping arm64e instruction for a 64-bit user thread.
++ * Returns true if it was emulated (state advanced); false to let XNU deliver
++ * the original EXC_BAD_INSTRUCTION.
++ */
++bool
++pac_emulate_user_trap(arm_saved_state_t *state, uint32_t instr)
++{
++	struct pac_emulate_ctx ctx;
++	enum pac_emulate_result result;
++	unsigned i;
++
++	if (PSR64_IS_KERNEL(get_saved_state_cpsr(state)) || !is_saved_state64(state)) {
++		return false;
++	}
++
++	for (i = 0; i < 31; i++) {
++		ctx.x[i] = get_saved_state_reg(state, i);
++	}
++	ctx.sp = get_saved_state_sp(state);
++	ctx.pc = get_saved_state_pc(state);
++	ctx.nzcv = get_saved_state_cpsr(state) & PSR64_NZCV_MASK;
++
++	/* FP source for FJCVTZS; LDRAA/LDRAB never read it. uNeon is NULL only for a
++	 * thread that has never used FP, which cannot be executing FJCVTZS. */
++	arm_neon_saved_state_t *neon = current_thread()->machine.uNeon;
++	if (neon != NULL) {
++		const arm_neon_saved_state64_t *ns = neon_state64(neon);
++		for (i = 0; i < 32; i++) {
++			ctx.d[i] = ns->v.d[i][0];	/* low 64 bits = Dn */
++		}
++	} else {
++		for (i = 0; i < 32; i++) {
++			ctx.d[i] = 0;
++		}
++	}
++
++	ctx.load64 = pac_trap_load64;
++	ctx.mem_ctx = NULL;
++
++	result = pac_emulate(instr, &ctx);
++	if (result != PAC_EMULATE_OK) {
++		return false;
++	}
++
++	for (i = 0; i < 31; i++) {
++		set_saved_state_reg(state, i, ctx.x[i]);
++	}
++	set_saved_state_sp(state, ctx.sp);
++	set_saved_state_pc(state, ctx.pc);
++	set_saved_state_cpsr(state,
++	    (get_saved_state_cpsr(state) & ~PSR64_NZCV_MASK) | (ctx.nzcv & PSR64_NZCV_MASK));
++	dlisa_pac_note(ctx.pc - 4);   /* (ctx.pc is past the instruction already) */
++	return true;
++}
+
+diff --git a/osfmk/conf/files.arm64 b/osfmk/conf/files.arm64
+--- a/osfmk/conf/files.arm64
++++ b/osfmk/conf/files.arm64
+@@ -129,3 +129,6 @@ osfmk/kern/ecc_init.c		standard
+ osfmk/kern/ecc_logging.c	optional config_ecc_logging
+ 
+ osfmk/kern/memory_error_logging.c	standard
++
++osfmk/arm64/pac_emulate.c	standard
++osfmk/arm64/pac_trap.c	standard
+
+
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1202,6 +1202,11 @@ handle_uncategorized(arm_saved_state_t *state)
+ 	uint32_t                   instr     = 0;
+ 
+ 	COPYIN(get_saved_state_pc(state), (char *)&instr, sizeof(instr));
++
++	extern bool pac_emulate_user_trap(arm_saved_state_t *state, uint32_t instr);
++	if (pac_emulate_user_trap(state, instr)) {
++		return;
++	}
+ 
+ #if CONFIG_DTRACE
+

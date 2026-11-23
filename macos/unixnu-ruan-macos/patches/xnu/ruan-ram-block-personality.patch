@@ -1,0 +1,16 @@
+ruan: the NativeRamBlock personality without XNU_NATIVE_RAM_BLOCK
+
+scripts/build-ram-root-probe.py links NativeRamBlock (UniXNU component RamBlock) into every ruan kernel for the RAM root's
+Data container. build-xnu-4k-baseline.sh sets XNU_NATIVE_RAM_BLOCK only with NativeAES (ruan uses SoftwareAES) and then
+also turns on the owner Data mount of kern_exec.c, so the personality is enabled here alone. Without ram-data-split the
+driver's start fails (no disk), so nothing changes then.
+
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -84,4 +84,4 @@
+     "   }"
+ #endif
+-#if defined(XNU_NATIVE_RAM_BLOCK) && XNU_NATIVE_RAM_BLOCK
++#if 1 /* ruan: always (ruan-ram-block-personality.patch) */
+     "   ,{"
+     "     'IOClass'         = NativeRamBlock;"

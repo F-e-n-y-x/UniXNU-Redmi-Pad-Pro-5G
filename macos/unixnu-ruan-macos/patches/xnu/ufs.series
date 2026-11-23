@@ -1,0 +1,7 @@
+# UFS root variant only (scripts/make-ufs-board.sh appends this series after series): root = the flashed "unixnu" partition.
+# The read-only, unverified UFS root (native-ufs-allow-unverified=1), as dizi.
+ruan-ufs-unverified-root.patch
+# SystemOS cryptex as a read-only union over the UFS root before launchd, and /chosen/boot-manifest-hash from ShengUfs, as dizi.
+ruan-ufs-systemos-union.patch
+# Data: not dizi-data-volume.patch. Data stays the USB-sent RAM container, mounted by ruan-ram-data-mount.patch
+# (ram-data=1 ram-data-uuid=) through NativeRamBlock (ram-data-split), the path the RAM root already proved.

@@ -1,7 +1,7 @@
 # Host helpers (the build PC)
 
 The scripts used to build, flash and RAM-boot the iPadOS images, as they run on the maintainers' PC. They assume the work
-tree at `/root/unixnu-work` (`W=` at the top of each: change it to yours) with `UniXNU` and `UniXNU-ruan` (this repo's
+tree at `/root/unixnu-work` (on this PC a symlink to `macOS/host-work/`) (`W=` at the top of each: change it to yours) with `UniXNU` and `UniXNU-ruan` (this repo's
 `unixnu-ruan/`) checked out. See [../../docs/INSTALL.md](../../docs/INSTALL.md) for the full flow.
 
 | Script | What |
@@ -12,3 +12,6 @@ tree at `/root/unixnu-work` (`W=` at the top of each: change it to yours) with `
 | `cycle-args.sh TAG "args"` | Kernel payload with extra boot args on the current root, then RAM-boot (no flash). `UFS_ROOT=` picks the root, `KR=1` rebuilds the kernel. |
 | `boot-local.sh TAG` | RAM-boot a built payload (`fastboot boot`), switching the tablet to fastboot over USB or adb first. Never flashes. |
 | `oslogx/` | Source of the root-overlay wrapper in the `IOMFB_FDR_Loader` launchd slot: runs Apple's loader (`.real`), the unified-log export and, with the Wi-Fi build, the supplicant launcher (`unixnu-ruan/scripts/RuanWifiLauncher.c`). Build it with the iOS SDK and sign with ldid; the overlay itself holds Apple binaries and is not distributed. |
+| `args-current.txt` | The boot args `cycle-args.sh` starts from (the 2026-11-21 set: 60 Hz, Wi-Fi stage 5, no Bluetooth/video surveys). |
+| `run-last-good.sh` | How the last stable image (`rbu188u`) was made: kernel payload on the `rbu187` UFS root. |
+| `export-core-patches.sh U OUT` | Save a UniXNU checkout's local changes (superproject + submodules, untracked files included) as patches for `apply.sh`. |

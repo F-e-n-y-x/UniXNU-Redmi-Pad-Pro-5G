@@ -1,0 +1,16 @@
+--- a/osfmk/kern/recount.c
++++ b/osfmk/kern/recount.c
+@@ -160,7 +160,12 @@
+ 	for (unsigned int i = 0; i < cpu_count; i++) {
+ 		cpu_kind_bits |= 1 << _topo_cpu_kinds[i];
+ 	}
+-	_recount_cpu_kind_count = __builtin_popcount(cpu_kind_bits);
++	/*
++	 * ruan: tracks are indexed by the kind itself (P = 0, E = 1), so size them up to the highest kind present, not by how
++	 * many kinds are present. With only E cores up (cpus=1 boots cpu0, a Cortex-A55) popcount gave one 24-byte track and
++	 * every E update wrote past it: "recount_track_cpu_kind: element modified after free" (tablet 2026-11-21).
++	 */
++	_recount_cpu_kind_count = cpu_kind_bits ? 32 - __builtin_clz(cpu_kind_bits) : 1;
+ 	assertf(_recount_cpu_kind_count <= RECOUNT_CPU_KIND_COUNT,
+ 	    "detected number of CPU kinds (%u) greater-than expected (%u), from bits 0x%x",
+ 	    _recount_cpu_kind_count, RECOUNT_CPU_KIND_COUNT, cpu_kind_bits);

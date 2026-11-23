@@ -1,0 +1,11 @@
+# Board patch series for ruan SM7435 on XNU 12377 (macOS 27)
+ruan-gunyah-no-cntp.patch
+ruan-pid1-dyld.patch
+ruan-launchd-normal-boot.patch
+ruan-keystore-probe.patch
+ruan-native-sandbox-grant-any.patch
+ruan-iomfb-method-counts.patch
+ruan-pac-emulator.patch
+ruan-arm64e-subtype-grade.patch
+ruan-usbdbg-early.patch
+ruan-recount-kind-index.patch
