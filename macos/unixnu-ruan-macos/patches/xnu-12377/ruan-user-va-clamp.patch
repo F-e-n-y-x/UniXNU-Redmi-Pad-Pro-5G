@@ -1,0 +1,17 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -12084,6 +12084,14 @@
+ 		panic("pmap_max_64bit_offset illegal option 0x%x", option);
+ 	}
+ 
++	/*
++	 * ruan (4 KiB pages, T0SZ_BOOT 26): user page tables cover 1 << PGTABLE_ADDR_BITS (256 GiB), but macOS maps ask for
++	 * MACH_VM_MAX_ADDRESS; vm_map then hands out VAs the pmap refuses ("illegal VA 0x7cc4000000 ... max 0x4000000000",
++	 * macOS UFS boot 10). Keep the map inside what the tables can hold.
++	 */
++	if (max_offset_ret > (1ULL << PGTABLE_ADDR_BITS)) {
++		max_offset_ret = 1ULL << PGTABLE_ADDR_BITS;
++	}
+ 	assert(max_offset_ret <= MACH_VM_MAX_ADDRESS);
+ 	if (option != ARM_PMAP_MAX_OFFSET_DEFAULT) {
+ 		assert(max_offset_ret >= min_max_offset);

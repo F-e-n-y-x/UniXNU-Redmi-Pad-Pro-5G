@@ -1,0 +1,12 @@
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -737,8 +737,7 @@
+ 	 * if the panic header pointer is bogus (e.g. someone stomped on it) then bail.
+ 	 */
+ 	if (!panic_info) {
+-		/* if this happens in development then blow up bigly */
+-		assert(panic_info);
++		/* ruan: no panic region from the bootloader (gPanicBase never set); returning keeps the first panic's message on screen. */
+ 		return;
+ 	}
+ 

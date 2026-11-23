@@ -9,3 +9,11 @@ ruan-pac-emulator.patch
 ruan-arm64e-subtype-grade.patch
 ruan-usbdbg-early.patch
 ruan-recount-kind-index.patch
+ruan-no-ctrr-chosen.patch
+ruan-panic-fastboot.patch
+ruan-dyld-pager-arm64e.patch
+ruan-dyld-pager-16k.patch
+vmwait-dyld-pager-source-release.patch
+ruan-shared-region-auth-store.patch
+ruan-darwin26-lockdown-sysctl.patch
+ruan-darwin26-spawnattr.patch

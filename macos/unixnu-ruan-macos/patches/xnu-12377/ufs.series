@@ -1,0 +1,13 @@
+# UFS-root variant (macos/tools/make-macos-ufs-board.sh)
+ruan-ufs-unverified-root.patch
+ruan-mac-ufs-start.patch
+ruan-sctrace.patch
+ruan-no-panicinfo-assert.patch
+ruan-uabort-log.patch
+ruan-srtrace.patch
+ruan-shared-region-part-auth-store.patch
+ruan-pmap-illegal-va-log.patch
+ruan-user-va-47bit.patch
+ruan-panic-reset.patch
+ruan-ubrk-log.patch
+ruan-all-tasks-user-ranges.patch

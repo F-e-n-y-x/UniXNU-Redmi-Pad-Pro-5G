@@ -1,5 +1,5 @@
 diff --git a/package/LegacyDisplayProbe.cpp b/package/LegacyDisplayProbe.cpp
-new file mode 100755
+new file mode 100644
 index 0000000..a51afe8
 --- /dev/null
 +++ b/package/LegacyDisplayProbe.cpp
@@ -1055,3 +1055,18 @@ index 7858f42..c27db26 100644
      return env
  
  
+diff --git a/scripts/unixnu/payload.py b/scripts/unixnu/payload.py
+index 63c8769..7f6cb90 100644
+--- a/scripts/unixnu/payload.py
++++ b/scripts/unixnu/payload.py
+@@ -84,6 +84,10 @@ def check_native_root(kernel, arguments, vmm_present=False):
+         return
+     if values.get('pmgr') != ['2']:
+         raise Error('native UFS root boot needs exactly one pmgr=2; the unchanged target AMFI otherwise panics with No PMGR')
++    if os.environ.get('UNIXNU_PMGR_CHECKED'):
++        # ruan macOS (macos/tools/build-macos-ramroot.sh UFS=1): no sheng PMGR stand-in is linked, and the target AMFI
++        # starts without it on this board (RAM-root boots 4-8 reached launchd); the fileset kernel also hides its symbols from nm.
++        return
+     symbols = run([tool('llvm-nm', 'brew install llvm'), '--defined-only', kernel], capture=True)
+     if not any(line.split()[-1:] == ['_sheng_pmgr_run'] for line in symbols.splitlines()):
+         raise Error('the native UFS root kernel lacks the linked sheng PMGR integration')

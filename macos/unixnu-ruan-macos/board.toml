@@ -203,3 +203,10 @@ chip_id = "6050"
 # compares this with P3; the OS profile's iPad7,1 value is P3. Merged key by key over the profile's [adt.product.string].
 [adt.product.string]
 artwork-display-gamut = "sRGB"
+
+# SIP for the bring-up root (over the macOS profile's lp-sip0 = 0): the root and its dyld shared cache are rebuilt (pacstrip,
+# ad-hoc signed), so the cache files carry no SF_RESTRICTED flag and the kernel refuses to map them into the shared region
+# ("vnode is not SIP-protected", vm_unix.c, UFS boot 3). 0x867 = untrusted kexts, unrestricted FS, task_for_pid, DTrace, NVRAM,
+# unauthenticated root: `csrutil disable` plus `authenticated-root disable`.
+[adt.chosen.asmb.u64]
+"lp-sip0" = 0x867

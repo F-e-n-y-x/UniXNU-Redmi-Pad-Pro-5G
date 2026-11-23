@@ -1,0 +1,23 @@
+--- a/osfmk/vm/vm_map.c
++++ b/osfmk/vm/vm_map.c
+@@ -22362,6 +22362,20 @@
+ #endif
+ 	data_range  = vm_map_range_random_uniform(1ull << 40,
+ 	        default_end, 0x7full << 40, offmask);
++	if (vm_map_max(map) <= default_end) {
++		/*
++		 * ruan (4 KiB pages, 38-bit user VA, pmap_max_64bit_offset clamp): the map ends at 256G, below the 97T data range,
++		 * so libmalloc's first reservation in it failed ("BUG IN LIBMALLOC: pointer range initial reservation failed",
++		 * macOS UFS boot 12). Use the top half of the map instead, 1G aligned: [max/2, max), clear of the shared region
++		 * (6G..~12G) and the commpage (63G..64G).
++		 */
++		data_range.min_address = (vm_map_max(map) / 2 + (1ull << 30) - 1) & ~((1ull << 30) - 1);
++		data_range.max_address = vm_map_max(map) & ~((1ull << 30) - 1);
++		default_end = data_range.min_address;   /* the default range ends where the data range starts (no guard gap) */
++		printf("ruan: vm_map_range_configure: data range 0x%llx..0x%llx (map max 0x%llx)\n",
++		    (unsigned long long)data_range.min_address, (unsigned long long)data_range.max_address,
++		    (unsigned long long)vm_map_max(map));
++	}
+ 
+ #else /* !XNU_PLATFORM_MacOSX */
+ 

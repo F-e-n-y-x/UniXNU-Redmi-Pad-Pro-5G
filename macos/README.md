@@ -1,7 +1,7 @@
 # macOS on Redmi Pad Pro 5G (ruan)
 
 A native macOS port for the tablet, on a CPU without pointer authentication (PAC). It reuses the iPadOS port's drivers
-(`../unixnu-ruan/`). **Status (2026-11-23): the kernel starts but panics early; nothing is on screen yet. Boot 4 is built and not run.**
+(`../unixnu-ruan/`). **Status (2026-11-24, UFS boot 17): root on UFS (`sda22`), kernel boots, launchd runs and spawns system daemons. The root is still the restore ramdisk; next is the full OS system volume.**
 
 ## The problem: no PAC
 
@@ -28,7 +28,11 @@ Details in [docs/first-boot.md](docs/first-boot.md). All boots are RAM-only (`fa
 | 1 | UniXNU menu, then `'UniXNU' returned: Load Error` | wrong file-type field in the kernel collection (fileset subtype) |
 | 2 | panic `arm_vm_init.c:1376` (contiguous-hint assert) | `use_contiguous_hint=0` in the board's kernel args |
 | 3 | panic `recount_track_cpu_kind: element modified after free` | `unixnu-ruan-macos/patches/xnu-12377/ruan-recount-kind-index.patch` |
-| 4 | **not run**: adds the USB debug console (`[ev]` progress, `[hb]` heartbeat) from early kernel init | |
+| 4 | through AMFI, trust caches, IOKit and BSD init; panic `machine_routines.c:3671 _unsafe_kernel_text_initialized` (USB debug never enumerated) | `ruan-no-ctrr-chosen.patch`: no `/chosen/kernel-ctrr-to-be-enabled` from iBoot |
+| 5 | root mounted from the RAM disk, `/sbin/launchd` exec'd, then AMFI killed it: rewritten binaries are "completely unsigned code" | test: `amfi_get_out_of_my_way=1` (boot 6); real fix: re-sign + trust cache |
+| 6 | AMFI panics on `cs_enforcement_disable` ("can't has cs_enforcement_disable boot-arg") | boot 7: only `amfi_get_out_of_my_way=1` |
+| 7 | same AMFI kill: the kernel can't load the stale Apple signature at all | `tools/adhoc-resign.py` + `rebuild-macos-root.py`: ad-hoc signatures, CDHashes in the trust cache |
+| 8 | **launchd runs**; dyld finds no shared cache, init exits, pmap panic | needs the 7.1 GB dyld cache: a UFS root (too big for RAM) |
 
 ## Folder
 

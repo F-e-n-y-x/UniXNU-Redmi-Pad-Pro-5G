@@ -1,0 +1,47 @@
+--- a/osfmk/vm/vm_dyld_pager.c
++++ b/osfmk/vm/vm_dyld_pager.c
+@@ -557,6 +557,27 @@
+ 	return KERN_SUCCESS;
+ }
+ 
++#if !defined(HAS_APPLE_PAC)
++/*
++ * ruan (plain arm64 kernel, no FEAT_PAuth): arm64e images still carry arm64e chained fixups. The PAC rewrite (pacstrip) turned
++ * every authenticate into a plain load/branch, so an auth pointer is just its target: store it unsigned, whatever the key.
++ * Without this the pager left arm64e pages raw ("unknown pointer_format") and launchd branched to a fixup word (UFS boot 6).
++ */
++static kern_return_t
++signPointer(
++	uint64_t         unsignedAddr,
++	__unused void    *loc,
++	__unused bool    addrDiv,
++	__unused uint16_t diversity,
++	__unused ptrauth_key key,
++	__unused dyld_pager_t pager,
++	uint64_t         *signedAddr)
++{
++	*signedAddr = unsignedAddr;
++	return KERN_SUCCESS;
++}
++#endif /* !defined(HAS_APPLE_PAC) */
++#if 1 /* ruan: was defined(HAS_APPLE_PAC); the PAC signPointer stays guarded below */
+ #if defined(HAS_APPLE_PAC)
+ /*
+  * Sign a pointer needed for fixups.
+@@ -602,6 +623,7 @@
+ 	}
+ 	return KERN_SUCCESS;
+ }
++#endif /* defined(HAS_APPLE_PAC) */
+ 
+ /*
+  * Apply fixups to a page used by a 64 bit process using pointer authentication.
+@@ -922,7 +944,7 @@
+ 	 * Route to the appropriate fixup routine
+ 	 */
+ 	switch (hdr->mwli_pointer_format) {
+-#if defined(HAS_APPLE_PAC)
++#if 1 /* ruan: arm64e formats also on the plain arm64 kernel (unsigned, see signPointer) */
+ 	case DYLD_CHAINED_PTR_ARM64E:
+ 		fixupPageAuth64(userVA, contents, pager, segInfo, pageIndex, false);
+ 		break;

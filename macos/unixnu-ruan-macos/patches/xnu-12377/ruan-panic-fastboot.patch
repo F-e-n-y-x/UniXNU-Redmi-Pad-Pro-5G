@@ -1,0 +1,21 @@
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -973,6 +973,18 @@
+ 	if (reboot) {
+ 		printf("MACH Reboot\n");
+ 		PEHaltRestart(kPERestartCPU);
++		/* ruan: the platform restart does nothing here (the panic screen stayed up). Restart into fastboot through the PMIC
++		 * reboot-reason cell and PSCI SYSTEM_RESET (package/BootReset.c; ruan-panic-fastboot=0 keeps the old halt). */
++		{
++			extern int boot_reset_bootloader(char *, unsigned) __attribute__((weak_import));
++			unsigned to_fastboot = 1;
++			char why[160];
++			PE_parse_boot_argn("ruan-panic-fastboot", &to_fastboot, sizeof(to_fastboot));
++			if (to_fastboot && &boot_reset_bootloader) {
++				boot_reset_bootloader(why, sizeof(why));
++				printf("ruan: restart into fastboot refused: %s\n", why);
++			}
++		}
+ 	} else {
+ 		printf("CPU halted\n");
+ 		PEHaltRestart(kPEHaltCPU);
