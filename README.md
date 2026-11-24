@@ -1,161 +1,162 @@
-<h1 align="center">iPadOS on Redmi Pad Pro 5G</h1>
+# macOS on Redmi Pad Pro 5G (ruan)
+
+A native macOS port for the tablet, on a CPU without pointer authentication (PAC). It reuses the iPadOS port's drivers
+([iPadOS port, `main` branch](https://github.com/F-e-n-y-x/UniXNU-Redmi-Pad-Pro-5G/tree/main)). This branch holds only the macOS port.
+
+**Status (2026-11-24, UFS boot 17):** macOS 27.3 (`26C5035r`) boots from the tablet's internal storage (`sda22`). The kernel, UFS
+root, dyld shared cache and launchd all work, and launchd spawns system daemons (`kernelmanagerd`, `syslogd`, `restored_external`).
+The root is still the **restore ramdisk** tree, so there is nothing to show yet. Next: build the root from the full macOS system volume.
 
 <p align="center">
-  <b>iPadOS 17.7.11 running natively on the Xiaomi Redmi Pad Pro 5G ("ruan")</b><br>
-  Snapdragon 7s Gen 2 (SM7435) · Adreno 710 GPU · built on <a href="https://github.com/UniXNU">UniXNU</a>
+  <img src="docs/img/ufs-launchd-console.jpg" alt="Kernel console on the tablet: dyld shared-region mappings and slides, then a launchd fault" width="45%"><br>
+  <sub>UFS boot 10: verbose console on the tablet's panel. dyld maps the 84-file shared cache (<code>ruan-sr</code> lines: every mapping and slide),
+  then launchd faults on an address above the 256 GiB user map. Fixed by the 47-bit user address space (boot 16).</sub>
 </p>
 
-<p align="center">
-  <img src="docs/img/usb-rbu172p-home.png" alt="Home screen" width="19%">
-  <img src="docs/img/usb-rbu172p-control-center.png" alt="Control Center with background blur" width="19%">
-  <img src="docs/img/usb-rbu172p-recents.png" alt="App switcher" width="19%">
-  <img src="docs/img/usb-rbu172p-safari.png" alt="Safari" width="19%">
-  <img src="docs/img/usb-rbu172p-about.png" alt="Settings, About: iPadOS 17.7.11" width="19%">
-</p>
-<p align="center">
-  <img src="docs/img/usb-rbu173-wifi.png" alt="Native Wi-Fi in Settings, networks listed (names blurred)" width="30%"><br>
-  <sub>Native Wi-Fi (rbu173): Settings turns Wi-Fi on and lists nearby networks through iPadOS's own wifid. Network names blurred.</sub>
-</p>
-<p align="center"><sub>Native screenshots from the tablet (rbu172p, 2026-11-21): home screen, Control Center, app switcher, Safari, Settings → About.</sub></p>
-
-> **Two targets, one tree:** this folder is the **iPadOS build** (boots to the home screen). The **macOS port** lives in [`macos/`](macos/README.md):
-> macOS 27.3 boots from internal storage and launchd spawns system daemons (2026-11-24); the full system volume is next.
-> Experimental research software: it boots a real Apple OS on non-Apple hardware. Back up your device first.
->
-> **Want to try it?** Read the [install guide](docs/INSTALL.md) first: it wipes Android user data, and you need your own iPadOS IPSW.
-
-## Contents
-
-- [What works](#what-works)
-- [How it works](#how-it-works)
-- [Install and setup](docs/INSTALL.md)
-- [Quick start](#quick-start) (maintainers)
-- [Debugging](#debugging)
-- [Project layout](#project-layout)
-- [Roadmap](#roadmap)
-- [Credits](#credits)
-
-## What works
-
-Status on 2026-11-23 (last stable build: `rbu188u`). ✅ tested on the tablet · 🧪 built, being tested · ⚠️ known problem · ❌ not started
-
-| Area | Status | Details |
-|---|---|---|
-| Boot | ✅ | Lock screen, home screen, Settings, Control Center |
-| Storage | ✅ | iPadOS root on the internal UFS partition `sda22` (`unixnu`, 32 GiB); persistent Data volume |
-| CPU | ✅ | 4× Cortex-A78 + 4× A55; load governor (A78s at 2.4 GHz under load), L3 vote, touch boost, thermal cap |
-| GPU | ✅ | Metal on Adreno 710 through Turnip (Vulkan) and AdrenoMetal; multi-level clocks and governor |
-| Display | ✅ | **Zero-copy scanout**: the display engine reads the GPU's frames directly, 60 Hz |
-| Smoothness | ✅/⚠️ | **Fixed 2026-11-21:** the UI no longer updates only once every 5 s. Measured 16 ms frames (60 fps) in light scenes, 33 ms (30 fps) in heavier ones |
-| Touch | ✅ | Every touch reaches iOS; interrupt-driven |
-| Brightness | ✅ | Both SY7758 backlight chips (one per half of the LED strings) follow the slider; AppleARMBacklight conformance and full CoreBrightness calibration |
-| Buttons, battery, USB debug | ✅ | |
-| Power and volume keys | ✅ | Power turns the screen fully off and on; volume keys reach iOS |
-| App Switcher gesture | 🧪 | Swipe up and pause: resting-finger heartbeat added (better, still tuning) |
-| Power saving | 🧪 | Screen-off CPU/GPU caps; timer-bounded WFI idle and suspend-to-idle are opt-in (`ruan-idle-wfi-us`, `ruan-sleep`) |
-| Crashes | 🧪 | SpringBoard respring on the home-screen pull-down found: Spotlight.app was missing; restored with a LaunchServices rescan. Turnip SIGBUS: strict-align build ready |
-| App switching | ⚠️ | Closing Settings takes over 5 s and is then killed, so the switcher animation ghosts; widgets and app snapshots draw as blank boxes |
-| 120 Hz | ⚠️ | Switches cleanly at 119.75 Hz with no underruns (fetch at Android's line), but frames tear; flip sync and `dpu-retire-flip=0` did not fix it. Off in the default args (60 Hz) |
-| Wi-Fi | ⚠️ | **Native join works:** Settings lists networks, WPA2 and DHCP succeed in under a second (WCN6750 via WPSS, ath11k, wpa_supplicant). **But iOS doesn't use the link:** no internet, no status-bar icon, and the first join attempt always fails. Work in progress: a USB `net` report and link-quality fix (in source, untested) |
-| Keyboard | 🧪 | The "moving keyboard" was iPadOS's floating keyboard (pinch out to dock). Pro layout seeded |
-| Audio, Bluetooth, video decode | 🧪 | Research and staged ports in progress (`docs/research/{audio,bluetooth,video}`); hardware video decode follows UniXNU-sheng's iris VPU driver |
-| Cameras, sensors, cellular | ❌ | |
-
-
-### 2026-11-21: the 5-second frame stall
-
-From rbu114u on, backboardd presented one frame every ~5.0 s, whatever the display or GPU settings. A kernel probe
-(`patches/xnu/ruan-slow-wait-log.patch`) logs every user thread whose wait times out after 4 s or more, with its user return
-addresses. It showed backboardd timing out in `mach_msg` after exactly 5000 ms, called from QuartzCore through
-`EDRGetDefaultMinScalingFactor` in **libEDR**.
-
-libEDR's server lives inside backboardd and starts only when CoreBrightness accepts a backlight that conforms to
-`AppleARMBacklight`. The old backlight (`package/RuanBacklight.cpp`) set `backlight-control` without that conformance, so
-every frame waited for a reply that never came (the same failure UniXNU recorded for sheng as int-236). The fix is the conforming
-service `package/RuanBacklightSvc.cpp`, now the default (`ruan-bl-svc=0` returns to the old path). Its I2C start-up check was
-relaxed in `package/GeniI2c.c` so the brightness slider works too.
-
-Ruled out on the way: display mode, GPU clocks and governor, GPU interrupt, frame pacing, wallpaper extensions, GPU sandbox
-denials, and cross-core IPIs. Turning on `armcpu-spi-ipi` / `armcpu-self-ipi` hangs boot at the display start.
-
-## How it works
+Boot 17, live USB console (`tools/live-log.sh`):
 
 ```
-Android bootloader ──fastboot boot──▶ UEFI (Mu) ──▶ DarwinBoot ──▶ XNU kernel (patched, prelinked)
-                                                                     │
-       iPadOS root (APFS) on UFS partition sda22 ◀───────────────────┘
-                                                                     │
-  launchd ─▶ backboardd / SpringBoard ─▶ Metal ─▶ AdrenoMetal ─▶ Turnip ─▶ Adreno 710
-                                                       │
-                        display engine (DPU) ◀── zero-copy scanout of each frame
+RuanMacUfs: NativeUfs started on the platform expert device (source IOBlockStorageDevice, macOS ABI)
+BSD root: disk3s1, major 1, minor 6
+com.apple.xpc.launchd: boot-mode set by sysctl: main
+com.apple.xpc.launchd: hello, launchd UUID: 96360FC3-2FDE-3EEE-A403-7DFCA7B44AC3
+com.apple.xpc.launchd: Darwin Bootstrapper Version 7.0.0: Thu Oct 29 00:42:45 PDT 2026; root:libxpc_executables-3298.60.14~78/launchd/RELEASE_ARM64E
+com.apple.xpc.launchd: boot-mode committed: main
+com.apple.xpc.launchd: (system/com.apple.kernelmanagerd [3]) service state: running
+com.apple.xpc.launchd: (system/com.apple.restored_external [5]) service state: running
+com.apple.xpc.launchd: (system/com.apple.syslogd [4]) service state: running
 ```
 
-- **Kernel:** Apple's XNU, built from source by UniXNU with ruan's patches (`unixnu-ruan/patches/xnu/`) and drivers (`unixnu-ruan/package/`). These cover UFS storage, touch, buttons, battery, the GPU power-up (GMU/HFI), CPU frequency, the USB debug port and the display.
-- **GPU:** iPadOS's Metal calls are translated to Vulkan and run by Mesa's Turnip driver on the Adreno 710.
-- **Display:** frames go straight from the GPU's memory to the panel. The display engine reads them through its own SMMU window, so the CPU copies nothing.
-- **Boot:** only RAM boots (`fastboot boot`). Android's partitions are untouched, apart from the shrunk `userdata` and the new `unixnu` partition.
+## Progress
 
-## Install and setup
-
-The full step-by-step guide is in **[docs/INSTALL.md](docs/INSTALL.md)**: requirements, partitioning (with backup and undo),
-building the kernel, root and boot payload, flashing, boot arguments, USB debugging and going back to Android.
-
-> [!CAUTION]
-> **Experimental research software. Use it entirely at your own risk.** It can brick the tablet, it wipes Android user data,
-> and you need your own, legally obtained iPadOS 17.7.11 IPSW. No Apple software or Qualcomm/Xiaomi firmware is distributed.
-
-## Quick start
-
-Requirements: Linux host, `fastboot`, a USB cable, the UniXNU work tree at `<work>`, the iPadOS 17.7.11 (21H461) IPSW (UniXNU downloads it).
-
-```bash
-# 1. Build the root image, flash it to the unixnu partition, build and RAM-boot the kernel (tablet in fastboot)
-<work>/cycle-root.sh rbu140          # boot arguments: <work>/args-current.txt
-
-# 2. Kernel or boot-argument change only (root already flashed)
-RAMROOT=<work>/ramroot WORK=<work>/ramroot/work-full UFS=1 \
-UFS_ROOT=<work>/tr/out-rbu137root REBUILD_KERNEL=1 TAG=rbu140u OUT=<work>/tr/out-rbu140u \
-KERNEL_ARGS="$(cat <work>/args-current.txt)" unixnu-ruan/scripts/build-ramroot.sh usb
-<work>/boot-local.sh rbu140u
-```
-
-The kernel command line is limited to 1000 bytes, and the build adds about 490 of them.
-
-## Debugging
-
-The kernel exposes a USB serial debug port. Use `tools/ruan-usbdbg.py`:
-
-| Command | What it does |
+| Stage | Status |
 |---|---|
-| `shot -o screen.png` | Screenshot of what the panel shows |
-| `dmesg`, `cmd info` | Kernel log, and the saved log of the previous boot |
-| `pull-crashes` | All iOS crash reports (`.ips`) |
-| `cmd display` / `touch` / `dpu` | Frame pacing, touch, and display-engine registers |
-| `get <path>` | Copy a file off the tablet. The iOS system log is exported to `/private/var/mobile/Library/Caches/com.apple.backboardd/m2v/zz-oslog/oslog.txt.gz` |
-| `reboot-fastboot` | Back to fastboot |
+| Kernel (plain arm64 XNU 12377, 4 KiB pages, PAC rewritten out of the kernel collection) | ✅ boots |
+| Root on internal UFS (`sda22`), APFS, dyld shared cache mapped and slid | ✅ |
+| launchd: bootstrap, boot tasks, spawning daemons through xpcproxy | ✅ |
+| Hands-free test loop: every panic resets into fastboot; the previous boot's log comes back over USB | ✅ |
+| Full macOS system volume + SystemOS cryptex as the root | ⏳ next (IPSW downloading) |
+| Data volume, setup skip, auto-login | ❌ |
+| WindowServer (Metal on Adreno, or software rendering) | ❌ |
 
-## Project layout
+## The problem: no PAC
+
+macOS is built only for `arm64e`: every system binary uses pointer authentication, an ARMv8.3 feature. The tablet's Cortex-A78/A55
+are ARMv8.2 and the hypervisor can't emulate PAC. Most PAC instructions are HINT no-ops on older CPUs; the rest (`AUT*`, `BRAA`,
+`RETAA`, `LDRAA`, `PACGA`) are undefined and trap.
+
+## The approach
+
+1. **Kernel without PAC:** XNU 12377 (macOS 27.3, `26C5035r`) built as plain `arm64` with ruan's board patches.
+2. **Kernel collection rewritten:** `tools/kc-nopac.py` rewrites the 250,332 PAC instructions in the prelinked collection.
+3. **Userland rewritten:** the dyld shared cache and system binaries are rewritten (`unixnu-ruan-macos/package/pacstrip/`); the 2,114
+   instructions that can't be rewritten are left to a kernel trap emulator.
+4. **Ad-hoc signed root:** `tools/adhoc-resign.py` re-signs every rewritten binary and the dyld cache; their CDHashes go into an
+   engineering trust cache (`amfi_get_out_of_my_way=1`).
+5. **XNU fixes for arm64e userland on a non-PAC kernel:** arm64e chained fixups in the dyld pager and the shared-region slide
+   (they stored signed pointers only under `ptrauth_calls`), a 47-bit user address space (xzone malloc maps at 455–512 GiB),
+   16 KiB dyld fixup pages, and Darwin 26 `posix_spawnattr`. Patches in `unixnu-ruan-macos/patches/xnu-12377/`.
+
+Background: [docs/macos-no-pac.md](docs/macos-no-pac.md) (research and blueprint), [docs/feasibility-research.md](docs/feasibility-research.md),
+[docs/pac-workaround.md](docs/pac-workaround.md), [docs/scene-2026-11-13.md](docs/scene-2026-11-13.md).
+
+## Boot log
+
+Full details in [docs/first-boot.md](docs/first-boot.md). Boots 1–8 are RAM-only (`fastboot boot`). The UFS boots also flash the
+macOS root to `sda22` (the iPadOS root there was backed up first).
+
+| Boot | Result | Fix |
+|---|---|---|
+| 1 | UniXNU menu, then `'UniXNU' returned: Load Error` | wrong file-type field in the kernel collection (fileset subtype) |
+| 2 | panic `arm_vm_init.c:1376` (contiguous-hint assert) | `use_contiguous_hint=0` |
+| 3 | panic `recount_track_cpu_kind: element modified after free` | `ruan-recount-kind-index.patch` |
+| 4 | through AMFI, IOKit and BSD init; panic on `_unsafe_kernel_text_initialized` | `ruan-no-ctrr-chosen.patch` |
+| 5–7 | root mounted, launchd exec'd, AMFI kills it (unsigned) | `adhoc-resign.py` + trust cache |
+| 8 | **launchd runs**; no dyld shared cache (7.1 GB, too big for RAM) | move the root to UFS |
+| UFS 1–2 | NativeUfs starts on macOS, unaligned faults in its DMA buffers | aligned clears and copies, `-mstrict-align` |
+| UFS 3 | root mounted from UFS; the cache is refused (`vnode is not SIP-protected`) | `lp-sip0=0x867` in the ADT |
+| UFS 4–7 | cache maps; launchd SIGSEGV on a raw arm64e pointer | dyld pager and slide v3/v5 arm64e stores |
+| UFS 8–9 | cache auth pointers still raw on 4 KiB parts | `ruan-shared-region-part-auth-store.patch` |
+| UFS 10–14 | illegal VA, then `BUG IN LIBMALLOC: pointer range initial reservation failed` | (clamps tried, then dropped) |
+| UFS 16 | **launchd runs its boot tasks**, then SIGABRT | 47-bit user VA, 16 KiB dyld fixups, pager deadlock fix (from UniXNU-sheng) |
+| UFS 17 | **launchd spawns daemons**; the restore daemon exits without a restore host | the root: full OS volume next |
+
+## Next steps
+
+The prioritized list, with sources for every fix, is [docs/next-steps.md](docs/next-steps.md). The other macOS ports and what each
+contributes are in [docs/macos-ports-survey.md](docs/macos-ports-survey.md). In short:
+
+1. **Root:** the full `26C5035r` OS system volume plus the SystemOS cryptex, pacstripped and re-signed, on `sda22`.
+2. **Data:** mount a Data volume at `/System/Volumes/Data` with firmlinks; seed it with a user, setup skipped and auto-login.
+3. **Boot tasks:** `apfs_boot_util` shim, FIPS self-test re-seal, launchd `disabled.plist` (watchdogd, cameracaptured).
+4. **Kernel batch:** stack alignment (AMFI dictionary copy), `no-lc=1 -no_slto_panic cs-lazy=1` and the DEVELOPMENT hygiene args.
+5. **Display:** WindowServer needs a Metal device (Adreno 710 plugin, macOS build) or software rendering rules.
+
+### What the next steps need (gathered 2026-11-24)
+
+| Input | For | State | Where |
+|---|---|---|---|
+| `UniversalMac_27.3_26C5035r_Restore.ipsw` (27.2 GB, Apple CDN, URL in the UniXNU profile) | root (1) | ⏳ downloading (resumable `curl -C -`) | `host-work/macos-ipsw/` |
+| OS system volume image (sha256 `40d8282e…`) | root (1) | in the IPSW | profile `[userdata] os_image_sha256` |
+| SystemOS cryptex `141-22145-021.dmg.aea` (sha256 `14330ed9…`) and App cryptex (`797bb1e0…`) | root (1) | in the IPSW; **AEA-encrypted** | |
+| AEA decryption (key from Apple's key service) | root (1) | blacktop `ipsw` 3.1.750 downloaded, **needs your OK to run** | `host-work/tools/ipsw-3.1.750/` |
+| Space: OS + SystemOS + App ≈ 16.4 GiB | root (1) | fits the 32 GiB `sda22` | |
+| Data seed, skip-setup, auto-login scripts | Data (2) | local; written for a macOS host (ditto/hdiutil), to port to the Linux mkapfs pipeline | `UniXNU-macos/scripts/make-macos-data-seed.py`, `seed-data-skip-setup.py`, `make-macos-autologin-addon.py` |
+| Data mount config | Data (2) | sheng's defconfig lines to copy | `UniXNU-sheng/configs/sheng_macos_defconfig` |
+| `apfs_boot_util` shim source | boot tasks (3) | local; build for arm64e, re-sign | `UniXNU-macos/scripts/macos-boot-shims/apfs_boot_util.c` |
+| FIPS HMAC re-seal (`fips26.py`, MIT) | boot tasks (3) | local clone | `refs/macos-ports/oosexgang__hakios-xnu-kernel/darwin/tools/fips26.py` |
+| Stack alignment, edge matrix | kernel (4) | local | `UniXNU-sheng/patches/xnu-12377/zzzz-sheng-ipados27-bringup.patch` (stack.c hunk), `zzzzzzzzzzz-sheng-edge-matrix.patch` |
+| Adreno Metal plugin for macOS 27 | display (5) | not built: `build-ruan-adreno.py` is not in the macOS archives | iPadOS board on [`main`](https://github.com/F-e-n-y-x/UniXNU-Redmi-Pad-Pro-5G/tree/main) |
+| Tablet in fastboot on the Pi 5, `live-log.sh macos` | every test | ready | `tools/` |
+
+`host-work/` is the local build area (not in git; Apple binaries, large). The `UniXNU-*` and `refs/` paths are under
+`/root/unixnu-work`, a bind mount of it (run `tools/mount-host-work.sh` after a PC restart).
+
+## Documentation
+
+| Doc | What it covers |
+|---|---|
+| [docs/first-boot.md](docs/first-boot.md) | The boot log: every boot (RAM 1–8, UFS 1–17), what it showed, the cause and the fix |
+| [docs/next-steps.md](docs/next-steps.md) | Prioritized roadmap from "launchd runs" to "desktop on screen", with the source of each fix |
+| [docs/macos-ports-survey.md](docs/macos-ports-survey.md) | Other macOS-on-ARM / UniXNU ports and what each one contributes here |
+| [docs/macos-no-pac.md](docs/macos-no-pac.md) | Research and blueprint: running arm64e macOS on a CPU without PAC |
+| [docs/pac-workaround.md](docs/pac-workaround.md) | The PAC workaround in detail: kernel collection rewrite, pacstrip, trap emulator |
+| [docs/feasibility-research.md](docs/feasibility-research.md) | Early feasibility study for native macOS on ruan |
+| [docs/macos-sonoma-sequoia-port.md](docs/macos-sonoma-sequoia-port.md) | Older blueprint for macOS 14/15 (kept for reference) |
+| [docs/scene-2026-11-13.md](docs/scene-2026-11-13.md) | Snapshot of the XNU / macOS-on-Android scene |
+| [docs/agy-macos-no-pac-task.md](docs/agy-macos-no-pac-task.md) | The original task brief |
+| [unixnu-ruan-macos/README.md](unixnu-ruan-macos/README.md) | The macOS board directory |
+
+## Folder
 
 | Path | Contents |
 |---|---|
-| `unixnu-ruan/` | The iPadOS device port: `board.toml`, `package/` (drivers), `patches/` (XNU, Adreno, UniXNU core), `scripts/` (build) |
-| `macos/` | The macOS port: its board fork, UniXNU-core patches, PAC tools and notes ([macos/README.md](macos/README.md)) |
-| `tools/` | `ruan-usbdbg.py` (USB debug), `host/` (build/flash/boot scripts), `probe/` |
-| `docs/` | `INSTALL.md`, `IPADOS-BRINGUP.md` (full log), `research/` (per-topic notes and staged ports), `hardware/`, `history/`, `img/` |
+| `unixnu-ruan-macos/` | The macOS board dir (a fork of the iPadOS board `unixnu-ruan/` on [`main`](https://github.com/F-e-n-y-x/UniXNU-Redmi-Pad-Pro-5G/tree/main) plus the macOS changes; it lags the iPadOS drivers): `board.toml`, `configs/ruan_macos*_defconfig`, `patches/xnu-12377/` (`series` + `ufs.series`), `package/RuanMacUfs.cpp` (UFS root start), `package/pacstrip/`, `scripts/build-ruan-mac-ufs.py` |
+| `unixnu-core-macos/` | Changes to the UniXNU checkout used for macOS, as patches (`apply.sh <UniXNU>`; commits in `COMMITS.txt`) |
+| `tools/` | `build-macos-ramroot.sh` (kernel + boot set; `UFS=1` for the UFS root), `make-macos-ufs-board.sh` (UFS board variant), `make-macos-ufs-root.py` (the `sda22` image), `rebuild-macos-root.py`, `adhoc-resign.py` (ad-hoc signing + CDHashes), `cache-addr.py` (runtime address → cache library), `kc-nopac.py`, PAC and CPU-feature scans |
+| `docs/` | Boot log, next steps, ports survey, research |
 
-## Roadmap
+Not in git (Apple binaries, large): the work trees `host-work/UniXNU-macos` and `host-work/UniXNU-ruan-macos` (live copies of
+the two folders above), build outputs in `host-work/macos-build/out/`, the extracted restore files in `host-work/macos-extract/`
+(recovery root, dyld cache, `unixnu-macos-root.img` for `sda22`), and logs in `host-work/logs/macos-ufs1/`.
 
-1. Wi-Fi: make iOS use the link (primary service, default route, DNS, status-bar icon); fix the failing first join.
-2. 120 Hz: find the tearing cause (scanout vs. flip timing).
-3. Stability: bisect the `rbu187` crash about 40 s after boot (`ruan-bt=1`, `ruan-video=1` or `ruan-vm-free-scale` 4).
-4. Power: CPU big cluster stays at 2.4 GHz at 0.3 % load; then test `ruan-idle-wfi-us` and `ruan-sleep=1`.
-5. Bluetooth (stages 1–3 built), audio (stage 6 not written), video decode (stages B4–B5).
-6. macOS: root from the full 26C5035r system volume + SystemOS cryptex, then Data, setup skip and WindowServer ([macos/README.md](macos/README.md), [next steps](macos/docs/next-steps.md)).
+## Run a UFS boot
+
+```bash
+tools/mount-host-work.sh                                    # after a PC restart
+UFS=1 tools/build-macos-ramroot.sh                         # -> host-work/macos-build/out/ruan-ramroot-usb-macos.img
+python3 tools/make-macos-ufs-root.py /root/unixnu-work/macos-extract /root/unixnu-work/macos-extract/unixnu-macos-root.img
+# copy both images to the Pi 5 (tablet on its USB, in fastboot), then on the Pi:
+fastboot flash unixnu unixnu-macos-root.img
+fastboot boot ruan-ramroot-usb-macos.img
+./live-log.sh macos                                              # live console; a panic resets into fastboot after 15 s
+```
+
+`ruan-panic-fastboot=0` keeps the panic on screen instead. To return to iPadOS, restore `sda22` from
+`host-work/backups/` (steps in its README).
 
 ## Credits
 
-- [UniXNU](https://github.com/UniXNU) and its device ports (sheng, dizi, amethyst, pong and others), which this port is built on.
-- HakiOS (garnet), for the early root tooling and the Novatek touch driver.
-- Mesa / Turnip, for the Adreno Vulkan driver.
-
-Older notes and checkpoints (2026-11-13 … 11-19): [docs/history/](docs/history/).
+[UniXNU](https://github.com/UniXNU): UniXNU-sheng (47-bit user VA, 16 KiB dyld fixups, Darwin 26 spawn attributes, the macOS Data
+and boot-task work); darwin-lisa / Bergamota for the PAC-neutralisation approach; BxiiDN/macOS-Pad-6 for the SM8250 pacstrip work;
+oosexgang/hakios-xnu-kernel (MIT) for the FIPS re-seal.

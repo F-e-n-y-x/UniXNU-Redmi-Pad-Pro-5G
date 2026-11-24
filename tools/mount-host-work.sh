@@ -4,7 +4,7 @@
 #    "*"/":" file names (ramroot/work-* link into it).
 # 2. host-work -> /root/unixnu-work as a recursive bind mount (not a symlink): XNU's makefiles break on the space in
 #    "Redmi Pad Pro 5G", and the build resolves symlinks, so it must see a real path without spaces.
-H="$(cd "$(dirname "$0")/../.." && pwd)/host-work"
+H="$(cd "$(dirname "$0")/.." && pwd)/host-work"
 if ! mountpoint -q "$H/apple-trees"; then
 	/sbin/e2fsck -p "$H/apple-trees.ext4" && mount -o loop "$H/apple-trees.ext4" "$H/apple-trees" || exit 1
 fi
