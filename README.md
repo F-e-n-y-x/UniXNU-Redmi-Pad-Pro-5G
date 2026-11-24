@@ -35,7 +35,7 @@ com.apple.xpc.launchd: (system/com.apple.syslogd [4]) service state: running
 | Root on internal UFS (`sda22`), APFS, dyld shared cache mapped and slid | ✅ |
 | launchd: bootstrap, boot tasks, spawning daemons through xpcproxy | ✅ |
 | Hands-free test loop: every panic resets into fastboot; the previous boot's log comes back over USB | ✅ |
-| Full macOS system volume + SystemOS cryptex as the root | ⏳ next (IPSW downloading) |
+| Full macOS system volume + SystemOS cryptex as the root | ⏳ next (IPSW downloaded; needs AEA decryption) |
 | Data volume, setup skip, auto-login | ❌ |
 | WindowServer (Metal on Adreno, or software rendering) | ❌ |
 
@@ -96,8 +96,8 @@ contributes are in [docs/macos-ports-survey.md](docs/macos-ports-survey.md). In 
 
 | Input | For | State | Where |
 |---|---|---|---|
-| `UniversalMac_27.3_26C5035r_Restore.ipsw` (27.2 GB, Apple CDN, URL in the UniXNU profile) | root (1) | ⏳ downloading (resumable `curl -C -`) | `host-work/macos-ipsw/` |
-| OS system volume image (sha256 `40d8282e…`) | root (1) | in the IPSW | profile `[userdata] os_image_sha256` |
+| `UniversalMac_27.3_26C5035r_Restore.ipsw` (27.2 GB, Apple CDN, URL in the UniXNU profile) | root (1) | ✅ downloaded 2026-11-24 (1801 files) | `host-work/macos-ipsw/` |
+| OS system volume `141-22233-021.dmg.aea` (11.4 GB; image sha256 `40d8282e…`) | root (1) | in the IPSW; **AEA-encrypted** too | profile `[userdata] os_image_sha256` |
 | SystemOS cryptex `141-22145-021.dmg.aea` (sha256 `14330ed9…`) and App cryptex (`797bb1e0…`) | root (1) | in the IPSW; **AEA-encrypted** | |
 | AEA decryption (key from Apple's key service) | root (1) | blacktop `ipsw` 3.1.750 downloaded, **needs your OK to run** | `host-work/tools/ipsw-3.1.750/` |
 | Space: OS + SystemOS + App ≈ 16.4 GiB | root (1) | fits the 32 GiB `sda22` | |
