@@ -18,7 +18,8 @@
 </p>
 <p align="center"><sub>Native screenshots from the tablet (rbu172p, 2026-11-21): home screen, Control Center, app switcher, Safari, Settings → About.</sub></p>
 
-> **Two targets, one tree:** this folder is the **iPadOS build** (boots to the home screen). The **macOS port** lives in [`macos/`](macos/README.md).
+> **Two targets, one tree:** this folder is the **iPadOS build** (boots to the home screen). The **macOS port** lives in [`macos/`](macos/README.md):
+> macOS 27.3 boots from internal storage and launchd spawns system daemons (2026-11-24); the full system volume is next.
 > Experimental research software: it boots a real Apple OS on non-Apple hardware. Back up your device first.
 >
 > **Want to try it?** Read the [install guide](docs/INSTALL.md) first: it wipes Android user data, and you need your own iPadOS IPSW.
@@ -149,7 +150,7 @@ The kernel exposes a USB serial debug port. Use `tools/ruan-usbdbg.py`:
 3. Stability: bisect the `rbu187` crash about 40 s after boot (`ruan-bt=1`, `ruan-video=1` or `ruan-vm-free-scale` 4).
 4. Power: CPU big cluster stays at 2.4 GHz at 0.3 % load; then test `ruan-idle-wfi-us` and `ruan-sleep=1`.
 5. Bluetooth (stages 1–3 built), audio (stage 6 not written), video decode (stages B4–B5).
-6. macOS: boot 4 with USB debug ([macos/README.md](macos/README.md)).
+6. macOS: root from the full 26C5035r system volume + SystemOS cryptex, then Data, setup skip and WindowServer ([macos/README.md](macos/README.md), [next steps](macos/docs/next-steps.md)).
 
 ## Credits
 
