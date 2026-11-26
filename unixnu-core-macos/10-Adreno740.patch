@@ -1,0 +1,129 @@
+diff --git a/Adreno740 b/Adreno740
+new file mode 120000
+index 0000000..f829d5a
+--- /dev/null
++++ b/Adreno740
+@@ -0,0 +1 @@
++/root/unixnu-work/UniXNU/drivers/Adreno740
+\ No newline at end of file
+diff --git a/NativeAdrenoMemory.cpp b/NativeAdrenoMemory.cpp
+index cfd371f..1c3c327 100644
+--- a/NativeAdrenoMemory.cpp
++++ b/NativeAdrenoMemory.cpp
+@@ -270,7 +270,9 @@ IOReturn NativeAdrenoMemory::prepareSystem(size_t bytes,bool write_combined,Nati
+     if(descriptor->getLength()!=bytes) {descriptor->complete();descriptor->release();return kIOReturnUnsupported;}
+     bool cleaned=false;
+     /* Default-attribute pages may still hold the zero fill in a CPU's cache: written back here, by physical runs, as allocateSystem would. */
+-    if(!write_combined) {
++    /* uke 0008: write-combined pages too, cleaned+invalidated: their zero fill can sit dirty in a CPU cache and be evicted on top of
++     * commands the client already wrote straight to DRAM (first IB of a process read as zeros). */
++    {
+         cleaned=true;
+         for(size_t offset=0;offset<bytes && cleaned;) {
+             IOByteCount length=0;
+@@ -278,7 +280,8 @@ IOReturn NativeAdrenoMemory::prepareSystem(size_t bytes,bool write_combined,Nati
+             if(!physical || (physical&4095) || length<4096) {cleaned=false;break;}
+             if(length>bytes-offset)length=bytes-offset;
+             length&=~IOByteCount(4095);
+-            if(NativeAdrenoMaintainPhysicalPages(physical,length,NativeAdrenoClean)!=kIOReturnSuccess)cleaned=false;
++            if(NativeAdrenoMaintainPhysicalPages(physical,length,write_combined?NativeAdrenoCleanInvalidate:NativeAdrenoClean)!=kIOReturnSuccess)
++                cleaned=false;
+             offset+=length;
+         }
+         if(cleaned)NativeAdrenoNotePhase(NativeAdrenoPhaseAllocate,bytes);
+diff --git a/NativeAdrenoPublish.cpp b/NativeAdrenoPublish.cpp
+index 542fc2a..a8f90d5 100644
+--- a/NativeAdrenoPublish.cpp
++++ b/NativeAdrenoPublish.cpp
+@@ -552,7 +552,11 @@ void AGXDeviceUserClient::dropViews(uint32_t token)
+         const bool pool=OSDynamicCast(NativeAdrenoPoolView,view)!=nullptr;
+         while(IOMemoryMap *map=removeMappingForDescriptor(view)) {
+             native_adreno_metal_diag.forced_unmaps=native_adreno_metal_diag.forced_unmaps+1;
+-            if(pool)map->release();
++            /* ruan: removeMappingForDescriptor retains the map for its caller (IOUserClient.cpp), for every view, not only pool ones.
++             * Kept, a system BO's map held its pages, the task's vm_map and the user range for good: every BoCpuUnmap and every
++             * closed client leaked its mapped BOs (free pages fell to ~4000 within minutes of WindowServer relaunches). */
++            (void)pool;
++            map->release();
+         }
+         view->release();
+     }
+@@ -620,7 +624,7 @@ IOReturn AGXDeviceUserClient::clientMemoryForType(UInt32 type,IOOptionBits *opti
+         IOMemoryDescriptor *scanout=native_gop_handoff_memory();
+         if(!scanout)return kIOReturnNotReady;
+         *memory=scanout;                        /* already retained for the caller */
+-        *options=kIOMapAnywhere|kIOMapInhibitCache;   /* firmware framebuffer: device memory, never cached by the CPU */
++        *options=kIOMapAnywhere|kIOMapWriteCombineCache;   /* firmware framebuffer: never cached by the CPU; ruan: write-combined, not Device (libsystem memcpy alignment faults) */
+         return kIOReturnSuccess;
+     }
+     if(type==NativeAdrenoMailboxType) {
+@@ -644,7 +648,10 @@ IOReturn AGXDeviceUserClient::clientMemoryForType(UInt32 type,IOOptionBits *opti
+     View *v=viewSlot(type);
+     if(v && v->descriptor && v->token==type) {
+         v->descriptor->retain();*memory=v->descriptor;
+-        *options=kIOMapAnywhere|(OSDynamicCast(NativeAdrenoPoolView,v->descriptor)?kIOMapWriteCombineCache:kIOMapInhibitCache);
++        /* ruan: write-combined for every BO view (Normal non-cacheable, still coherent with the GPU's non-cacheable PTEs). As Device
++         * memory (kIOMapInhibitCache) libsystem's memset/memcpy (unaligned stores, DC ZVA) took alignment faults in Turnip inside
++         * WindowServer (esr 0x92000061, SIGBUS). */
++        *options=kIOMapAnywhere|kIOMapWriteCombineCache;
+         native_adreno_view_diag[2]=native_adreno_view_diag[2]+1;
+         IOLockUnlock(g.lock);
+         return kIOReturnSuccess;
+@@ -706,7 +713,7 @@ IOReturn AGXDeviceUserClient::clientMemoryForType(UInt32 type,IOOptionBits *opti
+                         status=kIOReturnNoResources;
+                     } else {
+                         *memory=descriptor;
+-                        *options=kIOMapAnywhere|kIOMapInhibitCache;
++                        *options=kIOMapAnywhere|kIOMapWriteCombineCache;   /* ruan: not Device memory (see the cached-view case) */
+                         native_adreno_view_diag[1]=native_adreno_view_diag[1]+1;
+                         status=kIOReturnSuccess;
+                     }
+@@ -968,16 +975,19 @@ IOReturn AGXDeviceUserClient::runTimed(uint32_t method,const void *input,size_t
+         return kIOReturnSuccess;
+     }
+     if(method==NativeAdrenoMethodBoCpuUnmap && input && input_size==sizeof(NativeAdrenoAbiBoCpuUnmap)) {
+-        /* The view is shared by every CPU mapping of the BO, and dropViews removes all of them. A BO mapped twice (the view cache served 207
+-         * second requests in int-177) lost both mappings at the first unmap, and the other holder's next store hit an unmapped page: the
+-         * render server's crash in the command stream writes of vkCmdCopyBuffer. Only the last lease takes the view down; the earlier
+-         * ones leave their mapping until it, or the client unmaps it itself (IOConnectUnmapMemory64 works on the cached view). */
++        /* The view is shared by every CPU mapping of the BO (IOKit reuses one IOMemoryMap per task: copyCompatible), and dropViews
++         * removes all of them. ruan: unmap in the core first and drop the views only when that succeeded and no lease is left; before,
++         * the views went before the core checked the request and with one lease still held, and another holder's next store hit an
++         * unmapped (or reused) range: the silent corruption behind WindowServer's unlogged SIGBUS. */
+         const uint32_t token=static_cast<const NativeAdrenoAbiBoCpuUnmap *>(input)->token;
++        const IOReturn status=runCore(this,method,input,input_size,output,output_size,lockWait);
++        if(status)return status;
+         IOLockLock(g.lock);
+         const uint32_t leases=live_?core_->mappingLeases(token):0;
+         IOLockUnlock(g.lock);
+-        if(leases>1)native_adreno_view_kept=native_adreno_view_kept+1;
++        if(leases)native_adreno_view_kept=native_adreno_view_kept+1;
+         else dropViews(token);
++        return status;
+     }
+     if(method==NativeAdrenoMethodNote) {
+         /* Rows for the board's export (BootDiagExport.c, rows G and L): kind, the caller's pid and the record's words. A slot is claimed with
+diff --git a/NativeAdrenoUserClient.cpp b/NativeAdrenoUserClient.cpp
+index 44524b8..0f80f36 100644
+--- a/NativeAdrenoUserClient.cpp
++++ b/NativeAdrenoUserClient.cpp
+@@ -177,14 +177,18 @@ IOReturn NativeAdrenoUserClient::releaseAll(const NativeAdrenoRingClock *clock,u
+     if(!clock)return kIOReturnBadArgument;
+     IOReturn status=(scoped_ || used_)?submit_->waitRange(queue_base_,NativeAdrenoQueueRange,clock,timeout_us):kIOReturnSuccess;
+     if(status)return status;
++    /* ruan: free every entry even when one fails (the first failure is returned at the end); stopping at it kept every later BO
++     * alive and the client open, so the whole client leaked. */
++    IOReturn first=kIOReturnSuccess;
+     for(size_t index=0;index<entry_count_;++index) {
+         Entry &entry=at(index);
+         if(!entry.used)continue;
+         entry.mapping_leases=0;
+         NativeAdrenoAbiBoFree request{entry.handle};
+         status=freeBo(&request);
+-        if(status)return status;
++        if(status && !first)first=status;
+     }
++    if(first)return first;
+     for(uint32_t i=1;i<queue_capacity_;++i)queues_[i]=Queue{};
+     return close();
+ }

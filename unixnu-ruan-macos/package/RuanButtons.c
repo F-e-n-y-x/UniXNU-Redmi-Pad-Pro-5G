@@ -572,8 +572,9 @@ buttons_thread(void *parameter, __unused wait_result_t result)
 	pin_known = identify(&pin, GPIO_TYPE, GPIO_SUBTYPE_LV, GPIO_SUBTYPE_MV_VIN3);
 	{
 		/* ruan: PM6150L GPIO3 is display_panel_extvdd, not a touch supply: leave the panel's rail alone */
-		uint32_t ruan = 0;
-		if (!PE_parse_boot_argn("ruan", &ruan, sizeof(ruan)) || !ruan) {
+		/* macOS ruan build: never (no `ruan` boot-arg fits the command line, and without it this reprogrammed the panel's rail) */
+		uint32_t garnet = 0;
+		if (PE_parse_boot_argn("garnet_vddio", &garnet, sizeof(garnet)) && garnet) {
 			garnet_enable_touch_vddio();
 		}
 	}
@@ -676,21 +677,17 @@ press_power_init(void)
 void
 hakios_buttons_init(void)
 {
-	uint32_t enabled = 0, steps = 5;
+	uint32_t enabled = 1, steps = 5;
 	thread_t thread;
 
 	press_power_init();
 
 	/*
-	 * On with the touch screen (the phone, somebody at it) unless buttons=0 says otherwise: a hand
-	 * has pressed all three keys and each press and release was read as it was made.
+	 * ruan: on by default (the macOS command line has no room for a boot-arg) unless buttons=0 or
+	 * garnet_buttons=0 says otherwise: a hand has pressed all three keys and each was read as it was made.
 	 */
-	if (!PE_parse_boot_argn("buttons", &enabled, sizeof(enabled)) &&
-	    !PE_parse_boot_argn("garnet_buttons", &enabled, sizeof(enabled))) {
-		uint32_t touch_screen = 0;
-
-		enabled = (PE_parse_boot_argn("touchscreen", &touch_screen, sizeof(touch_screen)) && touch_screen != 0) ||
-		          (PE_parse_boot_argn("garnet_touch", &touch_screen, sizeof(touch_screen)) && touch_screen != 0);
+	if (!PE_parse_boot_argn("buttons", &enabled, sizeof(enabled))) {
+		PE_parse_boot_argn("garnet_buttons", &enabled, sizeof(enabled));
 	}
 	if (!enabled) {
 		return;

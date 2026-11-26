@@ -490,6 +490,14 @@ extern "C" int ruan_adreno_glue_run(unsigned stage, const struct ruan_adreno_glu
 		if (zap >= 1 && zap <= 10 && zap != 7) {zapMode = zap; zapExit();}
 	}
 	if (stage == 2 && cpDone && !published && r[0] != 9) publish();
+#if defined(XNU_TARGET_OS_OSX) && XNU_TARGET_OS_OSX
+	// macOS: the display never takes LegacyDisplayProbe's late path (where iPadOS publishes the Metal accelerator), so it is
+	// published here, once the driver can serve its user client (full-OS boot 16: GPU m18 ok but METAL reg=0, nothing opened it).
+	{
+		extern void ruan_gpu_publish_accelerator(void) __attribute__((weak_import));
+		if (stage == 2 && published && ruan_gpu_publish_accelerator) ruan_gpu_publish_accelerator();
+	}
+#endif
 	char s[200];
 	snprintf(s, sizeof s, "glue: step %u ctx %x (step %u kit %u/%u routes %u ias %u oas %u) cpinit %x fence %u seen %u "
 	         "memwrite %x/%u scratch %08x publish %x pool %x", r[0], r[1], ctxReport.step, ctxReport.program_status, ctxReport.route_status,

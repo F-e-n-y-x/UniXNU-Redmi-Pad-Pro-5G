@@ -18,6 +18,10 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern wait_result_t assert_wait_timeout(event_t, wait_interrupt_t, uint32_t, uint32_t);
 extern wait_result_t thread_block(thread_continue_t);
 extern unsigned int vm_page_free_count;
+/* The memory picture per heartbeat (2026-11-26: free pages fell 1.6 GB in 4.5 min once WindowServer drew; which kind grows?). */
+extern unsigned int vm_page_active_count, vm_page_inactive_count, vm_page_wire_count, vm_page_speculative_count;
+extern uint32_t c_segment_pages_compressed;
+extern volatile uint32_t native_adreno_bo_memory[8] __attribute__((weak_import));   /* [4] GPU system BOs now, MiB */
 extern char ruan_usb_short[48];   /* package/UsbDebugCdc.cpp: "usb e.. r.. c.." or why it stopped */
 
 #define ZONE_BASE  0x80D80000UL
@@ -185,10 +189,12 @@ static void
 heartbeat(void *arg __unused, wait_result_t wr __unused)
 {
 	for (;;) {
-		char line[192];
+		char line[256];
 		uint64_t t = ms();
-		int n = snprintf(line, sizeof(line), "\n[hb] %llu.%03llu free=%u irq=%llu exec=%llu exit=%llu idle=%llus %.47s | %.60s\n",
-		    t / 1000, t % 1000, vm_page_free_count, irqs, execs, exits, (t - last_event_ms) / 1000, ruan_usb_short, last_event);
+		int n = snprintf(line, sizeof(line), "\n[hb] %llu.%03llu free=%u act=%u inact=%u wire=%u spec=%u cmp=%u gpu=%uM irq=%llu exec=%llu exit=%llu idle=%llus %.47s | %.60s\n",
+		    t / 1000, t % 1000, vm_page_free_count, vm_page_active_count, vm_page_inactive_count, vm_page_wire_count,
+		    vm_page_speculative_count, c_segment_pages_compressed, &native_adreno_bo_memory ? native_adreno_bo_memory[4] : 0u,
+		    irqs, execs, exits, (t - last_event_ms) / 1000, ruan_usb_short, last_event);
 		zone_put(line, n > 0 ? ((unsigned)n < sizeof(line) ? (unsigned)n : sizeof(line) - 1) : 0);
 		assert_wait_timeout((event_t)&heartbeat, THREAD_UNINT, 1000, 1000 * 1000);
 		thread_block(THREAD_CONTINUE_NULL);
@@ -211,6 +217,17 @@ boot_progress_start(void)
 		}
 	}
 	event("boot_progress_start");
+	/* package/RuanCpuFreq.c: EPSS vote, both domains to their top non-turbo level (built with RUAN_CPUFREQ_DEFAULT=2) */
+	extern void ruan_cpufreq_start(void);
+	ruan_cpufreq_start();
+	/* package/RuanGpuPower.c, as iPadOS BootProgress.c: ruan-gpu=<1-3> runs now, 17/18 start the Adreno glue once init exists;
+	 * nothing without ruan-gpu (or ruan-gpu-survey / fb-gpu-stream) */
+	extern void ruan_gpu_survey(void);
+	ruan_gpu_survey();
+	/* Touch, buttons and battery (package/RuanInput.c, as iPadOS BootProgress.c): touch with ruan_touch=1, buttons and battery
+	 * always (buttons=0 turns buttons off); they feed NativeHidInput (offline-hid-input=1, touch-pointer=1; consumer report on macOS). */
+	extern void ruan_input_start(void);
+	ruan_input_start();
 	if (ramoops) {
 		thread_t th = THREAD_NULL;
 		if (kernel_thread_start(heartbeat, NULL, &th) == KERN_SUCCESS) {

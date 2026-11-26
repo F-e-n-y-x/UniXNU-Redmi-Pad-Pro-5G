@@ -16,6 +16,8 @@ volatile uint32_t native_touch_seq, native_touch_count, native_touch_hid_reports
 volatile int native_touch_xs[12], native_touch_ys[12], native_touch_ids[12];
 volatile uint32_t ruan_touch_events, ruan_button_events, ruan_buttons_mask, ruan_input_lines;
 volatile uint32_t ruan_touch_raw_x, ruan_touch_raw_y, ruan_touch_max_x, ruan_touch_max_y, ruan_touch_norm_x, ruan_touch_norm_y;
+volatile uint32_t ruan_touch_multi, ruan_touch_maxfingers, ruan_touch_lastmulti[4];   /* hakios.novatek_ruan.h: reports with >= 2 fingers, the most at once, the last such */
+volatile uint32_t ruan_sleeping;   /* RuanTouch.c reads it; macOS has no ruan-sleep (iPadOS ruan_screen_set needs ruan-idle-wfi.patch) */
 char ruan_input_row[96];
 char ruan_buttons_row[96];   /* RuanButtons.c's last log line (it prints through loader_log_putc; RuanTouch.c uses loader_log_line) */
 
@@ -98,6 +100,7 @@ hakios_touch_post(uint32_t type, uint32_t finger, uint32_t x, uint32_t y)
 void
 loader_log_line(const char *line)
 {
+	printf("%s", line);   /* the driver log also in the kernel message buffer (USB `dmesg`), not only its last line */
 	strlcpy(ruan_input_row, line, sizeof(ruan_input_row));
 	size_t n = strlen(ruan_input_row);
 	if (n && ruan_input_row[n - 1] == '\n') {
@@ -126,15 +129,25 @@ hakios_tl(const char *format, ...)
 	(void)format;
 }
 
-/* shortcut: one SPMI user (RuanButtons.c; ruan-autoreset is off), so no lock; take a real one if another SPMI client appears. */
+/* Two SPMI clients now (RuanButtons.c, RuanBattery.c): one transfer at a time through the PMIC arbiter. Without it the two polling
+ * threads interleaved arbiter commands and the tablet reset ~5 min into boot (2026-11-26 k2; bisected to buttons default-on).
+ * No allocation (a lck_mtx made in ruan_input_start, early in boot, reset the tablet within 20 s, k3): an atomic flag, and a waiter
+ * sleeps 1 ms so a preempted holder can finish on cpus=1. Taken only from the two client threads. */
+extern void IOSleep(unsigned milliseconds);
+static volatile uint32_t spmi_busy;
+
 void
 hakios_spmi_lock(void)
 {
+	while (__atomic_exchange_n(&spmi_busy, 1, __ATOMIC_ACQUIRE)) {
+		IOSleep(1);
+	}
 }
 
 void
 hakios_spmi_unlock(void)
 {
+	__atomic_store_n(&spmi_busy, 0, __ATOMIC_RELEASE);
 }
 
 void

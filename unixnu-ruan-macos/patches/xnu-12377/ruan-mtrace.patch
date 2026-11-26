@@ -1,0 +1,46 @@
+ruan bring-up: ruan-sctrace-name=<p_comm> also logs those processes' first 3000 Mach traps (mach_msg2: message id, options, remote port and the receiving process).
+
+--- a/osfmk/arm64/bsd_arm64.c
++++ b/osfmk/arm64/bsd_arm64.c
+@@ -253,6 +253,41 @@
+ 	    MACHDBG_CODE(DBG_MACH_EXCP_SC, (call_number)) | DBG_FUNC_START,
+ 	    args.arg1, args.arg2, args.arg3, args.arg4, 0);
+ 
++	/* ruan bring-up: with ruan-sctrace-name=<p_comm>, the first 3000 Mach traps of those processes: trap number, and for
++	 * mach_msg2_trap (47) the message id, options and remote port, so a process waiting on an IOKit/MIG reply shows which one. */
++	{
++		extern char *proc_best_name(struct proc *);
++		extern boolean_t PE_parse_boot_arg_str(const char *, char *, int);
++		static char mt_name[17];
++		static int mt_state, mt_done;
++		if (!mt_state) {
++			mt_state = PE_parse_boot_arg_str("ruan-sctrace-name", mt_name, sizeof(mt_name)) && mt_name[0] ? 1 : 2;
++		}
++		if (mt_state == 1 && mt_done < 3000 && !strncmp(proc_best_name(current_proc()), mt_name, 16)) {
++			mt_done++;
++			if (call_number == 47) {
++				/* the remote port's receiver: which process a waiting client talks to (its pid and name) */
++				extern void proc_name(int, char *, int);
++				ipc_port_t mt_port = IP_NULL;
++				pid_t mt_pid = -1;
++				char mt_peer[24] = "-";
++				if ((mach_port_name_t)args.arg4 &&
++				    ipc_port_translate_send(current_space(), (mach_port_name_t)args.arg4, &mt_port) == KERN_SUCCESS) {
++					mt_pid = ipc_port_get_receiver_task_locked(mt_port, NULL);
++					ip_mq_unlock(mt_port);
++				}
++				if (mt_pid >= 0) {
++					proc_name(mt_pid, mt_peer, sizeof(mt_peer));
++				}
++				printf("mtr %d %s: msg2 id %u opt %x remote %x -> %d %s\n", proc_pid(current_proc()), mt_name,
++				    (unsigned)(args.arg5 >> 32), (unsigned)args.arg2, (unsigned)args.arg4, mt_pid, mt_peer);
++			} else {
++				printf("mtr %d %s: trap %d (%llx,%llx)\n", proc_pid(current_proc()), mt_name, call_number,
++				    (unsigned long long)args.arg1, (unsigned long long)args.arg2);
++			}
++		}
++	}
++
+ #if CONFIG_MACF
+ 	/*
+ 	 * Check syscall filter mask, if exists.

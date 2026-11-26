@@ -12,6 +12,7 @@
 #include <libkern/c++/OSDictionary.h>
 #include <libkern/c++/OSString.h>
 #include <libkern/c++/OSBoolean.h>
+#include <libkern/c++/OSData.h>
 #include <pexpert/pexpert.h>
 #include <kern/clock.h>
 #include <mach/mach_time.h>
@@ -60,6 +61,10 @@ struct ruan_backlight_state g_ruan_backlight = {
 
 namespace {
 constexpr uint32_t kMaxLevel = 4095, kStepMs = 16;
+#if RUAN_MACOS
+// macOS speaks nits: kMaxLevel (the ruan-bl-max cap) is taken as 500 nits, the panel's typical peak (spec sheet, not measured)
+constexpr uint32_t kMaxMilliNits = 500000;
+#endif
 volatile uint64_t gRequest = 0;
 } // namespace
 
@@ -192,7 +197,12 @@ void ruan_backlight_init(void) {
     if (PE_parse_boot_argn("ruan-bl-max", &cap, sizeof cap) && cap >= 16 && cap <= 4095) s_hw_max = cap;
     g_ruan_backlight.ready = true;
     /* start dim (25% of the cap) until iPadOS sets its own value, which is then scaled into the cap too */
+#if RUAN_MACOS
+    /* macOS: full (the cap) until ruan-brightnessd writes the user's level; without the agent the panel would stay at 25% */
+    const int rc = ruan_backlight_set_level(g_ruan_backlight.max_level);
+#else
     const int rc = ruan_backlight_set_level(g_ruan_backlight.max_level / 4);
+#endif
     /* The bootloader leaves the chip taking brightness from the panel's PWM, so the register writes above change
      * nothing on screen. Switch to register mode (bits 2:1 = 2, as Linux sy7758_init) after the level is in place,
      * keeping the other bits as the bootloader set them. */
@@ -303,6 +313,21 @@ void RuanBacklight::publish(uint32_t value) {
         brightness->setObject("max", max);
         brightness->setObject("value", current);
         parameters->setObject("brightness", brightness);
+#if RUAN_MACOS
+        // macOS BrightnessControl (BCAppleBacklightBrtControl) reads BrightnessMilliNits {min, max, value} next to brightness
+        OSDictionary *milliNits = OSDictionary::withCapacity(3);
+        OSNumber *nitsMax = OSNumber::withNumber(kMaxMilliNits, 32);
+        OSNumber *nitsNow = OSNumber::withNumber((uint64_t)value * kMaxMilliNits / kMaxLevel, 32);
+        if (milliNits && nitsMax && nitsNow) {
+            milliNits->setObject("min", min);
+            milliNits->setObject("max", nitsMax);
+            milliNits->setObject("value", nitsNow);
+            parameters->setObject("BrightnessMilliNits", milliNits);
+        }
+        OSSafeReleaseNULL(nitsMax);
+        OSSafeReleaseNULL(nitsNow);
+        OSSafeReleaseNULL(milliNits);
+#endif
         setProperty("IODisplayParameters", parameters);
     }
     OSSafeReleaseNULL(min);
@@ -335,6 +360,17 @@ bool RuanBacklight::start(IOService *provider) {
 
     setProperty("NativeSandboxGrantProcess", "backboardd");
     setProperty("backlight-control", kOSBooleanTrue);
+#if RUAN_MACOS
+    // BrightnessControl refuses setNits (error 16) unless the service has force-brightness-control (data): a Mac panel is behind
+    // DCP, ours is not (macos-pixel8a AkitaBacklight.inc). ruan-backlight is what ruan-brightnessd matches (the class is IOService).
+    const uint32_t one = 1;
+    OSData *force = OSData::withBytes(&one, sizeof one);
+    if (force) {
+        setProperty("force-brightness-control", force);
+        force->release();
+    }
+    setProperty("ruan-backlight", kOSBooleanTrue);
+#endif
 
     publish(m_level);
     return true;
@@ -360,6 +396,13 @@ IOReturn RuanBacklight::setProperties(OSObject *properties) {
     if (!dictionary) return kIOReturnBadArgument;
 
     OSNumber *brightness = OSDynamicCast(OSNumber, dictionary->getObject("brightness"));
+#if RUAN_MACOS
+    // macOS (BrightnessControl, ruan-brightnessd): {"brightness-nits": nits in 16.16}, linear onto 0..kMaxLevel
+    OSNumber *nits = OSDynamicCast(OSNumber, dictionary->getObject("brightness-nits"));
+    const uint64_t fromNits = nits ? nits->unsigned64BitValue() * 1000 / 65536 * kMaxLevel / kMaxMilliNits : 0;
+    OSNumber *converted = !brightness && nits ? OSNumber::withNumber(fromNits > kMaxLevel ? kMaxLevel : fromNits, 32) : nullptr;
+    if (converted) brightness = converted;
+#endif
     if (!brightness) return kIOReturnSuccess;
 
     OSNumber *fadePeriod = OSDynamicCast(OSNumber, dictionary->getObject("FadePeriod"));
@@ -371,6 +414,9 @@ IOReturn RuanBacklight::setProperties(OSObject *properties) {
     __atomic_store_n(&gRequest, 1ull << 63 | (uint64_t)goal << 16 | milliseconds, __ATOMIC_RELEASE);
     if (m_request) m_request->setTimeoutUS(1);
     publish(goal);
+#if RUAN_MACOS
+    OSSafeReleaseNULL(converted);
+#endif
     return kIOReturnSuccess;
 }
 

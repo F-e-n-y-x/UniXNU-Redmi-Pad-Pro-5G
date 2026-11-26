@@ -11,3 +11,15 @@ ruan-user-va-47bit.patch
 ruan-panic-reset.patch
 ruan-ubrk-log.patch
 ruan-all-tasks-user-ranges.patch
+ruan-mac-data-mount.patch
+ruan-reboot-log.patch
+ruan-stack-shift.patch
+ruan-panic-usb.patch
+ruan-mtrace.patch
+ruan-no-darwinbg.patch
+ruan-wc-dram.patch
+ruan-smp-cpuid.patch
+ruan-uexc-log.patch
+ruan-vm-4k.patch
+ruan-sha3-emulate.patch
+ruan-wc-dram-unmanaged-default.patch

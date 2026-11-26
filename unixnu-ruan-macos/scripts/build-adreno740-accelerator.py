@@ -37,9 +37,11 @@ def sha(path):
 
 # iPadOS 27 and macOS 27.3 (arm64e filesets): the plan of the build, original addresses before the collection slide. The macOS
 # base is IOGraphicsFamily's IOAccelerator, read from the symbols of its collection.
-FILESET = ARCH == 'arm64e' and IOS_VERSION.split('.')[0] == '27'
+# ruan's plain arm64 macOS kernel is prelinked into the same fileset (its bti c is a NOP on a CPU without BTI).
+FILESET = ARCH in ('arm64', 'arm64e') and IOS_VERSION.split('.')[0] == '27'
 BUILD = os.environ.get('UNIXNU_IPSW_BUILD') or '24A446'
-if os.environ.get('UNIXNU_XNU_TARGET') != 'macosx':
+MACOS = os.environ.get('UNIXNU_XNU_TARGET') == 'macosx'
+if not MACOS:
     BUILD = '24A446'
 BASE = 'IOAccelerator' if BUILD == '26C5035r' else 'IOAcceleratorES'
 plan_path = ROOT / (f'build/gpu-analysis/ioaccelerator-base-abi-{BUILD}.json' if FILESET else 'build/gpu-analysis/ioaccelerator-base-abi.json')
@@ -70,11 +72,15 @@ while i < len(args):
         i += 1
     elif v == '-Xclang' and args[i + 1].startswith('-W'):
         i += 1
+    elif MACOS and v.startswith(('--target=', '-mios-version-min=', '-miphoneos-version-min=')):
+        pass   # the macOS records mix the iOS 17 triple with -mios-version-min=27.0: one target, as build-gop-legacy-display-27.py
     elif not v.startswith('-W') and v not in ('-MD', '-MP'):
         cmd.append(v)
     i += 1
     if v in ('-MF', '-MJ'):
         i += 1
+if MACOS:
+    cmd += [f'--target={TRIPLE}', f'-mios-version-min={IOS_VERSION}', '-Wno-unused-but-set-global', '-Wno-deprecated-volatile']
 cmd += ['-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter', '-Wno-unnecessary-virtual-specifier', '-Wno-c99-designator',
         '-Wno-reorder-init-list', '-Wno-deprecated-enum-enum-conversion', '-Wno-overloaded-virtual',
         '-Wno-missing-designated-field-initializers',

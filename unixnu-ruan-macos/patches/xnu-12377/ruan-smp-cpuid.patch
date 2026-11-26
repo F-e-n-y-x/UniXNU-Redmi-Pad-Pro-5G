@@ -1,0 +1,15 @@
+ruan SMP: a secondary core finds its cpu_data by MPIDR; SM7435 numbers its cores in Affinity1 (0x000..0x700), and without HAS_CLUSTER
+start.s kept only Affinity0, so every secondary matched cpu0's entry (as sm7435-common sm7435-smp-secondary.patch fixes for xnu-10063;
+12377 template: piano sm8750-smp.patch). ml_get_cpu_number already keeps Affinity1. No effect with cpus=1.
+
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -147,6 +147,8 @@
+ 	mrs		x15, MPIDR_EL1						// Load MPIDR to get CPU number
+ #if HAS_CLUSTER
+ 	and		x0, x15, #0xFFFF					// CPU number in Affinity0, cluster ID in Affinity1
++#elif defined(BCM2837)
++	and		x0, x15, #0xFFFF					// ruan/SM7435: core number in Affinity1
+ #else
+ 	and		x0, x15, #0xFF						// CPU number is in MPIDR Affinity Level 0
+ #endif

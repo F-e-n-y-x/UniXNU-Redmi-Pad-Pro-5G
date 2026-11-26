@@ -1,7 +1,7 @@
 #!/bin/bash
 # live-log.sh TAG: stream the macOS kernel console over USB into live-TAG.log for every boot; the client is killed when the
 # USB device goes away (a reset), so the next boot reconnects.
-cd /root/ruan-macos
+cd /root/unixnu-work/macos-build/boot-local
 while true; do
   until [ -e /dev/ttyACM0 ]; do sleep 1; done
   echo "=== $(date +%T) console up" >> live-$1.log

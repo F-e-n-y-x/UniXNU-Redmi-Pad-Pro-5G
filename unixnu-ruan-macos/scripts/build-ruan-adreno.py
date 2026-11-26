@@ -23,6 +23,7 @@ DEVICE = Path(os.environ.get('UNIXNU_DEVICE', Path(__file__).resolve().parents[1
 OUT = ROOT / 'build/ruan-adreno'
 SRC = OUT / 'src'
 RECORDS = ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837'
+MACOS = os.environ.get('UNIXNU_XNU_TARGET') == 'macosx'
 
 shutil.rmtree(SRC, ignore_errors=True)
 for relative in ('kits/ArmSmmu4K', 'drivers/Adreno740'):
@@ -66,6 +67,8 @@ for source in sources:
             i += 1
         elif value == '-Xclang' and arguments[i + 1].startswith('-W'):
             i += 1
+        elif MACOS and value.startswith(('--target=', '-mios-version-min=', '-miphoneos-version-min=')):
+            pass   # one target for the macOS records (iOS 17 triple + -mios-version-min=27.0), as build-gop-legacy-display-27.py
         elif not value.startswith('-W') and value not in ('-MD', '-MP'):
             command.append(value)
         i += 1
@@ -78,7 +81,13 @@ for source in sources:
                 '-DARM_SMMU4K_TLB_EXPERIMENT',
                 '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter', '-Wno-incompatible-sysroot', '-Wno-c99-designator',
                 '-Wno-reorder-init-list', '-Wno-deprecated-enum-enum-conversion', '-Wno-unnecessary-virtual-specifier']
-    if source.name == 'NativeAdrenoUserClient.cpp':
+    if MACOS:
+        from kernel_target import IOS_VERSION, TRIPLE
+        command += [f'--target={TRIPLE}', f'-mios-version-min={IOS_VERSION}', '-Wno-missing-designated-field-initializers',
+                    '-Wno-unused-but-set-global', '-Wno-deprecated-volatile',
+                    '-mstrict-align']   # the GPU pool is Device memory on the macOS kernel: no unaligned accesses
+    # xnu-12377 (macOS 27.3) has task_get_gpu_role itself: the shim is for iPadOS 17's xnu-10063 only
+    if source.name == 'NativeAdrenoUserClient.cpp' and not MACOS:
         command += ['-include', str(DEVICE / 'package/RuanAdrenoXnu17.h')]
     if source.name == 'NativeAdrenoPublish.cpp':
         # ruan's own Metal-discovery stand-in (package/NativeAdrenoAccelerator.cpp, LegacyDisplayProbe.cpp) and RuanGpuPower.c's
@@ -91,6 +100,12 @@ for source in sources:
     result = subprocess.run(command, cwd=recipe['directory'], capture_output=True, text=True)
     if result.returncode:
         sys.exit(f'{source}:\n' + result.stderr[-4000:])
+    if MACOS:
+        # the driver's copies go to RuanGpuPower.c's device-safe ones (aligned or byte accesses): the library routines' unaligned
+        # accesses fault on the Device-mapped GPU pool (full-OS boot 15, glue step 7)
+        objcopy = shutil.which('llvm-objcopy') or '/opt/unixnu-linux/llvm/bin/llvm-objcopy'
+        subprocess.run([objcopy, *[f'--redefine-sym=_{n}=_ruan_devx_{n}' for n in ('memcpy', 'memmove', 'memset', 'bzero', 'memcmp')],
+                        obj], check=True)
     objects.append(obj)
 
 archive = OUT / 'libRuanAdreno.a'

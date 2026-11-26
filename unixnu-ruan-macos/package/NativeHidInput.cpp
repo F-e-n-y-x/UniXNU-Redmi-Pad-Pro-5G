@@ -2,10 +2,16 @@
 // Explicit offline keyboard/consumer input source. Uses the unchanged original
 // HID parser and event dispatch; no user-client entitlement is substituted.
 #include "OriginalHidDeviceABI.h"
+// Set by the macOS 27.3 ABI header (build-gop-legacy-display-27.py): IOService has 272 slots there, so every IOHIDDevice slot is
+// iPadOS 21H461's + 104 (handleReport 285, newReportDescriptor 284), and newPrimaryUsage{,Page}Number (282/283) are declared.
+#ifndef NATIVE_HID_MACOS
+#define NATIVE_HID_MACOS 0
+#endif
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOWorkLoop.h>
 #include <IOKit/IOTimerEventSource.h>
 #include <libkern/c++/OSString.h>
+#include <libkern/c++/OSNumber.h>
 #include <libkern/c++/OSIterator.h>
 extern "C" void native_hid_input_observed(unsigned,int);
 extern "C" void native_hid_live_checkpoint(IOService *);
@@ -22,7 +28,7 @@ extern volatile int native_touch_xs[12], native_touch_ys[12], native_touch_ids[1
 // personality can match. Report 2 carries the Consumer buttons, bit 0 Menu (Home),
 // bit 1 Power, bit 2 Volume Increment, bit 3 Volume Decrement. Report 1 is an
 // ordinary boot keyboard report.
-static const unsigned char descriptor[]={
+static constexpr unsigned char descriptor[]={
     0x05,0x01,0x09,0x06,0xa1,0x01,0x85,0x01,
     0x05,0x07,0x19,0xe0,0x29,0xe7,0x15,0x00,0x25,0x01,
     0x75,0x01,0x95,0x08,0x81,0x02,
@@ -33,6 +39,27 @@ static const unsigned char descriptor[]={
     0x75,0x01,0x95,0x04,0x81,0x02,
     0x75,0x04,0x95,0x01,0x81,0x03,0xc0
 };
+// buttons-consumer=1 (always on macOS): report 2 moves out of the keyboard collection into its own Consumer Control collection, as
+// UniXNU-xiaomipad8pro PianoInput/HidReports.h kButtonsDescriptor does (Power 0x30, Volume Increment 0xE9, Volume Decrement 0xEA).
+// Bit 0 (Menu/Home) becomes padding so buttonsAction's mask (bits 1..3) is sent unchanged.
+enum {kKeyboardBytes=44};   // descriptor[] up to its report 2 part (0x85,0x02)
+static_assert(descriptor[kKeyboardBytes]==0x85 && descriptor[kKeyboardBytes+1]==0x02,"report 2 starts the consumer part");
+static const unsigned char consumerDescriptor[]={
+    0x05,0x0c,0x09,0x01,0xa1,0x01,0x85,0x02,0x15,0x00,0x25,0x01,
+    0x75,0x01,0x95,0x01,0x81,0x03,
+    0x09,0x30,0x09,0xe9,0x09,0xea,0x95,0x03,0x81,0x02,
+    0x95,0x04,0x81,0x03,0xc0
+};
+// touch-pointer=1 (macOS has no touch UI): the touch-only device is an absolute one-button mouse, report-ID-less, 5-byte report
+// {buttons, x16, y16}. Same descriptor as refs/macOS-uke/touch/src/package/UkeTouchPointer.cpp (also UniXNU-xiaomipad8pro PianoTouch/TouchHid.h, run on hardware).
+static const unsigned char pointerDescriptor[]={
+    0x05,0x01,0x09,0x02,0xa1,0x01, 0x09,0x01,0xa1,0x00,
+    0x05,0x09,0x19,0x01,0x29,0x01,0x15,0x00,0x25,0x01,0x75,0x01,0x95,0x01,0x81,0x02,
+    0x75,0x07,0x95,0x01,0x81,0x03,
+    0x05,0x01,0x09,0x30,0x09,0x31,0x15,0x00,0x26,0xff,0x7f,0x75,0x10,0x95,0x02,0x81,0x02,
+    0xc0,0xc0
+};
+static bool bootArgOne(const char *name) {unsigned value=0;return PE_parse_boot_argn(name,&value,sizeof(value)) && value==1;}
 // Report 3: ten-finger Touch Screen collection (Tip Switch, Touch Valid, Contact Identifier, X, Y per finger, then Contact Count).
 // Touch Valid (0x47) is the finger confidence: IOHIDEventDriver turns a finger transducer whose value is 0 into a hand (palm), which
 // multi-finger and system edge gestures ignore, so every finger, down or lifting, sends 1.
@@ -132,6 +159,9 @@ class NativeHidInput : public IOHIDDevice {
     // The digitizer is a separate service from the keyboard: backboardd matches digitizers by primary usage page/usage
     // (Digitizer/Touch Screen) and the Built-In flag, which a combined keyboard-first descriptor would not provide.
     bool touchOnly=false;
+    bool pointer=false;          // touch-pointer=1 on the touch-only device
+    bool pointerDown=false;
+    bool consumerButtons=false;  // buttons-consumer=1 on the keyboard device
     bool eventDriverFound=false;
     uint32_t lastSeq=0;
     // Fingers sent as down in the previous report; a vanished identifier gets one explicit tip-up report.
@@ -164,6 +194,7 @@ class NativeHidInput : public IOHIDDevice {
         __asm__ volatile("dmb ish":::"memory");
         if(native_touch_seq!=before)return;      // torn read: retry on the next tick
         self->lastSeq=before;
+        if(self->pointer){self->pointerSend(count,xs,ys);return;}
         // Sizes follow the axis maxima of the touch core: 30480 long, 20320 short, mapped to the same 0..32767 range.
         unsigned char report[1+TOUCH_FINGERS*6+1]={3};
         unsigned slot=0;
@@ -204,6 +235,20 @@ class NativeHidInput : public IOHIDDevice {
         native_hid_input_observed(6,result);
         native_touch_hid_reports=native_touch_hid_reports+1;
     }
+    // Pointer mode (UkeTouchPointer::deliver): finger 0 moves the pointer and holds button 1; the lift resends the last position with
+    // button 1 up. shortcut: finger 0 is the producer's first down slot, so lifting it while another stays jumps to that one; track by id if it matters.
+    void pointerSend(unsigned count,const int *xs,const int *ys) {
+        if(count){prevX[0]=(int)transformCoordinate(xs[0],30480);prevY[0]=(int)transformCoordinate(ys[0],20320);}
+        else if(!pointerDown)return;
+        pointerDown=count!=0;
+        unsigned char report[5]={(unsigned char)(pointerDown?1:0),(unsigned char)prevX[0],(unsigned char)(prevX[0]>>8),
+                                 (unsigned char)prevY[0],(unsigned char)(prevY[0]>>8)};
+        IOBufferMemoryDescriptor *buffer=IOBufferMemoryDescriptor::withBytes(report,sizeof(report),kIODirectionNone);
+        IOReturn result=buffer?handleReport(buffer,0,0):kIOReturnNoMemory;
+        OSSafeReleaseNULL(buffer);
+        native_hid_input_observed(6,result);
+        native_touch_hid_reports=native_touch_hid_reports+1;
+    }
     // The button driver's thread calls buttonsNotify on every change of the pressed set.
     static void buttonsNotify(void *context,uint32_t mask) {
         NativeHidInput *self=static_cast<NativeHidInput *>(context);
@@ -224,7 +269,9 @@ class NativeHidInput : public IOHIDDevice {
         if(!eventDriverFound) {
             IORegistryEntry *driver=eventDriver(this,4);
             eventDriverFound=driver!=nullptr;
-            if(driver && (touchEnabled || touchOnly))edge::install(driver);
+            // Not in pointer mode, not on macOS: edge::install patches slot 198 of the iPadOS IOHIDEventDriver vtable (256 slots copied);
+            // the macOS 26C5035r IOHIDEventDriver has 359 slots with dispatchEvent at 302.
+            if(driver && (touchEnabled || touchOnly) && !pointer && !NATIVE_HID_MACOS)edge::install(driver);
         }
         return eventDriverFound;
     }
@@ -245,7 +292,8 @@ class NativeHidInput : public IOHIDDevice {
     static void tick(OSObject *owner,IOTimerEventSource *source) {
         NativeHidInput *self=OSDynamicCast(NativeHidInput,owner);if(!self)return;
         native_hid_live_checkpoint(self);
-        if(self->touchOnly){source->setTimeoutMS(1000);return;}
+        // buttons-consumer: no Menu usage any more, so no mailbox/offline-hid-auto-home Home presses either.
+        if(self->touchOnly || self->consumerButtons){source->setTimeoutMS(1000);return;}
         if(!self->down && !hasEventDriver(self,4)) {
             native_hid_input_observed(3,0);
             source->setTimeoutMS(1000);
@@ -266,15 +314,26 @@ class NativeHidInput : public IOHIDDevice {
 public:
     void setTouchOnly() {touchOnly=true;}
     IOWorkLoop *getWorkLoop() const override {return inputLoop;}
-    OSString *newTransportString() const override {return OSString::withCString(touchOnly?"SPI":"Virtual");}
-    OSString *newProductString() const override {return OSString::withCString(touchOnly?"Offline touch digitizer":"Offline HID input probe");}
+    OSString *newTransportString() const override {return OSString::withCString(touchOnly && !pointer?"SPI":"Virtual");}
+    OSString *newProductString() const override {
+        return OSString::withCString(pointer?"Offline touch pointer":touchOnly?"Offline touch digitizer":"Offline HID input probe");
+    }
+#if NATIVE_HID_MACOS
+    // The pointer's primary usage, Generic Desktop/Mouse, through the original publishProperties; other devices keep the original.
+    OSNumber *newPrimaryUsageNumber() const override {return pointer?OSNumber::withNumber(2ULL,32):IOHIDDevice::newPrimaryUsageNumber();}
+    OSNumber *newPrimaryUsagePageNumber() const override {return pointer?OSNumber::withNumber(1ULL,32):IOHIDDevice::newPrimaryUsagePageNumber();}
+#endif
     IOReturn newReportDescriptor(IOMemoryDescriptor **out) const override {
         if(!out)return kIOReturnBadArgument;
-        unsigned char combined[sizeof(descriptor)+sizeof(touchDescriptor)];
+        unsigned char combined[sizeof(descriptor)+sizeof(consumerDescriptor)+sizeof(touchDescriptor)];
         size_t size;
-        if(touchOnly){size=sizeof(touchDescriptor);memcpy(combined,touchDescriptor,size);}
+        if(pointer){size=sizeof(pointerDescriptor);memcpy(combined,pointerDescriptor,size);}
+        else if(touchOnly){size=sizeof(touchDescriptor);memcpy(combined,touchDescriptor,size);}
         else{
-            size=sizeof(descriptor);memcpy(combined,descriptor,size);
+            if(consumerButtons) {   // keyboard collection closed before report 2, then the consumer collection
+                size=kKeyboardBytes;memcpy(combined,descriptor,size);combined[size++]=0xc0;
+                memcpy(combined+size,consumerDescriptor,sizeof(consumerDescriptor));size+=sizeof(consumerDescriptor);
+            } else {size=sizeof(descriptor);memcpy(combined,descriptor,size);}
             // Default: one device, keyboard collection first, digitizer second (the arrangement whose event driver
             // and user client attach on hardware); the separate digitizer device is the opt-in sheng-touch-split.
             if(touchEnabled){memcpy(combined+size,touchDescriptor,sizeof(touchDescriptor));size+=sizeof(touchDescriptor);}
@@ -287,13 +346,19 @@ public:
         // Request the normal generic HID event personality for this owned
         // keyboard. This is a matching property, not a client entitlement.
         if(!setProperty("HIDDefaultBehavior",true))return false;
-        unsigned touch=0;
-        touchEnabled=PE_parse_boot_argn("sheng-touch-hid",&touch,sizeof(touch)) && touch==1;
+        // touch-pointer=1: touch goes only to the separate pointer device, never into the combined one.
+        pointer=touchOnly && bootArgOne("touch-pointer");
+        // macOS: always (no Menu/Home usage there, and no boot-arg room); iPadOS keeps the opt-in.
+        consumerButtons=!touchOnly && (NATIVE_HID_MACOS || bootArgOne("buttons-consumer"));
+        touchEnabled=!touchOnly && !bootArgOne("touch-pointer") && bootArgOne("sheng-touch-hid");
         // DigitizerCollectionDispatch: IOHIDEventDriver (setDigitizerProperties) reads it up the service plane and then sends each
         // report's fingers as one digitizer collection with a child per finger. Without it a touch screen gets one event per finger,
         // and backboardd takes each as the whole touch set, so no two fingers are ever down together for UIKit (no pinch, no
         // multi-finger or system gestures).
-        if(touchOnly||touchEnabled){setProperty("Built-In",true);setProperty("DisplayIntegrated",true);setProperty("DigitizerCollectionDispatch",true);}
+        // Pointer mode publishes none of them: without Built-In, native_hid_live_checkpoint also skips its 0x0d/4 rewrite.
+        // Its primary usage is Generic Desktop/Mouse: newPrimaryUsage*Number on macOS, a property where the iPadOS ABI header names no slot.
+        if((touchOnly||touchEnabled) && !pointer){setProperty("Built-In",true);setProperty("DisplayIntegrated",true);setProperty("DigitizerCollectionDispatch",true);}
+        if(pointer && !NATIVE_HID_MACOS){setProperty("PrimaryUsagePage",(unsigned long long)1,32);setProperty("PrimaryUsage",(unsigned long long)2,32);}
         if(!IOHIDDevice::start(provider))return false;
         timer=IOTimerEventSource::timerEventSource(this,tick);
         if(!timer || inputLoop->addEventSource(timer)!=kIOReturnSuccess) {

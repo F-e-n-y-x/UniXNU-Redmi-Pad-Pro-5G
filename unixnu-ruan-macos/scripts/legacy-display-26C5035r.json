@@ -1968,7 +1968,8 @@
   "setGammaTable": 307,
   "setColorRemapMode": 312,
   "getColorRemapMode": 313,
-  "swapSetColorMatrix": 343
+  "swapSetColorMatrix": 343,
+  "swapWait": 282
  },
  "leaves": [],
  "prototypes": {
@@ -1996,7 +1997,8 @@
   "setGammaTable": "IOReturn setGammaTable(void *)",
   "setColorRemapMode": "IOReturn setColorRemapMode(uint32_t)",
   "getColorRemapMode": "IOReturn getColorRemapMode(uint32_t *)",
-  "swapSetColorMatrix": "IOReturn swapSetColorMatrix(void *,uint32_t,uint32_t)"
+  "swapSetColorMatrix": "IOReturn swapSetColorMatrix(void *,uint32_t,uint32_t)",
+  "swapWait": "IOReturn swapWait(void *,uint32_t,uint32_t,uint32_t)"
  },
  "bindings": {
   "__ZN25IOMobileFramebufferLegacyC2EPK11OSMetaClass": "0xfffffe000ac244b4",
@@ -2055,7 +2057,8 @@
   "default_surface": 8472,
   "surface_root": 8448,
   "swap_info_time": 264,
-  "swap_info_held": 9114
+  "swap_info_held": 9114,
+  "last_completed_swap": 8636
  },
  "request": {
   "rect0": 17,
@@ -2116,9 +2119,9 @@
    "opaque281_189376",
    "Ev"
   ],
-  "opaque282": [
-   "opaque282_101494",
-   "Ev"
+  "swapWait": [
+   "opaque282_112850",
+   "EPvjjj"
   ],
   "opaque283": [
    "opaque283_113506",

@@ -21,6 +21,7 @@ struct UsbFileXfer {
     uint32_t id;
     vnode_t vp;                 // file source (iocount + usecount from vnode_open), or
     uint8_t *mem;               // memory source (dmesg snapshot, IOMalloc'd)
+    bool borrowed;              // mem is not ours (the live framebuffer, `fb`): never freed
     uint32_t memCap;
     uint32_t size, off, crc;
 };
@@ -55,7 +56,8 @@ static int usbVnodeSize(vnode_t vp, uint64_t *size) {
 
 static void usbFileEnd(UsbFileXfer &x) {
     if (x.vp) vnode_close(x.vp, FREAD, usbVfsContext());
-    if (x.mem) IOFree(x.mem, x.memCap);
+    if (x.mem && !x.borrowed) IOFree(x.mem, x.memCap);
+    x.borrowed = false;
     x.vp = nullptr;
     x.mem = nullptr;
     x.active = false;

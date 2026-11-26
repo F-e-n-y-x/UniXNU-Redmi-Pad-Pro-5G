@@ -1,0 +1,21 @@
+ruan bring-up: log every reboot_kernel caller (pid, name, howto, message) and wait 3 s so the USB console carries it.
+
+--- a/bsd/kern/kern_shutdown.c
++++ b/bsd/kern/kern_shutdown.c
+@@ -188,6 +188,16 @@
+ 	int hostboot_option = 0;
+ 	uint64_t startTime;
+ 
++	/* ruan bring-up: who asks for a reboot, and why, before the reset takes the USB console with it (full-OS boot 5 ended in
++	 * fastboot right after launchd started pid 7, with no panic text). 3 s for the USB log to carry the line. */
++	{
++		extern void IOSleep(unsigned int);
++		proc_t self = current_proc();
++		printf("ruan-reboot: pid %d %s howto 0x%x message %s\n", self ? proc_getpid(self) : -1,
++		    self ? proc_best_name(self) : "?", howto, message ? message : "-");
++		IOSleep(3000);
++	}
++
+ 	if ((howto & (RB_PANIC | RB_QUICK)) == (RB_PANIC | RB_QUICK)) {
+ 		panic_kernel(howto, message);
+ 	}

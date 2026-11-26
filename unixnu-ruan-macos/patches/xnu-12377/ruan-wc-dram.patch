@@ -1,0 +1,68 @@
+ruan bring-up: ruan-wc-dram=<pa> makes write-combined mappings of physical addresses >= <pa> Normal non-cacheable (the GPU pool is DRAM outside XNU's managed range; it became Device-GRE). Both pmaps: arm/pmap (the plain arm64 kernel) and arm64/sptm.
+
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -6071,6 +6071,21 @@
+ 	return success;
+ }
+ 
++/* ruan bring-up: ruan-wc-dram=<pa> treats every physical address at or above <pa> as DRAM for write-combined mappings. The GPU pool is
++ * DRAM carved out of the range XNU manages, so is_dram_addr() is false for it and a write-combined view became Device-GRE: libsystem's
++ * memcpy (unaligned q-register stores) then took alignment faults in Turnip inside WindowServer (esr 0x92000061, SIGBUS). On SM7435
++ * DRAM starts at 0x80000000 and every MMIO window is below it. */
++static bool
++ruan_wc_dram(pmap_paddr_t pa)
++{
++	static uint64_t from = UINT64_MAX;      /* UINT64_MAX: not parsed yet; 0: off */
++	if (from == UINT64_MAX) {
++		uint64_t value = 0;
++		from = PE_parse_boot_argn("ruan-wc-dram", &value, sizeof(value)) ? value : 0;
++	}
++	return from && pa >= from;
++}
++
+ MARK_AS_PMAP_TEXT static pt_entry_t
+ wimg_to_pte(unsigned int wimg, pmap_paddr_t pa)
+ {
+@@ -6137,7 +6152,7 @@
+ 		pte |= ARM_PTE_NX | ARM_PTE_PNX;
+ 		break;
+ 	case VM_WIMG_WCOMB:
+-		if (is_dram_addr(pa)) {
++		if (is_dram_addr(pa) || ruan_wc_dram(pa)) {
+ 			pte = ARM_PTE_ATTRINDX(CACHE_ATTRINDX_WRITECOMB);
+ 		} else {
+ #if HAS_FEAT_XS
+--- a/osfmk/arm64/sptm/pmap/pmap.c
++++ b/osfmk/arm64/sptm/pmap/pmap.c
+@@ -6497,6 +6497,21 @@
+ 	return sptm_status;
+ }
+ 
++/* ruan bring-up: ruan-wc-dram=<pa> treats every physical address at or above <pa> as DRAM for write-combined mappings. The GPU pool is
++ * DRAM carved out of the range XNU manages, so is_dram_addr() is false for it and a write-combined view became Device-GRE: libsystem's
++ * memcpy (unaligned q-register stores) then took alignment faults in Turnip inside WindowServer (esr 0x92000061, SIGBUS). On SM7435
++ * DRAM starts at 0x80000000 and every MMIO window is below it. */
++static bool
++ruan_wc_dram(pmap_paddr_t pa)
++{
++	static uint64_t from = UINT64_MAX;      /* UINT64_MAX: not parsed yet; 0: off */
++	if (from == UINT64_MAX) {
++		uint64_t value = 0;
++		from = PE_parse_boot_argn("ruan-wc-dram", &value, sizeof(value)) ? value : 0;
++	}
++	return from && pa >= from;
++}
++
+ static pt_entry_t
+ wimg_to_pte(unsigned int wimg, pmap_paddr_t pa)
+ {
+@@ -6563,7 +6578,7 @@
+ 		pte |= ARM_PTE_NX | ARM_PTE_PNX;
+ 		break;
+ 	case VM_WIMG_WCOMB:
+-		if (is_dram_addr(pa)) {
++		if (is_dram_addr(pa) || ruan_wc_dram(pa)) {
+ 			pte = ARM_PTE_ATTRINDX(CACHE_ATTRINDX_WRITECOMB);
+ 		} else {
+ #if HAS_FEAT_XS

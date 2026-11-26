@@ -1,6 +1,6 @@
 --- a/bsd/dev/arm/systemcalls.c
 +++ b/bsd/dev/arm/systemcalls.c
-@@ -178,7 +178,23 @@
+@@ -178,7 +178,45 @@
  #endif /* CONFIG_DEBUG_SYSCALL_REJECTION */
  
  	AUDIT_SYSCALL_ENTER(code, proc, uthread);
@@ -12,7 +12,29 @@
 +		if (ruan_sctrace < 0 && !PE_parse_boot_argn("ruan-sctrace", &ruan_sctrace, sizeof(ruan_sctrace))) {
 +			ruan_sctrace = 0;
 +		}
-+		if (ruan_sctrace > 0 && proc_getpid(proc) == 1 && ruan_sctrace_done < ruan_sctrace) {
++		/* ruan-sctrace-name=<p_comm>: every system call of processes with that name (first 4000), with the path of the
++		 * path-taking calls, to see what a boot task does before it aborts (init_featureflags, full-OS boot 3). */
++		static char ruan_sct_name[MAXCOMLEN + 1];
++		static int ruan_sct_name_state, ruan_sct_name_done;
++		if (!ruan_sct_name_state) {
++			ruan_sct_name_state = PE_parse_boot_arg_str("ruan-sctrace-name", ruan_sct_name, sizeof(ruan_sct_name)) &&
++			    ruan_sct_name[0] ? 1 : 2;
++		}
++		if (ruan_sct_name_state == 1 && ruan_sct_name_done < 4000 && !strncmp(proc_best_name(proc), ruan_sct_name, MAXCOMLEN)) {
++			char path[96] = "";
++			int which = (code == 463 || code == 465 || code == 469 || code == 472 || code == 473) ? 1 :
++			    (code == 5 || code == 33 || code == 338 || code == 340 || code == 398 || code == 220 || code == 188 ||
++			    code == 136 || code == 10 || code == 128 || code == 137 || code == 234 || code == 235 || code == 237) ? 0 : -1;
++			size_t got = 0;
++			if (which >= 0 && copyinstr((user_addr_t)uthread->uu_arg[which], path, sizeof(path), &got)) {
++				strlcpy(path, "?", sizeof(path));
++			}
++			error = (*(callp->sy_call))(proc, &uthread->uu_arg[0], &(uthread->uu_rval[0]));
++			ruan_sct_name_done++;
++			printf("sctn %d %s: %d(%llx,%llx,%llx) %s = %d/%lld\n", proc_getpid(proc), ruan_sct_name, code,
++			    (unsigned long long)uthread->uu_arg[0], (unsigned long long)uthread->uu_arg[1],
++			    (unsigned long long)uthread->uu_arg[2], path, error, (long long)uthread->uu_rval[0]);
++		} else if (ruan_sctrace > 0 && proc_getpid(proc) == 1 && ruan_sctrace_done < ruan_sctrace) {
 +			ruan_sctrace_done++;
 +			error = (*(callp->sy_call))(proc, &uthread->uu_arg[0], &(uthread->uu_rval[0]));
 +			printf("sct %d: %d(%llx,%llx,%llx) = %d/%lld\n", ruan_sctrace_done, code,

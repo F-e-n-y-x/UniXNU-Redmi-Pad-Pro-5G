@@ -60,7 +60,10 @@ safe += ('static inline void *ruan_safe_memcpy (void *d, const void *s, size_t n
 # UFS boot 2: "Unaligned kernel data abort" in hostIssue (UPIU fields in an uncached/write-combined UCD, which this kernel maps as
 # Device memory): the copy is also built with -mstrict-align, and its memcpy calls use the copy above.
 ufs_copy.write_text(safe + ufs_src.replace('bzero (', 'ruan_safe_bzero (').replace('memcpy (', 'ruan_safe_memcpy ('))
-sources = [base, ufs_copy, ROOT / 'kits/ruan/RuanMacUfs.cpp']
+# NativeRamBlock (UniXNU RamBlock): the USB-sent Data container (/chosen/memory-map RAMDisk) as an IOMedia, so APFS publishes its volume
+# (XNU's md0 is a plain memdev that APFS never probes: full-OS boot 2). Same treatment as NativeUfs: macOS ABI, late registration.
+ramblock = ROOT / 'drivers/RamBlock/NativeRamBlock.cpp'
+sources = [base, ufs_copy, ramblock, ROOT / 'kits/ruan/RuanMacUfs.cpp']
 source_index = next(i for i, a in enumerate(base_command) if a.endswith('/NativeUfs.cpp'))
 output_index = base_command.index('-o') + 1
 objcopy = next((str(p) for p in (compiler_dir / 'llvm-objcopy', Path('/opt/unixnu-linux/llvm/bin/llvm-objcopy'))
@@ -71,7 +74,7 @@ for source in sources:
     obj = out / (source.stem + '.mac.o')
     command = list(base_command)
     command[source_index], command[output_index] = str(source), str(obj)
-    command += ['-include', str(osx), '-I', str(ROOT / 'drivers/ShengUfs')]   # the copy's quoted includes
+    command += ['-include', str(osx), '-I', str(ROOT / 'drivers/ShengUfs'), '-I', str(ROOT / 'drivers/RamBlock')]   # quoted includes
     if source == ufs_copy:
         command.append('-mstrict-align')
     if source == base:
@@ -80,13 +83,66 @@ for source in sources:
     (out / (source.stem + '.mac.log')).write_text(result.stdout)
     if result.returncode:
         raise SystemExit(f'{source.name}:\n{result.stdout[-5000:]}')
-    if source.name in ('IOBlockStorageDevice.cpp', 'NativeUfs.cpp'):
+    if source.name in ('IOBlockStorageDevice.cpp', 'NativeUfs.cpp', 'NativeRamBlock.cpp'):
         late = obj.with_suffix('.late.o')
         subprocess.run([objcopy, '--remove-section=__DATA,__mod_init_func',
                         f'--globalize-symbol=__GLOBAL__sub_I_{source.name}', obj, late], check=True)
         obj = late
     objects.append(obj)
 
+# RuanDummyEth (package/RuanDummyEth.cpp): the virtual built-in en0 TimeSync needs before WindowServer draws. An IOEthernetController
+# subclass: compiled against the macOS SDK's IONetworking headers, its initializer run late (RuanMacUfs.cpp), and its
+# IONetworkingFamily imports bound to that kext's addresses in this kernel collection (as UniXNU-tb375fc's build_desktop_tier3.py;
+# the plain-arm64 kernel has no PAC vtable diversity to match). The addresses come from the previous kernel image: the kext's
+# place in Apple's collection does not change between our builds.
+import os as _os, sys as _sys
+sdk_kernel = _os.environ.get('MACOS_SDK', '/root/unixnu-work/apple-trees/MacOSX26.sdk') + '/System/Library/Frameworks/Kernel.framework/Headers'
+eth_src = ROOT / 'kits/ruan/RuanDummyEth.cpp'
+if eth_src.is_file() and _os.path.isdir(sdk_kernel):
+    eth_obj = out / 'RuanDummyEth.mac.o'
+    command = list(base_command)
+    command[source_index], command[output_index] = str(eth_src), str(eth_obj)
+    command += ['-include', str(osx), f'-isystem{sdk_kernel}', '-Wno-unused-parameter', '-Wno-error']
+    result = subprocess.run(command, cwd=record['directory'], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    (out / 'RuanDummyEth.mac.log').write_text(result.stdout)
+    if result.returncode:
+        raise SystemExit('RuanDummyEth.cpp:\n' + result.stdout[-5000:])
+    eth_late = out / 'RuanDummyEth.mac.late.o'
+    subprocess.run([objcopy, '--remove-section=__DATA,__mod_init_func', '--globalize-symbol=__GLOBAL__sub_I_RuanDummyEth.cpp',
+                    eth_obj, eth_late], check=True)
+    undefined = subprocess.run(['xcrun', 'nm', '-u', '-j', eth_late], text=True, stdout=subprocess.PIPE, check=True).stdout.split()
+    wanted = sorted({u for u in undefined if any(t in u for t in ('IONetwork', 'IOEthernet', 'IOMbuf', 'IOOutputQueue'))})
+    kc_path = Path(_os.environ.get('RUAN_KC_FOR_BINDINGS', '/root/unixnu-work/macos-build/out-gpu/kernel.macho'))
+    _sys.path.insert(0, str(Path('/root/unixnu-work/UniXNU-macos/kits/XnuPrelink')))
+    from kc_image import Image
+    raw = kc_path.read_bytes()
+    kc = Image(raw)
+    net = {}
+    for kext, (_va, off) in kc.entries.items():
+        if kext == 'com.apple.iokit.IONetworkingFamily':
+            for va, names in Image(raw, off).symbols().items():
+                for n in names:
+                    net[n] = va
+    assert net, f'{kc_path}: no IONetworkingFamily symbols'
+    text, addrs = '.text\n.p2align 2\n', ''
+    for sym in wanted:
+        if sym in net:
+            if sym.endswith('gMetaClassE') or sym.startswith(('__ZTV', '__ZTI')):
+                addrs += f'.globl {sym}\n.set {sym}, {net[sym]:#x}\n'
+            else:
+                addrs += f'.globl {sym}.original\n.set {sym}.original, {net[sym]:#x}\n'
+                text += f'.globl {sym}\n{sym}:\n bti c\n b {sym}.original\n'
+        else:
+            # padding slots (_RESERVEDIONetworkController*) are never called
+            assert '_RESERVED' in sym, f'IONetworkingFamily symbol missing from {kc_path}: {sym}'
+            text += f'.globl {sym}\n{sym}:\n bti c\n ret\n'
+    for name, body in (('eth-bindings', text), ('eth-addresses', addrs)):
+        (out / f'{name}.S').write_text(body)
+        subprocess.run([base_command[0], '-target', 'arm64-apple-ios17.0', '-c', out / f'{name}.S', '-o', out / f'{name}.o'],
+                       check=True)
+        objects.append(out / f'{name}.o')
+    objects.append(eth_late)
+    print(f'RuanDummyEth: {len(wanted)} IONetworkingFamily bindings from {kc_path.name}')
 nm = subprocess.run(['xcrun', 'nm', '-u', '-j', *objects], text=True, stdout=subprocess.PIPE, check=True).stdout.split()
 defined = set(subprocess.run(['xcrun', 'nm', '-U', '-j', *objects], text=True, stdout=subprocess.PIPE, check=True).stdout.split())
 left = sorted({n for n in nm if 'IOBlockStorageDevice' in n} - defined)
@@ -94,4 +150,4 @@ assert not left, 'IOBlockStorageDevice imports left: ' + ', '.join(left[:5])
 archive = out / 'libShengUfs.a'
 archive.unlink(missing_ok=True)
 subprocess.run(['xcrun', 'ar', 'rcs', archive, *objects], check=True)
-print(f'PASS: {archive.name} = source IOBlockStorageDevice + NativeUfs + RuanMacUfs (macOS ABI, late registration)')
+print(f'PASS: {archive.name} = source IOBlockStorageDevice + NativeUfs + NativeRamBlock + RuanMacUfs (macOS ABI, late registration)')

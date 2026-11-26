@@ -38,6 +38,9 @@ extern "C" char ruan_bl_mirror_status[96] __attribute__((weak_import));
 extern "C" volatile uint32_t ruan_touch_multi __attribute__((weak_import));   // RuanInput.c / novatek: multi-finger reports
 extern "C" volatile uint32_t ruan_touch_maxfingers __attribute__((weak_import));
 extern "C" volatile uint32_t ruan_touch_lastmulti[4] __attribute__((weak_import));
+extern "C" volatile uint32_t native_touch_hid_reports __attribute__((weak_import));   // NativeHidInput: reports handed to IOHIDEventDriver
+extern "C" volatile uint32_t native_hid_input_events[8] __attribute__((weak_import)); // HidInputProbe.cpp: [6] pointer handleReport calls
+extern "C" volatile int native_hid_input_results[8] __attribute__((weak_import));     // [6] its last IOReturn
 extern "C" volatile int32_t ruan_panel120_stats[32] __attribute__((weak_import));   // RuanPanel120.c, USB `panel120`   // RuanBacklight.cpp, the second SY7758
 
 // ruan macOS: PAC trap emulator counters (ruan-pac-emulator.patch); weak, absent on iPadOS kernels.
@@ -555,7 +558,7 @@ static void handleCommand(TerminalSession &s, const char *raw) {
     if (strEq(raw, "ping")) {
         s.reply.writeStr("[usb] PONG ruan\r\n");
     } else if (strEq(raw, "features") || strEq(raw, "help")) {
-        s.reply.writeStr("FEATURES: ping status bootargs display usb touch battery wifi wifi.log bt bt.log video video.log audio replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg gpu\r\n");
+        s.reply.writeStr("FEATURES: ping status bootargs display usb touch battery wifi wifi.log bt bt.log video video.log audio replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg fb fb.scan gpu\r\n");
     } else if (strEq(raw, "wifi") || strEq(raw, "wlan")) {
         if (&ruan_wifi_status_str && ruan_wifi_status_str) {
             snprintf(buf, sizeof(buf), "[usb] WIFI: %s\r\n", ruan_wifi_status_str());
@@ -812,6 +815,11 @@ static void handleCommand(TerminalSession &s, const char *raw) {
                      ruan_touch_multi, ruan_touch_maxfingers, ruan_touch_lastmulti[0], ruan_touch_lastmulti[1], ruan_touch_lastmulti[2], ruan_touch_lastmulti[3]);
             s.reply.writeStr(buf);
         }
+        if (&native_touch_hid_reports && &native_hid_input_events && &native_hid_input_results) {
+            snprintf(buf, sizeof(buf), "[usb] INPUT: hid reports %u, pointer handleReport %u last %#x\r\n", native_touch_hid_reports,
+                     native_hid_input_events[6], (unsigned)native_hid_input_results[6]);
+            s.reply.writeStr(buf);
+        }
     } else if (strEq(raw, "dpu")) {
         // Read-only DPU probe (docs/research/dpu-scanout-sm7435.md step a): which pipe scans out the boot buffer, its format and
         // stride, the CTL's active pipes/flush, and INTF1's frame counter. MDP block 0xae00000 + 0x84000 from the live DT.
@@ -952,6 +960,82 @@ static void handleCommand(TerminalSession &s, const char *raw) {
         usbCatStart(s.xfer, s.reply, raw + 4);
     } else if (strEq(raw, "dmesg")) {
         usbDmesgStart(s.xfer, s.reply);
+    } else if (strEq(raw, "fb")) {
+        // The scanned-out framebuffer at full resolution, raw BGRA8888 rows, streamed like a file (RUANF, CRC32) straight from
+        // its memory (no copy: the system may be short of memory). `screen.snapshot` stays the quick 1264-edge RGB565 preview.
+        if (s.xfer.active) usbFileEnd(s.xfer);
+        ++s.xfer.id;
+        const bool have = &native_legacy_gop_virtual && &native_legacy_gop_width && &native_legacy_gop_height && &native_legacy_gop_bytes;
+        const uint64_t bytes = have ? (uint64_t)native_legacy_gop_width * native_legacy_gop_height * 4u : 0;
+        if (!have || !native_legacy_gop_virtual || native_legacy_gop_width < 64 || native_legacy_gop_height < 64 || bytes > native_legacy_gop_bytes) {
+            usbFileErr(s.reply, s.xfer.id, ENXIO, "framebuffer not ready");
+        } else {
+            if (&native_legacy_direct_snapshot) native_legacy_direct_snapshot();
+            flush_dcache64((uint64_t)native_legacy_gop_virtual, (unsigned)bytes, 0);
+            s.xfer.mem = reinterpret_cast<uint8_t *>(native_legacy_gop_virtual);
+            s.xfer.borrowed = true;
+            s.xfer.memCap = 0;
+            s.xfer.size = static_cast<uint32_t>(bytes);
+            char name[48];
+            snprintf(name, sizeof(name), "fb %ux%u bgra", native_legacy_gop_width, native_legacy_gop_height);
+            usbFileBegin(s.xfer, s.reply, name);
+        }
+    } else if (strEq(raw, "fb.scan")) {
+        // What the panel actually scans: VIG0's live address/stride/size, read through a fresh non-cacheable view of that address with
+        // no cache maintenance, streamed like `fb` (host: ruan-usbdbg.py fullshot --cmd fb.scan). First a line comparing it with the
+        // copy's own mapping (native_legacy_gop_virtual, what `fb` reads) and the INTF1 underrun latch before/after 500 ms.
+        static OSSharedPtr<IOMemoryMap> mdpMap, scanMap;
+        static uintptr_t mdp, scanVa;
+        static uint64_t scanPa, scanLen;
+        if (s.xfer.active) usbFileEnd(s.xfer);
+        ++s.xfer.id;
+        if (!mdp) mdp = mapRangeUncached(0xae00000, 0x84000, mdpMap);
+        auto r = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
+        const uint32_t size = mdp ? r(mdp + 0x5000) : 0, addr = mdp ? r(mdp + 0x5014) : 0, stride = mdp ? r(mdp + 0x5024) & 0xffff : 0;
+        const uint32_t fmt = mdp ? r(mdp + 0x5030) : 0, w = size & 0xffff, h = size >> 16;
+        const uint64_t len = (uint64_t)stride * h;
+        if (addr && w >= 64 && h >= 64 && stride >= w * 4 && len <= (64ull << 20) && (addr != scanPa || len != scanLen)) {
+            scanMap.reset(); scanVa = 0;
+            if (IODeviceMemory *mem = IODeviceMemory::withRange(addr, len)) {
+                scanMap = OSSharedPtr<IOMemoryMap>(mem->map(kIOMapAnywhere | kIOMapWriteCombineCache), OSNoRetain);
+                mem->release();
+            }
+            if (scanMap) { scanVa = static_cast<uintptr_t>(scanMap->getVirtualAddress()); scanPa = addr; scanLen = len; }
+        }
+        // Differing 64-byte blocks between the scanned buffer and the copy's mapping (same rows when the strides agree).
+        uint64_t diff = 0; int firstRow = -1;
+        const bool same = &native_legacy_gop_virtual && native_legacy_gop_virtual && &native_legacy_gop_bytes && scanVa &&
+                          native_legacy_gop_bytes == len;
+        if (same) {
+            const volatile uint64_t *a = reinterpret_cast<const volatile uint64_t *>(scanVa);
+            const volatile uint64_t *b = reinterpret_cast<const volatile uint64_t *>(native_legacy_gop_virtual);
+            for (uint64_t i = 0; i < len / 8; i += 8) {
+                bool d = false;
+                for (unsigned k = 0; k < 8; k++) d |= a[i + k] != b[i + k];
+                if (d) { if (firstRow < 0) firstRow = int(i * 8 / stride); diff++; }
+            }
+        }
+        const uint32_t i0 = mdp ? r(mdp + 0x1014) : 0, u0 = mdp ? r(mdp + 0x36268) : 0, f0 = mdp ? r(mdp + 0x360ac) : 0;
+        if (mdp) { *reinterpret_cast<volatile uint32_t *>(mdp + 0x1018) = 1u << 26; __asm__ volatile("dsb sy" ::: "memory"); }
+        IOSleep(500);
+        const uint32_t i1 = mdp ? r(mdp + 0x1014) : 0, u1 = mdp ? r(mdp + 0x36268) : 0, f1 = mdp ? r(mdp + 0x360ac) : 0;
+        snprintf(buf, sizeof(buf), "[usb] FBSCAN: vig0 addr=%08x stride=%u %ux%u fmt=%08x gop_pa=%llx gop_bytes=%llu cmp=%s diff64=%llu first_row=%d "
+                 "underrun_bit %u->%u (500 ms) underrun_pos %08x->%08x frames %u->%u\r\n",
+                 addr, stride, w, h, fmt, &native_legacy_gop_physical ? (unsigned long long)native_legacy_gop_physical : 0ULL,
+                 &native_legacy_gop_bytes ? (unsigned long long)native_legacy_gop_bytes : 0ULL, same ? "yes" : "no",
+                 (unsigned long long)diff, firstRow, (i0 >> 26) & 1, (i1 >> 26) & 1, u0, u1, f0, f1);
+        s.reply.writeStr(buf);
+        if (!scanVa || scanPa != addr || scanLen != len) {
+            usbFileErr(s.reply, s.xfer.id, ENXIO, "scanout not mappable");
+        } else {
+            s.xfer.mem = reinterpret_cast<uint8_t *>(scanVa);
+            s.xfer.borrowed = true;
+            s.xfer.memCap = 0;
+            s.xfer.size = static_cast<uint32_t>(len);
+            char name[64];
+            snprintf(name, sizeof(name), "fb %ux%u bgra stride %u", w, h, stride);
+            usbFileBegin(s.xfer, s.reply, name);
+        }
     } else if (strEq(raw, "reboot") || strEq(raw, "reboot.fastboot")) {
         const bool fastboot = strEq(raw, "reboot.fastboot");
         (void)PE_parse_boot_argn("ruan-usbdbg-reboot", &gRebootAllowed, sizeof(gRebootAllowed));
@@ -1299,6 +1383,21 @@ static bool bringUpController(TerminalSession &s) {
 
 __attribute__((unused)) static TerminalSession *gSession = nullptr;
 
+// The next piece of the ramoops console ring the host has not seen, as one bulk-IN transfer. True when a transfer started.
+static bool drainRamoops(TerminalSession &s, uint8_t *tx) {
+    if (!s.ramoops) return false;
+    volatile const uint32_t *hdr = reinterpret_cast<volatile const uint32_t *>(s.ramoops);
+    const uint32_t sig = hdr[0], start = hdr[1];
+    if (sig != J716F_RAMOOPS_SIG || start >= J716F_RAMOOPS_DATA || start == s.lastRamoopsPos) return false;
+    const volatile uint8_t *ring = s.ramoops + J716F_RAMOOPS_HEAD;
+    uint32_t avail = (start >= s.lastRamoopsPos) ? (start - s.lastRamoopsPos) : (J716F_RAMOOPS_DATA - s.lastRamoopsPos);
+    if (avail > DMA_EP3_MAX_CHUNK) avail = DMA_EP3_MAX_CHUNK;
+    for (uint32_t i = 0; i < avail; ++i) tx[i] = ring[s.lastRamoopsPos + i];
+    if (!startBulkIn(s.hw, tx, avail)) return false;
+    s.lastRamoopsPos = (s.lastRamoopsPos + avail) % J716F_RAMOOPS_DATA;
+    return true;
+}
+
 static void usbDebugThread(void *arg, int waitResult) {
     (void)arg;
     (void)waitResult;
@@ -1400,22 +1499,8 @@ static void usbDebugThread(void *arg, int waitResult) {
                 if (s->reply.used > 0) {
                     const uint32_t n = s->reply.pop(txScratch, DMA_EP3_MAX_CHUNK);
                     (void)startBulkIn(s->hw, txScratch, n);
-                } else if (s->ramoops) {
-                    volatile const uint32_t *hdr = reinterpret_cast<volatile const uint32_t *>(s->ramoops);
-                    const uint32_t sig = hdr[0], start = hdr[1];
-                    if (sig == J716F_RAMOOPS_SIG && start < J716F_RAMOOPS_DATA && start != s->lastRamoopsPos) {
-                        const volatile uint8_t *ring = s->ramoops + J716F_RAMOOPS_HEAD;
-                        uint32_t avail = (start >= s->lastRamoopsPos)
-                            ? (start - s->lastRamoopsPos)
-                            : (J716F_RAMOOPS_DATA - s->lastRamoopsPos);
-                        if (avail > DMA_EP3_MAX_CHUNK) avail = DMA_EP3_MAX_CHUNK;
-                        for (uint32_t i = 0; i < avail; ++i) {
-                            txScratch[i] = ring[s->lastRamoopsPos + i];
-                        }
-                        if (startBulkIn(s->hw, txScratch, avail)) {
-                            s->lastRamoopsPos = (s->lastRamoopsPos + avail) % J716F_RAMOOPS_DATA;
-                        }
-                    }
+                } else {
+                    (void)drainRamoops(*s, txScratch);
                 }
             }
         }
@@ -1437,7 +1522,39 @@ static void usbDebugThread(void *arg, int waitResult) {
     }
 }
 
+// Panic: the debug thread no longer runs, so the panic path drives the controller itself (patches/xnu-12377/ruan-panic-reset.patch
+// calls this before its reset): the rest of the console ring, then XNU's panic log (debug_buf_base..debug_buf_ptr, where the panic
+// text and backtrace go), polled with busy-wait delays for up to `ms`. Before, a panic's text never reached the host (full-OS boots).
+extern "C" char *debug_buf_base;
+extern "C" char *debug_buf_ptr;
+static void panicPump(uint64_t ms) {
+    TerminalSession *s = gSession;
+    uint8_t *tx = gFlushScratch;
+    if (!s || !tx || !s->hw.configured) return;
+    static const char kBanner[] = "\n[usb] === panic log (polled from the panic path) ===\n";
+    bool banner = false;
+    size_t sent = 0;
+    const uint64_t end = nowMs() + ms;
+    while (nowMs() < end) {
+        pollUsbEvents(*s);
+        if (s->hw.ep3Busy && nowMs() > s->hw.ep3ArmTick + 2000ULL) endDepTransfer(s->hw, 3, s->hw.ep3RscIdx, s->hw.ep3Busy);
+        if (!s->hw.hostReady || s->hw.ep3Busy) { IODelay(200); continue; }
+        if (drainRamoops(*s, tx)) continue;
+        if (!banner) { memcpy(tx, kBanner, sizeof(kBanner) - 1); if (startBulkIn(s->hw, tx, sizeof(kBanner) - 1)) banner = true; continue; }
+        const size_t total = (debug_buf_base && debug_buf_ptr > debug_buf_base) ? (size_t)(debug_buf_ptr - debug_buf_base) : 0;
+        if (sent < total) {
+            uint32_t n = (uint32_t)((total - sent) > DMA_EP3_MAX_CHUNK ? DMA_EP3_MAX_CHUNK : (total - sent));
+            memcpy(tx, debug_buf_base + sent, n);
+            if (startBulkIn(s->hw, tx, n)) sent += n;
+            continue;
+        }
+        IODelay(500);
+    }
+}
+
 } // namespace
+
+extern "C" void ruan_usb_panic_pump(uint64_t ms) { panicPump(ms); }
 
 extern "C" void usb_debug_draw_hud(void) {
     renderHudOverlay();

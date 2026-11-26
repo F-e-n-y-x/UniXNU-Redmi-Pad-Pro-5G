@@ -1,0 +1,134 @@
+ruan (macOS, UFS root): ruan-mac-data=1 mounts the USB-sent Data volume (macos/tools/make-macos-data.py) read-write at
+/System/Volumes/Data and sets /usr/share/firmlinks into it before launchd (UniXNU's owner Data mount and firmlink loop,
+without the owner-verified boot chain an ad-hoc root cannot have). ruan-mac-data-uuid=<volume UUID> (or ruan-mac-data-dev=<bsd name>). Never fatal.
+
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -9785,6 +9785,119 @@
+ }
+ #endif
+ 
++/*
++ * ruan (macOS on the UFS root, patches/xnu-12377/ruan-mac-data-mount.patch): ruan-mac-data=1 mounts the USB-sent Data volume
++ * (macos/tools/make-macos-data.py: md1 of the RAM image, published by APFS as ruan-mac-data-dev, default disk1s1) read-write at
++ * /System/Volumes/Data and sets the firmlinks of /usr/share/firmlinks into it, before launchd. It is UniXNU's owner Data mount
++ * (macos-owner-data-firmlinks.patch: same mount request and firmlink loop) without its owner-verified boot chain
++ * (boot manifest, cache startup, root trust), which an ad-hoc signed root cannot have. Never fatal: one line says what happened.
++ */
++#define RUAN_MAC_DATA_MOUNT_POINT "/System/Volumes/Data"
++#if CONFIG_FIRMLINKS
++static int
++ruan_mac_data_firmlinks(vfs_context_t ctx)
++{
++	vnode_t list = NULLVP;
++	off_t size = 0;
++	int error, resid = 0, linked = 0, skipped = 0, has_private = 0;
++	char *buffer = NULL, *target_path = kalloc_data(MAXPATHLEN, Z_WAITOK | Z_ZERO);
++
++	error = vnode_lookup("/usr/share/firmlinks", 0, &list, ctx);
++	if (error) goto done;
++	error = vnode_size(list, &size, ctx);
++	if (error) goto done;
++	if (size <= 0 || size > 16384) { error = EFBIG; goto done; }
++	buffer = kalloc_data((vm_size_t)size + 1, Z_WAITOK | Z_ZERO);
++	if (!buffer || !target_path) { error = ENOMEM; goto done; }
++	error = vn_rdwr(UIO_READ, list, buffer, (int)size, 0, UIO_SYSSPACE, 0,
++	    vfs_context_ucred(ctx), &resid, vfs_context_proc(ctx));
++	if (!error && resid) error = EIO;
++	if (error) goto done;
++	for (char *line = buffer, *next = NULL; line && *line; line = next) {
++		next = strchr(line, '\n');
++		if (next) *next++ = '\0';
++		char *relative = strchr(line, '\t');
++		if (!relative || line[0] != '/' || relative[1] == '\0' || relative[1] == '/') { skipped++; continue; }
++		*relative++ = '\0';
++		if (strlcpy(target_path, RUAN_MAC_DATA_MOUNT_POINT "/", MAXPATHLEN) >= MAXPATHLEN ||
++		    strlcat(target_path, relative, MAXPATHLEN) >= MAXPATHLEN) { skipped++; continue; }
++		vnode_t source = NULLVP, target = NULLVP;
++		int result = vnode_lookup(line, VNODE_LOOKUP_NOFOLLOW, &source, ctx);
++		if (!result) result = vnode_lookup(target_path, VNODE_LOOKUP_NOFOLLOW, &target, ctx);
++		if (!result && (vnode_vtype(source) != VDIR || vnode_vtype(target) != VDIR ||
++		    vnode_mount(source) == vnode_mount(target))) result = ENOTDIR;
++		if (!result) result = vnode_setasfirmlink(source, target);
++		if (target) vnode_put(target);
++		if (source) vnode_put(source);
++		if (result) {
++			/* An entry for content this system does not ship (/AppleInternal) has no source or target. */
++			printf("ruan-mac-data: firmlink %s -> %s not set: %d\n", line, target_path, result);
++			skipped++;
++			continue;
++		}
++		linked++;
++		if (!strcmp(line, "/private")) has_private = 1;
++	}
++	if (!has_private) error = ENOENT;
++done:
++	if (list) vnode_put(list);
++	if (buffer) kfree_data(buffer, (vm_size_t)size + 1);
++	if (target_path) kfree_data(target_path, MAXPATHLEN);
++	printf("ruan-mac-data: %d firmlinks set, %d skipped, status %d\n", linked, skipped, error);
++	return error;
++}
++#endif
++
++static void
++ruan_mac_data_mount(proc_t p, user_addr_t scratch)
++{
++	extern void IOSleep(unsigned int);
++	unsigned enabled = 0;
++	char dev[32] = "disk1s1", device_path[48];
++	int error, firmlinks = ENOTSUP;
++	int32_t result = 0;
++	if (!PE_parse_boot_argn("ruan-mac-data", &enabled, sizeof(enabled)) || !enabled) return;
++	PE_parse_boot_arg_str("ruan-mac-data-dev", dev, sizeof(dev));
++	/* ruan-mac-data-uuid=<volume UUID>: the APFS volume's own BSD node, found in IOKit by UUID as the root is
++	 * (package/RuanMacUfs.cpp ruan_mac_volume_bsd_name, up to 20 s). disk1s1 is the RAM container's physical store,
++	 * not its volume: mounting it fails before APFS sees it (error 13, full-OS boot 1). */
++	char uuid[40] = "";
++	if (PE_parse_boot_arg_str("ruan-mac-data-uuid", uuid, sizeof(uuid)) && uuid[0]) {
++		extern int ruan_mac_volume_bsd_name(const char *, char *, size_t);
++		if (!ruan_mac_volume_bsd_name(uuid, dev, sizeof(dev))) strlcpy(dev, "no-volume-with-that-uuid", sizeof(dev));
++	}
++	snprintf(device_path, sizeof(device_path), "/dev/%s", dev);
++	uint8_t payload[0x150] = {0};
++	user64_addr_t spec = scratch + 0x160;
++	uint16_t mode = 1;
++	uint32_t anonymous_owner = 99;
++	memcpy(payload, &spec, sizeof(spec));
++	memcpy(payload + 16, &mode, sizeof(mode));
++	memcpy(payload + 0x144, &anonymous_owner, sizeof(anonymous_owner));
++	memcpy(payload + 0x148, &anonymous_owner, sizeof(anonymous_owner));
++	struct mount_args request = {.type = scratch + 0x100, .path = scratch + 0x120, .flags = 0, .data = scratch + 0x200};
++	/* APFS publishes the RAM volume's node shortly after IOKit matches the RAM disk: up to 20 s */
++	for (int wait = 0; wait < 200; wait++) {
++		vnode_t node = NULLVP;
++		if (!vnode_lookup(device_path, 0, &node, vfs_context_current())) { vnode_put(node); break; }
++		IOSleep(100);
++	}
++	if (!(error = copyout("apfs", request.type, 5)) &&
++	    !(error = copyout(RUAN_MAC_DATA_MOUNT_POINT, request.path, sizeof(RUAN_MAC_DATA_MOUNT_POINT))) &&
++	    !(error = copyout(device_path, spec, strlen(device_path) + 1)) &&
++	    !(error = copyout(payload, request.data, sizeof(payload)))) {
++		error = mount(p, &request, &result);
++	}
++#if CONFIG_FIRMLINKS
++	if (!error) firmlinks = ruan_mac_data_firmlinks(vfs_context_current());
++#endif
++	char line[128];
++	snprintf(line, sizeof(line), "ruan-mac-data: %s on " RUAN_MAC_DATA_MOUNT_POINT " rw: error %d, firmlinks %d", device_path,
++	    error, firmlinks);
++	printf("%s\n", line);
++	boot_progress_stage(line);
++}
++
+ static int
+ load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path, user_addr_t envp)
+ {
+@@ -9965,6 +10078,7 @@
+ 	boot_progress_stage("temporary watchdog launch policy ready");
+ #endif
+ #endif
++	ruan_mac_data_mount(p, (user_addr_t)scratch_addr);
+ 	/* ruan: the AppleKeyStore stand-in (package/KeyStoreProbe.cpp, UniXNU component AppleKeyStoreState) for keybagd,
+ 	 * init_data_protection and usermanagerd on a SEP-less board, before launchd; it starts only with aks=1 and
+ 	 * offline-key-events=1, as on UniXNU-gts7xlwifi. */

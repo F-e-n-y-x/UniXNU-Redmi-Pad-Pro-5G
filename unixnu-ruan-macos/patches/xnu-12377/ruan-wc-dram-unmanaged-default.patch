@@ -1,0 +1,29 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -6728,6 +6728,12 @@
+ 			if ((flags & (VM_WIMG_MASK | VM_WIMG_USE_DEFAULT))) {
+ 				wimg_bits = (wimg_bits & (~VM_WIMG_MASK)) | (flags & (VM_WIMG_MASK | VM_WIMG_USE_DEFAULT));
+ 			}
++			/* ruan bring-up: a user Device mapping of GPU-pool DRAM (alignment-fault trap); should never print with the default above. */
++			static uint32_t ruan_wc_dram_notes;
++			if (pmap != kernel_pmap && ruan_wc_dram(pa) && (wimg_bits & VM_WIMG_MASK) != VM_WIMG_WCOMB &&
++			    os_atomic_inc_orig(&ruan_wc_dram_notes, relaxed) < 16) {
++				printf("ruan-wc-dram: user pa 0x%llx va 0x%llx wimg 0x%x flags 0x%x\n", (uint64_t)pa, (uint64_t)v, wimg_bits, flags);
++			}
+ 
+ 			pte |= pmap_get_pt_ops(pmap)->wimg_to_pte(wimg_bits, pa);
+ 
+@@ -10807,6 +10813,13 @@
+ 
+ 	if (!pa_valid(paddr)) {
+ 		pmap_io_range_t *io_rgn = pmap_find_io_attr(paddr);
++		/* ruan bring-up: vm_fault enters device-pager pages with no WIMG flags (pmap_enter_object_options_check passes 0), so an
++		 * unmanaged page gets this default whatever cache mode its VM object asked for. The GPU pool (DRAM outside the managed range,
++		 * >= ruan-wc-dram) became Device-nGnRnE in user views of multi-run pool BOs, and Turnip's q-register stores took alignment
++		 * faults in WindowServer (esr 0x92000061). Default that DRAM to write-combined (Normal-NC); explicit WIMG flags still win. */
++		if (io_rgn == NULL && ruan_wc_dram(paddr)) {
++			return VM_WIMG_WCOMB;
++		}
+ 		return (io_rgn == NULL) ? VM_WIMG_IO : io_rgn->wimg;
+ 	}
+ 

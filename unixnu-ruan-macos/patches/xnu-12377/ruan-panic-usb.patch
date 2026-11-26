@@ -1,0 +1,19 @@
+ruan: before the panic reset, push the console ring and XNU's panic log over the USB debug terminal (package/UsbDebugCdc.cpp
+ruan_usb_panic_pump): panic text reached the host only as a photo of the screen until now.
+
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -1375,6 +1375,13 @@
+ ruan_panic_reset(void)
+ {
+ 	unsigned wait_s = 15;
++	/* ruan: the USB debug thread is stopped now; push the console ring and the panic log to the host first (package/UsbDebugCdc.cpp). */
++	extern void ruan_usb_panic_pump(uint64_t ms) __attribute__((weak_import));
++	static int pumped;
++	if (ruan_usb_panic_pump && !pumped) {
++		pumped = 1;
++		ruan_usb_panic_pump(8000);
++	}
+ 	if (PE_parse_boot_argn("ruan-panic-fastboot", &wait_s, sizeof(wait_s)) && wait_s == 0) {
+ 		return;
+ 	}

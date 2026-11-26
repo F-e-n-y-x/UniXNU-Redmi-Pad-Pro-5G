@@ -6,6 +6,7 @@ The tablet enumerates as a CDC-ACM serial device 1209:0001 "Redmi Pad Pro 5G Deb
   ruan-usbdbg.py log [--seconds N]          stream the kernel/boot log (ramoops console zone) to stdout + logs/usb-<time>.log
   ruan-usbdbg.py cmd status [--wait 2]      send one command (status display usb touch bootargs replay reboot.status ...)
   ruan-usbdbg.py shot [-o x.png] [--edge N] grab the screen (GOP scanout) as a PNG; --edge = longest side, 160..1264
+  ruan-usbdbg.py fullshot [-o x.png]       the framebuffer at FULL resolution (1600x2560, 32-bit) as a PNG (needs the kernel's `fb`)
   ruan-usbdbg.py ls <dir>                   list a directory on the tablet (read-only)
   ruan-usbdbg.py get <path> [-o file]       copy one file off the tablet (<= 8 MiB, CRC-checked)
   ruan-usbdbg.py dmesg [-o file]            the whole kernel message buffer (msgbufp)
@@ -174,6 +175,22 @@ def listdir(fd, wire, path, timeout=20.0):
     return entries
 
 
+def write_png_bgra(path, w, h, bgra):
+    """BGRA8888 rows -> 8-bit RGB PNG, standard library only."""
+    import struct, zlib
+    rows = bytearray()
+    for y in range(h):
+        row = bgra[y * w * 4:(y + 1) * w * 4]
+        rgb = bytearray(w * 3)
+        rgb[0::3], rgb[1::3], rgb[2::3] = row[2::4], row[1::4], row[0::4]
+        rows += b'\0' + rgb
+    def chunk(tag, body):
+        return struct.pack('>I', len(body)) + tag + body + struct.pack('>I', zlib.crc32(tag + body) & 0xffffffff)
+    png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0))
+    png += chunk(b'IDAT', zlib.compress(bytes(rows), 6)) + chunk(b'IEND', b'')
+    pathlib.Path(path).write_bytes(png)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--tty', help='serial device (default: find 1209:0001)')
@@ -185,6 +202,8 @@ def main():
     sub.add_parser('reboot-fastboot')
     sub.add_parser('reboot')
     p = sub.add_parser('ls'); p.add_argument('path')
+    p = sub.add_parser('fullshot'); p.add_argument('-o', '--output'); p.add_argument('--timeout', type=float, default=300.0)
+    p.add_argument('--cmd', default='fb', help="fb (the copy's buffer) or fb.scan (what VIG0 scans, uncached)")
     p = sub.add_parser('get'); p.add_argument('path'); p.add_argument('-o', '--output'); p.add_argument('--timeout', type=float, default=300.0)
     p = sub.add_parser('dmesg'); p.add_argument('-o', '--output'); p.add_argument('--timeout', type=float, default=180.0)
     p = sub.add_parser('pull-crashes'); p.add_argument('-d', '--dir', default='crashes')
@@ -238,6 +257,22 @@ def main():
             dest = a.output or os.path.basename(a.path)
             pathlib.Path(dest).write_bytes(data)
             print(f'ruan-usbdbg: {name} -> {dest} ({len(data)} bytes, CRC ok)')
+    elif a.what == 'fullshot':
+        try:
+            name, data = fetch(fd, wire, a.cmd, a.timeout)
+        except RuntimeError as e:
+            sys.exit(f'ruan-usbdbg: fullshot failed: {e} (a kernel without the `fb` command: use shot)')
+        m = re.match(r'fb (\d+)x(\d+) bgra(?: stride (\d+))?', name if isinstance(name, str) else name.decode())
+        if not m:
+            sys.exit(f'ruan-usbdbg: fullshot: unexpected header {name!r}')
+        w, h = int(m.group(1)), int(m.group(2))
+        stride = int(m.group(3) or w * 4)
+        assert len(data) == stride * h, f'{len(data)} bytes for {w}x{h} stride {stride}'
+        if stride != w * 4:
+            data = b''.join(data[y * stride:y * stride + w * 4] for y in range(h))
+        dest = a.output or time.strftime('fullshot-%Y%m%d-%H%M%S.png')
+        write_png_bgra(dest, w, h, data)
+        print(f'ruan-usbdbg: wrote {dest} ({w}x{h}, CRC ok)')
     elif a.what == 'pull-crashes':
         base = '/private/var/mobile/Library/Logs/CrashReporter'
         dest = pathlib.Path(a.dir); dest.mkdir(exist_ok=True)

@@ -1,0 +1,34 @@
+ruan: 16K-equivalent free-page thresholds on the 4K-page macOS kernel, and a log line for every user fault that ends in SIGBUS.
+
+--- a/osfmk/vm/vm_pageout.c
++++ b/osfmk/vm/vm_pageout.c
+@@ -267,9 +267,11 @@
+ #define VM_PAGE_FREE_MIN_LIMIT          1500
+ #define VM_PAGE_FREE_TARGET_LIMIT       2000
+ #else /* !XNU_TARGET_OS_OSX */
+-#define VM_PAGE_FREE_RESERVED_LIMIT     1700
+-#define VM_PAGE_FREE_MIN_LIMIT          3500
+-#define VM_PAGE_FREE_TARGET_LIMIT       4000
++/* ruan: macOS tunes these page counts for 16K pages; on this 4K-page kernel they left the scanner only ~14 MB of headroom, and a
++ * no-wait allocation or page-in failed in that window (WindowServer SIGBUS once reclaim began). Same bytes as on Apple silicon. */
++#define VM_PAGE_FREE_RESERVED_LIMIT     (1700 * (16384 / PAGE_SIZE))
++#define VM_PAGE_FREE_MIN_LIMIT          (3500 * (16384 / PAGE_SIZE))
++#define VM_PAGE_FREE_TARGET_LIMIT       (4000 * (16384 / PAGE_SIZE))
+ #endif /* !XNU_TARGET_OS_OSX */
+ 
+ /*
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -2072,6 +2072,12 @@
+ 		if (__improbable(result == KERN_FAILURE)) {
+ 			panic("vm_fault() KERN_FAILURE from user fault on thread %p", thread);
+ 		}
++		/* ruan: every user fault that will raise SIGBUS (anything but KERN_INVALID_ADDRESS), with the free pages at that moment */
++		if (result != KERN_INVALID_ADDRESS) {
++			extern unsigned int vm_page_free_count;
++			printf("ruan-ufault: %s[%d] va 0x%llx kr %d free %u\n", proc_best_name(current_proc()), proc_pid(current_proc()),
++			    (unsigned long long)fault_addr, result, vm_page_free_count);
++		}
+ 
+ 		codes[0] = result;
+ 	} else if (is_alignment_fault(fault_code)) {

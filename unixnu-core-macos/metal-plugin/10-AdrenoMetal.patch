@@ -1,0 +1,35 @@
+diff --git a/NativeTurnipSmoke.h b/NativeTurnipSmoke.h
+index 4d17e26..4720112 100644
+--- a/NativeTurnipSmoke.h
++++ b/NativeTurnipSmoke.h
+@@ -431,7 +431,7 @@ static Result run(Marker &&mark, const char *libraryPath) {
+     };
+     // The Darwin backend reaches the driver the same way the plugin does: the AGX accelerator service with open type 0x4147, ABI methods through
+     // an admitted selector. The shader cache uses the same writable per-user directory as the Metal runtime.
+-    setenv("TU_DARWIN_SERVICE", "IOAcceleratorES", 0);
++    setenv("TU_DARWIN_SERVICE", TARGET_OS_OSX ? "AGXAccelerator" : "IOAcceleratorES", 0);   // macOS: AGXAccelerator is an IOAccelerator
+     const std::string sharedCache = sharedShaderCacheDirectory();
+     if (!sharedCache.empty()) configureShaderDiskCache(sharedCache);
+     // Concurrent binning (BV running ahead of BR) is a performance feature; its barriers make BR wait for BV timestamps. int-058's
+diff --git a/bridge/patches/0065-ruan-ios-read-pages.patch b/bridge/patches/0065-ruan-ios-read-pages.patch
+new file mode 100644
+index 0000000..8721fa2
+--- /dev/null
++++ b/bridge/patches/0065-ruan-ios-read-pages.patch
+@@ -0,0 +1,16 @@
++ruan: 0064 defines copied::read_pages for Linux and macOS only, so the iOS 17 bridge (build-adreno-metal-bridge.py --target ios) fails
++with E0425; the macOS mach_vm_read_overwrite version serves iOS too.
++
++--- a/crates/metal2vulkan-runtime/src/copied.rs
+++++ b/crates/metal2vulkan-runtime/src/copied.rs
++@@ -2669,8 +2669,8 @@
++     true
++ }
++ 
++-/// [`read_pages`] on macOS.
++-#[cfg(target_os = "macos")]
+++/// [`read_pages`] on macOS and iOS (mach_vm_read_overwrite exists on both).
+++#[cfg(any(target_os = "macos", target_os = "ios"))]
++ pub(crate) fn read_pages(pages: NonNull<u8>, into: &mut [u8]) -> bool {
++     unsafe extern "C" {
++         /// `<mach/mach_init.h>`: the port of this process's task.

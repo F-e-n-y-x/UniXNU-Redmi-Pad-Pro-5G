@@ -61,11 +61,12 @@ volatile uint64_t native_legacy_vsync_events[6];
 
 // ---- link stubs: the driver imports these weak, and a static kernel link still needs a definition ----
 // No Adreno driver on ruan: no fence to wait for, so direct display declines and the CPU copy stays.
-bool native_adreno_fences(uint32_t *, uint32_t *) { return false; }
-bool native_adreno_fences_detail(uint32_t *, uint32_t *, uint32_t *) { return false; }
+// Weak: RuanGpuPower.c and the driver (libRuanAdreno.a) define the real ones.
+__attribute__((weak)) bool native_adreno_fences(uint32_t *, uint32_t *) { return false; }
+__attribute__((weak)) bool native_adreno_fences_detail(uint32_t *, uint32_t *, uint32_t *) { return false; }
 // No GPU trace ring (GopFramebuffer NativeGpuTrace.h, gpu-trace=1 needs the Adreno driver): tracing reports off.
-int native_gpu_trace_enabled(void) { return 0; }
-void native_gpu_trace_record(uint32_t, uint32_t, const uint64_t *, uint32_t) {}
+__attribute__((weak)) int native_gpu_trace_enabled(void) { return 0; }
+__attribute__((weak)) void native_gpu_trace_record(uint32_t, uint32_t, const uint64_t *, uint32_t) {}
 // No NativeUfs DPU window (dpu-scanout stays 0): a zero state and a mapper that maps nothing decline direct scanout.
 __attribute__((weak)) volatile uint32_t native_ufs_dpu_state;
 __attribute__((weak)) uint32_t native_ufs_dpu_map(unsigned, const uint64_t *, unsigned) { return 0; }
@@ -527,18 +528,37 @@ IOReturn native_adreno_new_user_client(IOService *provider, task_t owningTask, v
 }
 
 void ruan_gpu_publish_accelerator(void) {
+	if (ruan_metal_registered) return;   // called from the display path (iPadOS) and the GPU glue (macOS): register once
 	if (!&native_adreno_accelerator_static_init || !&native_adreno_accelerator_allocate || !&native_adreno_accelerator_instance_size) {
 		ruan_metal_stage = 0;
 		ruan_metal_status = kIOReturnUnsupported;
 		return;
 	}
+#if defined(XNU_TARGET_OS_OSX) && XNU_TARGET_OS_OSX
+	// macOS: only with the GPU driver asked for (ruan-gpu=<n>), so a boot without it publishes nothing.
+	unsigned gpu_mode = 0;
+	if (!PE_parse_boot_argn("ruan-gpu", &gpu_mode, sizeof(gpu_mode)) || !gpu_mode) {
+		ruan_metal_stage = 0;
+		ruan_metal_status = kIOReturnNotReady;
+		return;
+	}
+#endif
 	ruan_metal_stage = 1;
+#if defined(XNU_TARGET_OS_OSX) && XNU_TARGET_OS_OSX
+	// macOS (as UniXNU-sheng GpuPowerProbe.cpp): Metal matches IOServiceMatching("IOAccelerator"), IOGraphicsFamily's 136-byte base.
+	int kext_status = OSKextLoadKextWithIdentifier("com.apple.iokit.IOGraphicsFamily");
+#else
 	int kext_status = OSKextLoadKextWithIdentifier("com.apple.iokit.IOGPUFamily");
+#endif
 	if (kext_status != kIOReturnSuccess && kext_status != kOSReturnSuccess) {
 		ruan_metal_status = kext_status;
 		return;
 	}
+#if defined(XNU_TARGET_OS_OSX) && XNU_TARGET_OS_OSX
+	const OSSymbol *name = OSSymbol::withCString("IOAccelerator");
+#else
 	const OSSymbol *name = OSSymbol::withCString("IOAcceleratorES");
+#endif
 	const OSMetaClass *parent = name ? OSMetaClass::getMetaClassWithName(name) : nullptr;
 	OSSafeReleaseNULL(name);
 	if (!parent || parent->getClassSize() != 136) {
@@ -697,7 +717,17 @@ void native_legacy_display_late_probe(void) {
 	}
 	pendingLegacyDisplay = nullptr;
 	native_legacy_surface_status = OSKextLoadKextWithIdentifier("com.apple.iokit.IOSurface");
-	OSDictionary *matching = IOService::nameMatching("IOCoreSurfaceRoot");
+	// The IOSurface root service: iOS and iPadOS name it IOCoreSurfaceRoot; macOS leaves it unnamed, so its name is its class,
+	// IOSurfaceRoot (as UniXNU-sheng's LegacyDisplayProbe.cpp). IONameMatch takes either; with only the iOS name the macOS
+	// display never registered (verdict late-surface-or-console surface=0/0, full-OS boot 17).
+	OSDictionary *matching = OSDictionary::withCapacity(1);
+	{
+		const OSObject *names[] = {OSString::withCString("IOCoreSurfaceRoot"), OSString::withCString("IOSurfaceRoot")};
+		OSArray *list = names[0] && names[1] ? OSArray::withObjects(names, 2) : nullptr;
+		if (!matching || !list || !matching->setObject(gIONameMatchKey, list)) OSSafeReleaseNULL(matching);
+		OSSafeReleaseNULL(list);
+		for (const OSObject *name : names) if (name) name->release();
+	}
 	IOService *surface = matching ? IOService::waitForMatchingService(matching, 5000000000ULL) : nullptr;
 	native_legacy_surface_found = surface != nullptr;
 	OSSafeReleaseNULL(surface);
@@ -711,7 +741,12 @@ void native_legacy_display_late_probe(void) {
 	native_legacy_video_base = video.v_baseAddr;
 	// The real firmware framebuffer as the nub's only memory: no invented panel timing, compatible or register.
 	native_legacy_stage = 4;
+#if defined(XNU_TARGET_OS_OSX) && XNU_TARGET_OS_OSX
+	// macOS (as UniXNU-sheng): a plain service; an IOPlatformDevice expects the platform expert as its provider (compareName calls it).
+	IOService *nub = new IOService;
+#else
 	IOPlatformDevice *nub = new IOPlatformDevice;
+#endif
 	IOService *parent = IOService::getResourceService();
 	IODeviceMemory *memory = IODeviceMemory::withRange(video.v_baseAddr, video.v_rowBytes * video.v_height);
 	OSArray *ranges = OSArray::withCapacity(1);
@@ -721,6 +756,14 @@ void native_legacy_display_late_probe(void) {
 		ranges->setObject(memory);
 		nub->setDeviceMemory(ranges);
 		nub->setName("NativeGOPFramebuffer");
+#if defined(XNU_TARGET_OS_OSX) && XNU_TARGET_OS_OSX
+		// macOS: the panel's density (12.1 inch, 2560 x 1600: 249 dots per inch), reported as the framebuffer's dot pitch, so
+		// WindowServer knows the physical size and picks the 2x mode by default (UniXNU-sheng: a 0 x 0 inch panel otherwise).
+		{
+			const uint32_t dotsPerInch = 249;
+			if (OSData *pitch = OSData::withBytes(&dotsPerInch, sizeof(dotsPerInch))) {nub->setProperty("dot-pitch", pitch); pitch->release();}
+		}
+#endif
 		nubAttached = nub->attach(parent);
 		nubStarted = nubAttached && nub->start(parent);
 		// Phase 4: a display-subsystem node under the ADT's /arm-io, where the system looks for the display.

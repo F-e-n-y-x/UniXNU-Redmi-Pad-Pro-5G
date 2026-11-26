@@ -115,6 +115,7 @@ __attribute__((noinline)) void native_hid_live_checkpoint(IOService *device) {
         // Set once only: every setProperty on a service with attached user clients is a registry property-change
         // notification, and repeating it each second keeps backboardd/hidd busy re-evaluating the service.
         static IORegistryEntry *publishedFor;
+        // Keyed on Built-In, which touch-pointer=1 never sets: the macOS pointer keeps its Generic Desktop/Mouse primary usage.
         if(device->getProperty("Built-In") && publishedFor!=driver) {
             publishedFor=driver;
             driver->setProperty("Built-In",kOSBooleanTrue);driver->setProperty("DisplayIntegrated",kOSBooleanTrue);
@@ -184,8 +185,11 @@ void native_hid_input_probe(void) {
                     unsigned touchHid=0;
                     unsigned split=0;
                     PE_parse_boot_argn("sheng-touch-split",&split,sizeof(split));
-                    if(started && split==1 && PE_parse_boot_argn("sheng-touch-hid",&touchHid,sizeof(touchHid)) && touchHid==1) {
-                        // Separate digitizer service (primary usage Digitizer/Touch Screen, Built-In).
+                    // touch-pointer=1 (macOS): the separate touch device is an absolute mouse (NativeHidInput pointerSend) and needs
+                    // neither sheng-touch-hid nor sheng-touch-split. It sets no Built-In, so the 0x0d/4 rewrite in native_hid_live_checkpoint skips it.
+                    unsigned pointer=0;PE_parse_boot_argn("touch-pointer",&pointer,sizeof(pointer));
+                    if(started && (pointer==1 || (split==1 && PE_parse_boot_argn("sheng-touch-hid",&touchHid,sizeof(touchHid)) && touchHid==1))) {
+                        // Separate digitizer service (primary usage Digitizer/Touch Screen, Built-In), or the pointer above.
                         IOService *touch=native_hid_touch_allocate();
                         bool touchStarted=touch && touch->metaCast("IOHIDDevice") && touch->init() && touch->attach(resource) && touch->start(resource);
                         if(!touchStarted && touch){touch->detach(resource);OSSafeReleaseNULL(touch);}

@@ -5,6 +5,7 @@
 // perf_state 0x320 (+4*i per core when dcvs_ctrl bit 0 is set). The DT has qcom,skip-enable-check, so reg 0x0 is not checked.
 //   1  report each domain's current level and LUT top (printf, so it reaches the boot page)
 //   2  also vote the highest non-turbo level in both domains, once each domain's state reads non-zero (cluster up)
+// RUAN_CPUFREQ_DEFAULT (macOS build: 2) is the mode without the boot-arg; ruan-cpufreq=0 turns it off.
 // No governor: a fixed vote. shortcut: no thermal handling beyond the firmware's own limits; port Dizi-Ruan's mode 4 for that.
 #include <stdint.h>
 #ifndef RUAN_CPUFREQ_HOST
@@ -40,7 +41,11 @@ int ruan_cpufreq_pick(const uint32_t *lut, unsigned rows, unsigned *mhz)
 }
 
 #ifndef RUAN_CPUFREQ_HOST
-static unsigned mode;
+#ifndef RUAN_CPUFREQ_DEFAULT
+#define RUAN_CPUFREQ_DEFAULT 0
+#endif
+static unsigned mode = RUAN_CPUFREQ_DEFAULT;
+static volatile uint32_t *dom[2];   // USB `cpufreq`
 
 static void
 domain(unsigned d, uint64_t phys)
@@ -62,7 +67,8 @@ domain(unsigned d, uint64_t phys)
 	int top = ruan_cpufreq_pick(lut, kRows, &mhz);
 	printf("ruan-cpufreq: d%u state %u MHz, top row %d = %u MHz, dcvs 0x%x\n", d, (r[kState / 4] & 0xff) * 192 / 10, top, mhz,
 	    r[kDcvs / 4]);
-	if (mode < 2 || top < 0) {
+	dom[d] = r;
+	if (mode < 2 || top < 0 || !(r[kState / 4] & 0xff)) {   // no vote for a cluster that never came up (cpus=1)
 		return;
 	}
 	unsigned cores = (r[kDcvs / 4] & 1) ? 4 : 1;   // ruan: 4 CPUs per domain
@@ -81,11 +87,20 @@ run(void *arg __unused, wait_result_t wr __unused)
 	domain(1, 0x17d92000);
 }
 
+// USB `cpufreq` (UsbDebugCdc.cpp weak import): mode and both domains' live clock (0 = not read yet).
+void
+ruan_cpufreq_report(char *out, unsigned len)
+{
+	unsigned s0 = dom[0] ? (dom[0][kState / 4] & 0xff) * 192 / 10 : 0, s1 = dom[1] ? (dom[1][kState / 4] & 0xff) * 192 / 10 : 0;
+	snprintf(out, len, "mode %u d0 %u MHz d1 %u MHz", mode, s0, s1);
+}
+
 void
 ruan_cpufreq_start(void)
 {
 	thread_t thread;
-	if (!PE_parse_boot_argn("ruan-cpufreq", &mode, sizeof(mode)) || !mode) {
+	PE_parse_boot_argn("ruan-cpufreq", &mode, sizeof(mode));
+	if (!mode) {
 		return;
 	}
 	if (kernel_thread_start(run, NULL, &thread) == KERN_SUCCESS) {

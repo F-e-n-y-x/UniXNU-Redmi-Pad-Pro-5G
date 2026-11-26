@@ -85,9 +85,8 @@ def window(container, size):
     return window_bytes, blocks
 
 
-def main():
-    x, out = Path(sys.argv[1]), Path(sys.argv[2])
-    work = W / 'apple-trees/macos-ufs'
+def build_recovery_tree(x, work):
+    """The recovery root plus the pacstripped cache (the default without FULL)."""
     tree = work / 'root'
     if tree.exists():
         shutil.rmtree(tree)
@@ -109,6 +108,21 @@ def main():
             lines.append(f'40755\t0\t0\t{d}\t')
     lines += [f'100644\t0\t0\tSystem/Library/dyld/{c.name}\t' for c in caches]
     manifest.write_text('\n'.join(lines) + '\n')
+    hashes = (x / 'recovery-tree-signed.cdhash').read_text().split() + (work / 'cache.cdhash').read_text().split()
+    return tree, manifest, hashes
+
+
+def main():
+    x, out = Path(sys.argv[1]), Path(sys.argv[2])
+    work = W / 'apple-trees/macos-ufs'
+    work.mkdir(parents=True, exist_ok=True)
+    full = os.environ.get('FULL')   # make-macos-full-tree.py's folder: its root tree is used as it is
+    if full:
+        full = Path(full)
+        manifest, tree = full / 'root.manifest', full / 'root'
+        hashes = (full / 'root.cdhash').read_text().split()
+    else:
+        tree, manifest, hashes = build_recovery_tree(x, work)
     root = work / 'root.apfs'
     root_size = mkapfs(tree, manifest, root)
     root_uuid = volume_uuid(root)
@@ -155,7 +169,6 @@ def main():
         f.seek(os_at + 34 * 512 + 32); assert f.read(4) == b'NXSB'
     assert total <= 34359717888, f'{total} bytes do not fit the 32 GiB unixnu partition'
 
-    hashes = (x / 'recovery-tree-signed.cdhash').read_text().split() + (work / 'cache.cdhash').read_text().split()
     orig = x / 'trust.bundle.orig'
     run(sys.executable, W / 'UniXNU/scripts/trust-append-module.py', orig, x / 'trust.bundle', *hashes)
     (out.with_suffix('.uuid')).write_text(root_uuid + '\n')

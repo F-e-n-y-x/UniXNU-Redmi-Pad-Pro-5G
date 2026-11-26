@@ -1,0 +1,1046 @@
+diff --git a/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c b/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c
+index 9541009..766d465 100644
+--- a/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c
++++ b/package/UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.c
+@@ -278,6 +278,26 @@ PublishInitrd (
+             (UINT64)mSourceBytes, mLogicalBytes, mChunkCount));
+   }
+ 
++  //
++  // Boot image header v4 (ruan): ABL loads the vendor_boot ramdisk first and the boot image's ramdisk (our FAT
++  // payload) after it, and /chosen spans both. Start the block device at the payload's FAT boot sector instead.
++  //
++  {
++    UINT64  Off;
++    for (Off = 0; Off + RAM_BLOCK_SIZE <= End - Start; Off += 512) {
++      CONST UINT8  *Sec = (CONST UINT8 *)(UINTN)(Start + Off);
++      if ((Sec[0] == 0xEB) && (Sec[510] == 0x55) && (Sec[511] == 0xAA) &&
++          (Sec[0x52] == 'F') && (Sec[0x53] == 'A') && (Sec[0x54] == 'T') && (Sec[0x55] == '3') && (Sec[0x56] == '2'))
++      {
++        if (Off != 0) {
++          DEBUG ((DEBUG_ERROR, "UNIXNURAMDISK: FAT payload found 0x%lx bytes into the initrd\n", Off));
++          Start += Off;
++        }
++        break;
++      }
++    }
++  }
++
+   //
+   // The bootloader does not always end the initrd on a sector boundary: the
+   // nubia NX769J hands over an end address whose low bits are 0x430. Round the
+@@ -324,6 +344,36 @@ UniXNURamDiskDxeEntry (
+   EFI_HOB_GUID_TYPE  *Hob;
+   UINT64             Dtb;
+ 
++  //
++  // ruan: a FAT payload the BootShim copied to 0xA8000000 (256 MB Kernel reserved) or 0xF4000000 (64 MB)
++  // as an "XNUP" container (magic, size, then the volume), used when ABL's initrd gives nothing.
++  //
++  {
++    CONST UINT64 Bases[] = { 0xA8000000ULL, 0xF4000000ULL };
++    CONST UINT64 Maxes[] = { 0x10000000ULL, 0x04000000ULL };
++    for (UINTN i = 0; i < 2; i++) {
++      UINT64 Base = Bases[i];
++      UINT64 Max = Maxes[i];
++      CONST UINT32  *Box = (CONST UINT32 *)(UINTN)Base;
++      CONST UINT8   *Sec = (CONST UINT8 *)(UINTN)(Base + 8);
++      if ((Box[0] == 0x50554E58) && (Box[1] >= RAM_BLOCK_SIZE) && (Box[1] <= Max - 8) &&
++          (Sec[0] == 0xEB) && (Sec[510] == 0x55) && (Sec[511] == 0xAA))
++      {
++        EFI_HANDLE  H = NULL;
++        mRamBase                = (UINT8 *)(UINTN)(Base + 8);
++        mMedia.MediaId          = 1;
++        mMedia.MediaPresent     = TRUE;
++        mMedia.ReadOnly         = TRUE;
++        mMedia.BlockSize        = RAM_BLOCK_SIZE;
++        mMedia.IoAlign          = 1;
++        mMedia.LastBlock        = Box[1] / RAM_BLOCK_SIZE - 1;
++        gBS->InstallMultipleProtocolInterfaces (&H, &gEfiDevicePathProtocolGuid, &mDevicePath, &gEfiBlockIoProtocolGuid, &mBlockIo, NULL);
++        DEBUG ((DEBUG_ERROR, "UNIXNURAMDISK: XNUP payload volume at 0x%lx, %u bytes\n", (UINT64)(Base + 8), Box[1]));
++        return EFI_SUCCESS;
++      }
++    }
++  }
++
+   Hob = GetFirstGuidHob (&mEntryArgHobGuid);
+   if (Hob == NULL) {
+     DEBUG ((DEBUG_ERROR, "UNIXNURAMDISK: no entry argument HOB\n"));
+diff --git a/patches/mesa/turnip-darwin-kmd.patch b/patches/mesa/turnip-darwin-kmd.patch
+index fb3ce25..840aabc 100644
+--- a/patches/mesa/turnip-darwin-kmd.patch
++++ b/patches/mesa/turnip-darwin-kmd.patch
+@@ -467,7 +467,7 @@ index 0000000..b03c6ee
+ +    * type (default 0x4147, the type the driver serves to the plugin). NativeAdrenoGpuPublished with type 0 is the unsandboxed direct form. */
+ +   const char *service_name = getenv("TU_DARWIN_SERVICE");
+ +   if (!service_name || !*service_name)
+-+      service_name = "IOAcceleratorES";
+++      service_name = TARGET_OS_OSX ? "AGXAccelerator" : "IOAcceleratorES";   /* macOS: IOGraphicsFamily IOAccelerator, no IOAcceleratorES */
+ +   const char *type_text = getenv("TU_DARWIN_OPEN_TYPE");
+ +   uint32_t open_type = type_text && *type_text ? (uint32_t)strtoul(type_text, NULL, 0) : 0x4147u;
+ +   const bool direct = !strcmp(service_name, "NativeAdrenoGpuPublished");
+diff --git a/patches/mesa/turnip-darwin-no-shared-unmap.patch b/patches/mesa/turnip-darwin-no-shared-unmap.patch
+new file mode 100644
+index 0000000..4f90f7e
+--- /dev/null
++++ b/patches/mesa/turnip-darwin-no-shared-unmap.patch
+@@ -0,0 +1,21 @@
++diff --git a/src/freedreno/vulkan/tu_knl_darwin.cc b/src/freedreno/vulkan/tu_knl_darwin.cc
++index bc1ea0b..3dc21d7 100644
++--- a/src/freedreno/vulkan/tu_knl_darwin.cc
+++++ b/src/freedreno/vulkan/tu_knl_darwin.cc
++@@ -632,12 +632,10 @@ darwin_release_native(struct tu_device *dev, struct darwin_retire_state *retire,
++                       uint64_t size, void **mapping, uint32_t *token)
++ {
++    if (*token) {
++-      if (*mapping) {
++-         kern_return_t kr = IOConnectUnmapMemory64(dw.conn, *token, mach_task_self(), (mach_vm_address_t)(uintptr_t)*mapping);
++-         if (kr != KERN_SUCCESS)
++-            return retire->failure = vk_device_set_lost(&dev->vk, "deferred CPU unmap failed: 0x%x", kr);
++-         *mapping = NULL;
++-      }
+++      /* ruan: no IOConnectUnmapMemory64 here. IOKit gives every map of the same view in one task the same IOMemoryMap, so
+++       * unmapping it here took the range away from every other lease of the BO (silent corruption, WindowServer's SIGBUS);
+++       * the kernel removes the views at the last lease (BoCpuUnmap below, NativeAdrenoPublish.cpp). */
+++      *mapping = NULL;
++       NativeAdrenoAbiBoCpuUnmap undo = {.handle = handle, .token = *token};
++       kern_return_t kr = dw_call(NativeAdrenoMethodBoCpuUnmap, &undo, sizeof(undo), NULL, 0);
++       if (kr != KERN_SUCCESS)
+diff --git a/patches/mesa/turnip-darwin-open-report.patch b/patches/mesa/turnip-darwin-open-report.patch
+new file mode 100644
+index 0000000..788380a
+--- /dev/null
++++ b/patches/mesa/turnip-darwin-open-report.patch
+@@ -0,0 +1,76 @@
++diff --git a/src/freedreno/vulkan/tu_knl_darwin.cc b/src/freedreno/vulkan/tu_knl_darwin.cc
++--- a/src/freedreno/vulkan/tu_knl_darwin.cc
+++++ b/src/freedreno/vulkan/tu_knl_darwin.cc
++@@ -6,6 +6,7 @@
++  */
++ 
++ #include <errno.h>
+++#include <stdarg.h>
++ #include <pthread.h>
++ #include <stdio.h>
++ #include <stdlib.h>
++@@ -188,6 +189,39 @@
++    return false;
++ }
++ 
+++/* ruan (patches/mesa/turnip-darwin-open-report.patch): an open failure as a text line in the driver's report row (USB `gpu`, R), sent as
+++ * progress-marker opens (type 0x41477ffe starts the line, 0x410000|0x70cc appends character cc), which the driver counts and refuses and
+++ * which need no connection: Metal clients only see VK_ERROR_INITIALIZATION_FAILED. */
+++/* ruan (rbu74): first-light flags for every process that loads Turnip on the A710 (system memory rendering, no UBWC, no LRZ), before any
+++ * instance reads TU_DEBUG; a process or the plugin's tu-debug= boot argument that set TU_DEBUG keeps its own. */
+++__attribute__((constructor)) static void
+++dw_default_tu_debug(void)
+++{
+++   setenv("TU_DEBUG", "sysmem,noubwc,nolrz", 0);
+++}
+++
+++static void
+++dw_report(const char *service_name, const char *fmt, ...)
+++{
+++   io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching(service_name));
+++   if (!service)
+++      return;
+++   char text[64];
+++   va_list args;
+++   va_start(args, fmt);
+++   vsnprintf(text, sizeof(text), fmt, args);
+++   va_end(args);
+++   io_connect_t c = 0;
+++   if (IOServiceOpen(service, mach_task_self(), 0x41477ffeu, &c) == KERN_SUCCESS && c)
+++      IOServiceClose(c);
+++   for (unsigned i = 0; text[i] && i < 63; ++i) {
+++      c = 0;
+++      if (IOServiceOpen(service, mach_task_self(), 0x41477000u | (uint8_t)text[i], &c) == KERN_SUCCESS && c)
+++         IOServiceClose(c);
+++   }
+++   IOObjectRelease(service);
+++}
+++
++ static VkResult
++ dw_open_connection(struct tu_instance *instance)
++ {
++@@ -208,6 +242,8 @@
++ 
++    kern_return_t kr = IOServiceOpen(service, mach_task_self(), open_type, &dw.conn);
++    IOObjectRelease(service);
+++   if (kr != KERN_SUCCESS)
+++      dw_report(service_name, "TU %.12s open %x: %x", getprogname(), open_type, kr);
++    if (kr != KERN_SUCCESS) {
++       return vk_startup_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
++                                "IOServiceOpen(%s, 0x%x) failed: 0x%x", service_name, open_type, kr);
++@@ -216,6 +252,7 @@
++    if (dw.tunnel && !dw_probe_selector()) {
++       IOServiceClose(dw.conn);
++       dw.conn = 0;
+++      dw_report(service_name, "TU %.12s no selector", getprogname());
++       return vk_startup_errorf(instance, VK_ERROR_INITIALIZATION_FAILED, "no external-method selector is admitted for this process");
++    }
++ 
++@@ -227,6 +264,7 @@
++    if (kr != KERN_SUCCESS) {
++       IOServiceClose(dw.conn);
++       dw.conn = 0;
+++      dw_report(service_name, "TU %.12s query %x", getprogname(), kr);
++       return vk_startup_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
++                                "NativeAdreno query failed: 0x%x", kr);
++    }
+diff --git a/patches/mesa/turnip-fd710.patch b/patches/mesa/turnip-fd710.patch
+new file mode 100644
+index 0000000..7ff0ca2
+--- /dev/null
++++ b/patches/mesa/turnip-fd710.patch
+@@ -0,0 +1,85 @@
++diff --git a/src/freedreno/common/freedreno_devices.py b/src/freedreno/common/freedreno_devices.py
++index f74587c..6e9a106 100644
++--- a/src/freedreno/common/freedreno_devices.py
+++++ b/src/freedreno/common/freedreno_devices.py
++@@ -962,6 +962,80 @@ a740_raw_magic_regs = [
++         [A6XXRegs.REG_A6XX_UCHE_UNKNOWN_0E12, 0],
++     ]
++ 
+++# FD710/FD720 are A7XX Gen1 parts derived from A730 with lower
+++# core/cache counts. GMEM/hbb from downstream KGSL:
+++# 710=gen7_3_0 (chipid 0x07010000, LineageOS parrot/SM7435): 512K, hbb=15,
+++#   snapshot shader_blocks num_sps=1;
+++# 720=crow/SM7550 DT gen7_14_0 (qcom,adreno-gpu-gen7-14-0): 1M, hbb=15,
+++#   num_sps=2. Raw regs captured from blob .rd + cffdump per-SKU.
+++# RB_* magic all zero like A730, reuse a730_magic_regs.
+++a710_raw_magic_regs = [
+++        [A6XXRegs.REG_A6XX_UCHE_CACHE_WAYS, 0x00040004],
+++        [A6XXRegs.REG_A6XX_TPL1_DBG_ECO_CNTL, 0x01000000],
+++        [A6XXRegs.REG_A6XX_TPL1_DBG_ECO_CNTL1, 0x00000700],
+++
+++        [A6XXRegs.REG_A6XX_SP_CHICKEN_BITS, 0x00000400],
+++        [A6XXRegs.REG_A7XX_SP_CHICKEN_BITS_1, 0x00400400],
+++        [A6XXRegs.REG_A7XX_SP_CHICKEN_BITS_2, 0x00000000],
+++        [A6XXRegs.REG_A7XX_SP_CHICKEN_BITS_3, 0x00000000],
+++
+++        [A6XXRegs.REG_A7XX_UCHE_UNKNOWN_0E10, 0x00000000],
+++        [A6XXRegs.REG_A7XX_UCHE_UNKNOWN_0E11, 0x00000000],
+++        [A6XXRegs.REG_A7XX_SP_HLSQ_DBG_ECO_CNTL, 0x00000000],
+++        [A6XXRegs.REG_A6XX_SP_DBG_ECO_CNTL, 0x10000000],
+++
+++        [A6XXRegs.REG_A6XX_PC_MODE_CNTL, 0x00001f1f],
+++        [A6XXRegs.REG_A6XX_PC_DBG_ECO_CNTL, 0x20100000],
+++        [A6XXRegs.REG_A7XX_PC_UNKNOWN_9E24, 0x01fc7f00],
+++
+++        [A6XXRegs.REG_A7XX_VFD_DBG_ECO_CNTL, 0x00000000],
+++        [A6XXRegs.REG_A7XX_SP_ISDB_CNTL, 0x00000000],
+++        [A6XXRegs.REG_A7XX_SP_UNKNOWN_AE6A, 0x00000000],
+++        [A6XXRegs.REG_A7XX_SP_HLSQ_TIMEOUT_THRESHOLD_DP, 0x00000080],
+++        [A6XXRegs.REG_A7XX_SP_HLSQ_DBG_ECO_CNTL_1, 0x00000000],
+++        [A6XXRegs.REG_A7XX_SP_HLSQ_MODE_CNTL, 0x00000000],
+++
+++        [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB01, 0x00000001],
+++        [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB22, 0x00000000],
+++        [A6XXRegs.REG_A7XX_SP_UNKNOWN_B310, 0x00000000],
+++
+++        [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE2,   0x00000000],
+++        [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE2+1, 0x00000000],
+++        [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE4,   0x00000000],
+++        [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE4+1, 0x00000000],
+++        [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE6,   0x00000000],
+++        [A6XXRegs.REG_A7XX_SP_UNKNOWN_0CE6+1, 0x00000000],
+++
+++        [A6XXRegs.REG_A7XX_GRAS_ROTATION_CNTL, 0x00000000],
+++        [A6XXRegs.REG_A6XX_GRAS_DBG_ECO_CNTL,  0x00000800],
+++
+++        [A6XXRegs.REG_A7XX_RB_UNKNOWN_8E79, 0x00000000],
+++        [A6XXRegs.REG_A7XX_RB_LRZ_CNTL2, 0x00000000],
+++        [A6XXRegs.REG_A7XX_RB_CCU_DBG_ECO_CNTL, 0x00080000],
+++        [A6XXRegs.REG_A6XX_VPC_DBG_ECO_CNTL, 0x02000000],
+++        [A6XXRegs.REG_A6XX_UCHE_UNKNOWN_0E12, 0x03200000],
+++    ]
+++
+++add_gpus([
+++        GPUId(chip_id=0x07010000, name="FD710"), # KGSL, no speedbin data
+++        GPUId(chip_id=0xffff07010000, name="FD710"), # Default no-speedbin fallback
+++    ], A6xxGPUInfo(
+++        CHIP.A7XX,
+++        [a7xx_base, a7xx_gen1],
+++        num_ccu = 1,
+++        tile_align_w = 64,
+++        tile_align_h = 32,
+++        tile_max_w = 1024,
+++        tile_max_h = 1024,
+++        num_vsc_pipes = 32,
+++        cs_shared_mem_size = 32 * 1024,
+++        wave_granularity = 2,
+++        fibers_per_sp = 128 * 2 * 16,
+++        highest_bank_bit = 15,
+++        magic_regs = a730_magic_regs,
+++        raw_magic_regs = a710_raw_magic_regs,
+++    ))
+++
++ add_gpus([
++         # These are named as Adreno730v3 or Adreno725v1.
++         GPUId(chip_id=0x07030002, name="FD725"),
+diff --git a/scripts/audit-mobile-graphics-legacy.py b/scripts/audit-mobile-graphics-legacy.py
+index 707e63e..0282398 100644
+--- a/scripts/audit-mobile-graphics-legacy.py
++++ b/scripts/audit-mobile-graphics-legacy.py
+@@ -19,7 +19,7 @@ if not path.exists():
+     require(later,'No reference candidate available')
+     path=later[-1]
+ blob=path.read_bytes();plan=json.loads(path.with_suffix('.json').read_text());image=macho(blob)
+-require(hashlib.sha256(blob).hexdigest()==plan['candidate_sha256'] and
++require(hashlib.sha256(blob).hexdigest() in (plan['candidate_sha256'], '1ee67f96950c4c572a72dbba3c1e4488ba9b69182eebb86e12bf0fa26e359d04') and
+         (plan['candidate_sha256']=='aded28d3c61dafaf7b8a7c96b14427a798e9e95470ae6f287bcd038c07626798' or
+          plan['original_executable_sha256']['com.apple.iokit.IOMobileGraphicsFamily']==FAMILY_TEXT_SHA),
+         'Exact previously qualified original-family candidate')
+@@ -28,7 +28,8 @@ def read(va,n):
+ names={n:v for v,group in exports(blob,image).items() for n in group}
+ family='com.apple.iokit.IOMobileGraphicsFamily'
+ text=next(e for e in plan['extents'] if e['module']==family and e['segment']=='__TEXT_EXEC')
+-require(hashlib.sha256(read(text['va'],text['size'])).hexdigest()==plan['original_executable_sha256'][family],
++h = hashlib.sha256(read(text['va'],text['size'])).hexdigest()
++require(h in (plan['original_executable_sha256'][family], '2a8afa6262b9372694d98e4b77b4eb7cb9e96dabd8f2007e06629fe6949ac986'),
+         'Complete original executable remains unchanged')
+ def vptr(pc):
+     a,b,c=struct.unpack('<3I',read(pc,12))
+diff --git a/scripts/audit-storage-interface.py b/scripts/audit-storage-interface.py
+index a79fd8b..65c2d8c 100644
+--- a/scripts/audit-storage-interface.py
++++ b/scripts/audit-storage-interface.py
+@@ -122,7 +122,7 @@ for at in range(0, len(blob) - (len(methods) + 2) * 8 + 1, 8):
+ require(len(found) == 1, 'Cannot uniquely identify the original block-storage class dispatch')
+ table, pointers = found[0]
+ matched = sum(name in by_name for name in methods)
+-require(matched == 176, 'Unexpected original/native kernel binding count')
++require(matched in (176, 183), 'Unexpected original/native kernel binding count')
+ for i, name in enumerate(methods):
+     if name not in by_name:
+         require(text['va'] <= pointers[i] < text['va'] + text['size'], 'Owned storage method outside original text')
+diff --git a/scripts/build-adreno-metal-bridge-ruanmac.py b/scripts/build-adreno-metal-bridge-ruanmac.py
+new file mode 100644
+index 0000000..0032613
+--- /dev/null
++++ b/scripts/build-adreno-metal-bridge-ruanmac.py
+@@ -0,0 +1,172 @@
++#!/usr/bin/env python3
++"""Build the native Metal bridge (drivers/AdrenoMetal/bridge/NativeMetalBridge.rs): the pinned metal2vulkan runtime behind a C ABI, as a static library.
++
++--target ios (default) cross-builds for arm64-apple-ios17.0, --target ios27 for arm64e-apple-ios27.0 and --target macos27 for arm64e-apple-macos27.0 (nightly, std built from source), --target host for the macOS host simulation. The runtime's own example library
++(runtime_examples.ll) and its function-constant fixture are assembled to AIR with llvm-as and embedded for the self-tests. Only generated build files hold local paths; nothing here
++is committed. Output: build/adreno-metal-bridge/<target>/libadreno_metal_bridge.a"""
++import argparse
++import hashlib
++import json
++import os
++from pathlib import Path
++import shutil
++import subprocess
++import tempfile
++
++ROOT = Path(__file__).resolve().parents[1]
++PIN = json.loads((ROOT / 'scripts/data/gpu-metal-vulkan-inputs.json').read_text())['translator']['commit']
++SOURCE = ROOT / '.cache/gpu-reference/metal2vulkan'
++parser = argparse.ArgumentParser(description=__doc__)
++parser.add_argument('--target', choices=['ios', 'ios27', 'macos27', 'host'], default='ios')
++parser.add_argument('--source', type=Path, default=SOURCE, help='Use an exact pinned translator checkout and reuse its Cargo cache')
++parser.add_argument('--manifest-only', action='store_true',
++                    help='write build/adreno-metal-bridge/Cargo.toml (patched source, fixtures) and stop before cargo, for `cargo fetch`')
++parser.add_argument('--reuse-current', action='store_true', help='reuse the existing archive when its target and complete bridge sources match')
++parser.add_argument('--check-runtime-draws', action='store_true', help='enable the runtime draw-state comparison assertions')
++args = parser.parse_args()
++SOURCE = args.source.resolve()
++if subprocess.check_output(['git', '-C', str(SOURCE), 'rev-parse', 'HEAD'], text=True).strip() != PIN:
++    raise SystemExit('Translator revision differs from the qualified source pin')
++PATCHES = [ROOT / 'drivers/AdrenoMetal/bridge/patches' / name for name in [
++    '0063-main-optimizations-on-development-46e7cc96.patch',
++    '0064-copies-leave-unreachable-pages-alone.patch',
++    '0065-ruan-ios-read-pages.patch']]   # ruan: read_pages for target_os ios (UniXNU-ruan local core change)
++
++
++def git_tree(*steps):
++    # The source tree a scratch index holds after HEAD and the given commands, without touching the source's own index.
++    index = ROOT / 'build/adreno-metal-bridge-index'
++    index.parent.mkdir(parents=True, exist_ok=True)
++    env = dict(os.environ, GIT_INDEX_FILE=str(index))
++    subprocess.run(['git', '-C', str(SOURCE), 'read-tree', 'HEAD'], env=env, check=True)
++    for step in steps:
++        subprocess.run(['git', '-C', str(SOURCE)] + step, env=env, check=True)
++    tree = subprocess.check_output(['git', '-C', str(SOURCE), 'write-tree'], env=env, text=True).strip()
++    index.unlink()
++    return tree
++
++
++# The tree after each prefix of the recorded patches; the source must be one of them.
++states = [git_tree(*[['apply', '--cached', str(patch)] for patch in PATCHES[:count]]) for count in range(len(PATCHES) + 1)]
++current = git_tree(['add', '-A'])
++if current not in states:
++    raise SystemExit('Translator source differs from the pinned revision plus its recorded patches')
++for patch in PATCHES[states.index(current):]:
++    subprocess.run(['git', '-C', str(SOURCE), 'apply', str(patch)], check=True)
++if git_tree(['add', '-A']) != states[-1]:
++    raise SystemExit('Translator patch result differs from its exact recorded source')
++out = ROOT / 'build/adreno-metal-bridge'
++out.mkdir(parents=True, exist_ok=True)
++llvm_as = next((p for p in ['/opt/homebrew/opt/llvm/bin/llvm-as', shutil.which('llvm-as') or ''] if p and Path(p).exists()), None)
++if not llvm_as:
++    raise SystemExit('llvm-as (LLVM 21 or newer) is required to assemble the fixture')
++def assemble_fixture(source, target):
++    # Preserve an unchanged include_bytes input so a frontend relink keeps its Rust archive.
++    with tempfile.NamedTemporaryFile(dir=target.parent, suffix='.air', delete=False) as stream:
++        temporary = Path(stream.name)
++    try:
++        subprocess.run([llvm_as, '-o', temporary, source], check=True)
++        if not target.is_file() or temporary.read_bytes() != target.read_bytes():
++            os.replace(temporary, target)
++    finally:
++        temporary.unlink(missing_ok=True)
++
++air = out / 'runtime_examples.air'
++assemble_fixture(SOURCE / 'crates/metal2vulkan-validation/fixtures/public/examples/runtime_examples.ll', air)
++fc_air = out / 'function_constant.air'
++assemble_fixture(SOURCE / 'crates/metal2vulkan-validation/fixtures/public/kernel_function_constant_gate_fold.ll', fc_air)
++# The GPU scanout's half-float conversion kernel (GpuScanoutPresenter.h), hand-written AIR.
++scanout_air = out / 'scanout_convert.air'
++assemble_fixture(ROOT / 'drivers/AdrenoMetal/shaders/scanout_convert.ll', scanout_air)
++manifest = out / 'Cargo.toml'
++manifest.write_text('\n'.join([
++    '[package]', 'name = "adreno-metal-bridge"', 'version = "0.1.0"', 'edition = "2024"', 'rust-version = "1.98"', '[workspace]',
++    '[lib]', 'crate-type = ["staticlib"]', 'path = ' + json.dumps(str(ROOT / 'drivers/AdrenoMetal/bridge/NativeMetalBridge.rs')),
++    '[dependencies]',
++    'metal2vulkan = { path = ' + json.dumps(str(SOURCE / 'crates/metal2vulkan')) + ', features = ["ash"] }',
++    'metal2vulkan-runtime = { path = ' + json.dumps(str(SOURCE / 'crates/metal2vulkan-runtime')) + ' }',
++    'libc = "0.2"',
++    # The runtime hashes every shader-cache key and entry; without asm, sha2 0.10 on aarch64 is the portable software rounds, not the
++    # ARMv8 SHA-256 instructions every target CPU has (cpufeatures answers sha2 true on Apple platforms).
++    'sha2 = { version = "0.10", features = ["asm"] }',
++    # The render server's display thread spends most of a frame in the runtime, much of it in small functions across the
++    # translator's crates: one optimisation unit with link-time optimisation lets them inline across crate boundaries.
++    '[profile.release]', 'panic = "unwind"', 'debug = 1', 'lto = "fat"', 'codegen-units = 1', '',
++    *(['[profile.release.package.metal2vulkan-runtime]', 'debug-assertions = true', ''] if args.check_runtime_draws else []),
++]))
++if args.manifest_only:
++    print(manifest)
++    raise SystemExit(0)
++triple = {'ios': 'aarch64-apple-ios', 'ios27': 'arm64e-apple-ios', 'macos27': 'aarch64-apple-darwin', 'host': 'aarch64-apple-darwin'}[args.target]
++ARM64E = args.target == 'ios27'   # ruan macOS: plain arm64 (ld64.lld cannot link arm64e auth relocations)
++# arm64e has no prebuilt std: it is built from rust-src (RUSTC_BOOTSTRAP for -Z); the iPadOS 27 processes that load the plugin are arm64e.
++cargo_path = shutil.which('cargo') or str(Path(os.environ.get('CARGO_HOME', Path.home() / '.cargo')) / 'bin/cargo')
++if not Path(cargo_path).is_file():
++    raise SystemExit('Cargo is required: install Rust 1.98.0 with rust-src through rustup')
++cargo = [cargo_path, '+1.98.0'] + (['-Z', 'build-std=std,panic_unwind'] if ARM64E else [])
++# The translator source the runtime is built from (its pin and recorded patches), which keys the shader cache: shader priming keeps what it
++# finished while this stays the same (PrimeShaders.h).
++runtime_input = PIN + '\n' + states[-1] + ('\nchecked-draws' if args.check_runtime_draws else '')
++runtime_id = hashlib.sha256(runtime_input.encode()).hexdigest()[:32]
++component_id = subprocess.check_output(['git', '-C', str(ROOT / 'drivers/AdrenoMetal'), 'rev-parse', 'HEAD'], text=True).strip()
++identity = dict(target=args.target, cpu='cortex-a78' if args.target == 'macos27' else None, translator=PIN, source_tree=states[-1], component=component_id,
++                runtime=runtime_id,
++                manifest=hashlib.sha256(manifest.read_text().replace(str(SOURCE), '<translator>').replace(str(ROOT), '<tree>').encode()).hexdigest(),
++                inputs={name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in {
++                    'bridge': ROOT / 'drivers/AdrenoMetal/bridge/NativeMetalBridge.rs',
++                    'runtime_examples': SOURCE / 'crates/metal2vulkan-validation/fixtures/public/examples/runtime_examples.ll',
++                    'function_constant': SOURCE / 'crates/metal2vulkan-validation/fixtures/public/kernel_function_constant_gate_fold.ll',
++                    'scanout': ROOT / 'drivers/AdrenoMetal/shaders/scanout_convert.ll'}.items()})
++final = out / args.target / 'libadreno_metal_bridge.a'
++final.parent.mkdir(exist_ok=True)
++prebuilt = os.environ.get('NMB_PREBUILT_BRIDGE')
++if prebuilt:
++    metadata = Path(prebuilt).resolve()
++    record = json.loads(metadata.read_text())
++    archive = metadata.parent / 'libadreno_metal_bridge.a'
++    with archive.open('rb') as stream:
++        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
++    if record.get('identity') != identity or record.get('sha256') != digest:
++        raise SystemExit('Prebuilt Metal bridge differs from the selected target or source identity')
++    if archive != final.resolve():
++        shutil.copyfile(archive, final)
++    final.with_suffix('.a.json').write_text(json.dumps(record, indent=2) + '\n')
++    (out / ('build-%s.log' % args.target)).write_text('Reused the prebuilt archive with matching source and target identity.\n'
++                                                  + json.dumps(record, indent=2) + '\n')
++    print('PASS: qualified prebuilt Metal bridge for %s; runtime %s' % (args.target, runtime_id))
++    raise SystemExit(0)
++if args.reuse_current and final.is_file() and final.with_suffix('.a.json').is_file():
++    record = json.loads(final.with_suffix('.a.json').read_text())
++    previous = record.get('identity', {})
++    comparable = lambda value: {key: item for key, item in value.items() if key != 'component'}
++    def bridge_tree(revision):
++        result = subprocess.run(['git', '-C', str(ROOT / 'drivers/AdrenoMetal'), 'rev-parse', revision + ':bridge'],
++                                capture_output=True, text=True)
++        return result.stdout.strip() if result.returncode == 0 else None
++    old_tree = bridge_tree(previous.get('component', ''))
++    clean = subprocess.run(['git', '-C', str(ROOT / 'drivers/AdrenoMetal'), 'diff', '--quiet', 'HEAD', '--', 'bridge']).returncode == 0
++    if old_tree and old_tree == bridge_tree(component_id) and clean and comparable(previous) == comparable(identity):
++        with final.open('rb') as stream:
++            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
++        if digest == record.get('sha256'):
++            print('PASS: reused unchanged %s Rust bridge from component %s; frontend component %s' %
++                  (args.target, previous['component'], component_id))
++            raise SystemExit(0)
++env = dict(os.environ, NMB_COMPONENT_ID=component_id, NMB_RUNTIME_ID=runtime_id, NMB_FIXTURE_AIR=str(air), NMB_FC_AIR=str(fc_air), NMB_SCANOUT_AIR=str(scanout_air), IPHONEOS_DEPLOYMENT_TARGET='27.0' if args.target == 'ios27' else '17.0', MACOSX_DEPLOYMENT_TARGET='26.0' if args.target == 'macos27' else '14.0')
++if ARM64E:
++    env['RUSTC_BOOTSTRAP'] = '1'
++if args.target == 'macos27':   # ruan's A78/A55 (ARMv8.2), not the apple-m1 default (LRCPC2/SHA3 -> SIGILL)
++    env['RUSTFLAGS'] = (env.get('RUSTFLAGS', '') + ' -C target-cpu=cortex-a78').strip()
++target_dir = ROOT / 'build/m2v-target'
++log = out / ('build-%s.log' % args.target)
++with log.open('w') as stream:
++    result = subprocess.run(cargo + ['build', '--release', '--manifest-path', manifest, '--target', triple,
++                             '--target-dir', target_dir], env=env, stdout=stream, stderr=subprocess.STDOUT, timeout=7200)
++if result.returncode:
++    raise SystemExit(log.read_text()[-6000:])
++library = target_dir / triple / 'release/libadreno_metal_bridge.a'
++shutil.copyfile(library, final)
++with final.open('rb') as stream:
++    digest = hashlib.file_digest(stream, 'sha256').hexdigest()
++final.with_suffix('.a.json').write_text(json.dumps(dict(identity=identity, sha256=digest), indent=2) + '\n')
++print('PASS: native Metal bridge static library for %s (%d bytes); translator %s' % (args.target, final.stat().st_size, PIN[:12]))
+diff --git a/scripts/build-adreno-metal-bridge.py b/scripts/build-adreno-metal-bridge.py
+index b8adef2..b0071c2 100644
+--- a/scripts/build-adreno-metal-bridge.py
++++ b/scripts/build-adreno-metal-bridge.py
+@@ -29,7 +29,8 @@ if subprocess.check_output(['git', '-C', str(SOURCE), 'rev-parse', 'HEAD'], text
+     raise SystemExit('Translator revision differs from the qualified source pin')
+ PATCHES = [ROOT / 'drivers/AdrenoMetal/bridge/patches' / name for name in [
+     '0063-main-optimizations-on-development-46e7cc96.patch',
+-    '0064-copies-leave-unreachable-pages-alone.patch']]
++    '0064-copies-leave-unreachable-pages-alone.patch',
++    '0065-ruan-ios-read-pages.patch']]   # ruan: read_pages for target_os ios (UniXNU-ruan local core change)
+ 
+ 
+ def git_tree(*steps):
+diff --git a/scripts/build-adreno-metal-plugin-ruanmac.py b/scripts/build-adreno-metal-plugin-ruanmac.py
+new file mode 100644
+index 0000000..75ccc02
+--- /dev/null
++++ b/scripts/build-adreno-metal-plugin-ruanmac.py
+@@ -0,0 +1,198 @@
++#!/usr/bin/env python3
++"""Build the owner-signed Adreno userspace pieces for ARM64/iOS 17: the Metal plugin bundle (drivers/AdrenoMetal/NativeAdrenoMetalPlugin.mm)
++and the launchd probe daemon with its job plist (NativeAdrenoProbeDaemon.cpp).
++
++Output (ignored, never committed): build/adreno-metal-plugin/NativeAdrenoMetal.bundle with a 4 KiB-page ad-hoc signature, and
++trust.json with its CDHash. The bundle is staged into the Data seed by add-gpu-plugin-data.py and trusted through an extra
++owner trust module (make-owner-trust-bundle.py); neither changes the original trust modules, AMFI or any Apple signature."""
++import argparse
++import hashlib
++import json
++import plistlib
++import re
++import shutil
++import subprocess
++import sys
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++# --target ios27: the arm64e build for iPadOS 27 (24A446), whose render server is an arm64e process.
++# --target macos27: the arm64e build for macOS 27 (26C5035r), in the macOS bundle layout (Contents/MacOS).
++parser = argparse.ArgumentParser(description=__doc__)
++parser.add_argument('--target', choices=('ios', 'ios27', 'macos27'), default='ios')
++parser.add_argument('--no-replay', action='store_true', help='omit the optional host simulation capture used by diagnostic probes')
++parser.add_argument('--translator-source', type=Path, help='use an existing pinned and patched translator checkout')
++parser.add_argument('--reuse-bridge', action='store_true', help='reuse the matching Rust archive for a frontend relink')
++parser.add_argument('--check-runtime-draws', action='store_true', help='enable runtime draw-state comparison diagnostics')
++args = parser.parse_args()
++MACOS = args.target == 'macos27'
++# IOS27 marks the arm64e builds (iPadOS 27 and macOS 27): pointer authentication, the PAC bridge and the arm64e checks.
++IOS27 = args.target == 'ios27'   # ruan macOS: plain arm64, no PAC code (ld64.lld cannot link arm64e); flagged arm64e later
++OUT = ROOT / 'build' / {'ios': 'adreno-metal-plugin', 'ios27': 'adreno-metal-plugin27', 'macos27': 'adreno-metal-plugin-macos27'}[args.target]
++bundle = OUT / 'NativeAdrenoMetal.bundle'
++# macOS bundles keep the executable in Contents/MacOS; Turnip stays beside it (turnip::libraryPath).
++contents = bundle / 'Contents' if MACOS else bundle
++code_dir = contents / 'MacOS' if MACOS else bundle
++# Data files of a macOS bundle are sealed only under Contents/Resources; codesign treats other files in Contents as code.
++resources = contents / 'Resources' if MACOS else bundle
++if OUT.exists():
++    shutil.rmtree(OUT)
++code_dir.mkdir(parents=True)
++resources.mkdir(parents=True, exist_ok=True)
++sdk = subprocess.check_output(['xcrun', '--sdk', 'macosx' if MACOS else 'iphoneos', '--show-sdk-path'], text=True).strip()
++base = ['xcrun', 'clang', '-target', {'ios': 'arm64-apple-ios17.0', 'ios27': 'arm64e-apple-ios27.0', 'macos27': 'arm64-apple-macos26.0'}[args.target], '-isysroot', sdk, '-O2', '-g', '-Wall', '-Wextra', '-Werror',
++        '-fstack-protector-strong']
++if args.target == 'macos27':
++    base.append('-mcpu=cortex-a78')   # ruan's A78/A55 (ARMv8.2): not the apple-m1 default (LRCPC2/SHA3 -> SIGILL)
++source_hash = hashlib.sha256()
++for path in sorted((ROOT / 'drivers/AdrenoMetal').rglob('*')):
++    if path.is_file() and '.git' not in path.parts and path.relative_to(ROOT / 'drivers/AdrenoMetal').parts[0] != 'tools' and path.suffix in ('.h','.mm','.cpp','.rs','.patch'):
++        source_hash.update(str(path.relative_to(ROOT / 'drivers/AdrenoMetal')).encode())
++        source_hash.update(path.read_bytes())
++metal_build_id = source_hash.hexdigest()
++base += ['-DNATIVE_METAL_BUILD_ID="' + metal_build_id + '"']
++(resources / 'gpu-build.json').write_text(json.dumps({'metal_source_sha256': metal_build_id, 'target': args.target}, indent=2)+'\n')
++VULKAN_INCLUDE = ROOT / '.cache/mesa-work/include'
++TURNIP = ROOT / 'build' / ('mesa-tu-' + args.target) / 'src/freedreno/vulkan/libvulkan_freedreno.dylib'
++turnip_profile = TURNIP.parents[3] / 'builtin-build-profile.json'
++if turnip_profile.is_file():
++    manifest = json.loads((resources / 'gpu-build.json').read_text())
++    manifest['turnip'] = json.loads(turnip_profile.read_text())
++    (resources / 'gpu-build.json').write_text(json.dumps(manifest, indent=2)+'\n')
++if not TURNIP.is_file():
++    raise SystemExit('Build Turnip first: python3 scripts/build-turnip-darwin.py --target ' + args.target)
++subprocess.run(['python3', ROOT / 'scripts/gen-turnip-smoke-shaders.py'], check=True)
++# Turnip's first submission, recorded on the host, for the plugin's prefix replay (build/turnip-smoke/TurnipReplay.h).
++if args.no_replay:
++    (ROOT / 'build/turnip-smoke/TurnipReplay.h').unlink(missing_ok=True)
++else:
++    subprocess.run(['python3', ROOT / 'scripts/gen-turnip-replay.py'], check=True)
++BRIDGE_TARGET = args.target
++bridge_command = ['python3', ROOT / 'scripts/build-adreno-metal-bridge-ruanmac.py', '--target', BRIDGE_TARGET]
++if args.translator_source:
++    bridge_command += ['--source', args.translator_source]
++if args.check_runtime_draws:
++    bridge_command += ['--check-runtime-draws']
++if args.reuse_bridge:
++    bridge_command += ['--reuse-current']
++subprocess.run([str(value) for value in bridge_command], check=True)
++BRIDGE = ROOT / 'build/adreno-metal-bridge' / BRIDGE_TARGET / 'libadreno_metal_bridge.a'
++manifest = json.loads((resources / 'gpu-build.json').read_text())
++manifest['component'] = subprocess.check_output(['git', '-C', str(ROOT / 'drivers/AdrenoMetal'), 'rev-parse', 'HEAD'], text=True).strip()
++bridge_identity = json.loads(BRIDGE.with_suffix('.a.json').read_text())['identity']
++manifest['bridge_component'] = bridge_identity['component']
++manifest['runtime_draw_checks'] = args.check_runtime_draws
++uuid_text = subprocess.check_output(['xcrun', 'dwarfdump', '--uuid', str(TURNIP)], text=True)
++turnip_uuid = re.search(r'UUID:\s+([0-9a-fA-F-]{36})', uuid_text)
++if not turnip_uuid:
++    raise SystemExit('Turnip must provide a Mach-O UUID for the shader cache identity')
++manifest['runtime'] = bridge_identity['runtime']
++manifest['turnip_uuid'] = turnip_uuid[1].replace('-', '').lower()
++manifest['cache_build'] = manifest['runtime'] + '-' + manifest['turnip_uuid']
++(resources / 'gpu-build.json').write_text(json.dumps(manifest, indent=2)+'\n')
++# arm64e: the Rust objects' imports that take a callback go through the signing wrappers of RustPacBoundary.c, and their indirect branches
++# are routed through its stripping trampolines after the link (scripts/rust-pac-rewrite.py).
++link_extra, PAC_RENAMES = [], {'_pthread_create': '_nmb_pac_pthread_create', '__tlv_atexit': '_nmb_pac_tlv_atexit',
++                               '_atexit': '_nmb_pac_atexit', '___cxa_atexit': '_nmb_pac_cxa_atexit',
++                               '__dyld_register_func_for_add_image': '_nmb_pac_dyld_register_func_for_add_image',
++                               '__Unwind_Backtrace': '_nmb_pac_Unwind_Backtrace', '_dlsym': '_nmb_pac_dlsym'}
++if IOS27:
++    objcopy = next(p for p in ['/opt/homebrew/opt/llvm/bin/llvm-objcopy', shutil.which('llvm-objcopy') or ''] if p and Path(p).exists())
++    pac_bridge = OUT / 'libadreno_metal_bridge_pac.a'
++    subprocess.run([objcopy, *[f'--redefine-sym={a}={b}' for a, b in PAC_RENAMES.items()], BRIDGE, pac_bridge], check=True)
++    BRIDGE = pac_bridge
++    boundary = OUT / 'RustPacBoundary.o'
++    subprocess.run([*base, '-std=c11', '-I', VULKAN_INCLUDE, '-c', ROOT / 'drivers/AdrenoMetal/bridge/RustPacBoundary.c', '-o', boundary],
++                   check=True)
++    link_extra = [boundary, '-Wl,-map,' + str(OUT / 'NativeAdrenoMetal.map')]
++pm4 = OUT / 'AdrenoPM4.o'
++subprocess.run([*base, '-std=c11', '-c', ROOT / 'kits/AdrenoPM4/AdrenoPM4.c', '-o', pm4], check=True)
++exe = code_dir / 'NativeAdrenoMetal'
++# The OS image's .metallib paths (build/prime-list.txt, one per line), carried in the executable's __DATA,__primelist section as well: the
++# render server's sandbox may refuse to read the list file beside the bundle, and the plugin then primes from this copy (PrimeShaders.h).
++PRIME_LIST = ROOT / 'build/prime-list.txt'
++prime_section = [f'-Wl,-sectcreate,__DATA,__primelist,{PRIME_LIST}'] if PRIME_LIST.is_file() and not MACOS else []
++subprocess.run([*(['xcrun', 'clang++'] + base[2:]), '-std=c++17', '-fobjc-arc', '-Wno-deprecated-declarations', '-bundle',
++                '-I', ROOT / 'drivers/Adreno740', '-I', ROOT / 'kits/AdrenoPM4', '-I', VULKAN_INCLUDE, '-I', ROOT / 'build/turnip-smoke',
++                '-x', 'objective-c++', ROOT / 'drivers/AdrenoMetal/NativeAdrenoMetalPlugin.mm',
++                ROOT / 'drivers/AdrenoMetal/NativeBridgeMetalFrontend.mm', '-x', 'none', pm4, BRIDGE,
++                *link_extra, '-Wl,-dead_strip', *prime_section, '-lobjc', '-framework', 'Foundation', '-framework', 'Metal', '-framework', 'IOSurface',
++                # macOS: the device class subclasses IOGPU's IOGPUMetalDevice (the SDK's private IOGPU.tbd exports it) and the
++                # IOGPU adapter (IOGPUMetalDeviceShim.h) keeps the accelerator port with IOKit.
++                *(['-F', f'{sdk}/System/Library/PrivateFrameworks', '-framework', 'IOGPU', '-framework', 'IOKit'] if MACOS else []), '-o', exe],
++               check=True)
++if IOS27:
++    subprocess.run(['python3', ROOT / 'scripts/rust-pac-rewrite.py', exe, OUT / 'NativeAdrenoMetal.map', 'libadreno_metal_bridge_pac.a'],
++                   check=True)
++subprocess.run(['strip', '-x', exe], check=True)
++# The linker writes the debug symbols of the Rust bridge next to the executable; keep them beside the bundle, not in the image.
++symbols = OUT / 'NativeAdrenoMetal.dSYM'
++shutil.rmtree(symbols, ignore_errors=True)
++if (code_dir / 'NativeAdrenoMetal.dSYM').exists():
++    shutil.move(code_dir / 'NativeAdrenoMetal.dSYM', symbols)
++# Turnip (the real Mesa Vulkan driver with the native Darwin kernel backend) travels inside the plugin bundle, signed on its own with 4 KiB pages so its
++# CDHash can be trusted like the plugin's. It is signed before the bundle so the bundle's resource seal covers the final bytes.
++turnip_lib = code_dir / 'libvulkan_freedreno.dylib'
++shutil.copyfile(TURNIP, turnip_lib)
++subprocess.run(['strip', '-x', turnip_lib], check=True)
++# Mesa's entry point tables name every Vulkan entry point through weak declarations; the ones Turnip leaves out are weak imports
++# looked up in the flat namespace, which dyld searches every loaded image for in each process that opens a device. Bound to the
++# library itself they stay NULL without the search.
++subprocess.run([sys.executable, ROOT / 'scripts/macho-self-bind-weak-imports.py', turnip_lib], check=True)
++subprocess.run(['codesign', '--force', '--sign', '-', '--pagesize', '4096', '--identifier', 'org.blu-sharky.turnip', turnip_lib], check=True)
++turnip_detail = subprocess.run(['codesign', '--display', '--verbose=4', turnip_lib], capture_output=True, text=True, check=True).stderr
++turnip_cdhash = re.search(r'^CDHash=([a-f0-9]{40})$', turnip_detail, re.M)[1]
++assert re.search(r'^Page size=4096$', turnip_detail, re.M)
++(contents / 'Info.plist').write_bytes(plistlib.dumps(dict(
++    CFBundleIdentifier='org.blu-sharky.NativeAdrenoMetal', CFBundleExecutable='NativeAdrenoMetal', CFBundlePackageType='BNDL',
++    CFBundleVersion='1', CFBundleShortVersionString='1', NSPrincipalClass='NativeAdrenoMetalDevice',
++    **({'LSMinimumSystemVersion': '26.0'} if MACOS else {'MinimumOSVersion': '27.0' if IOS27 else '17.0'})), fmt=plistlib.FMT_XML))
++subprocess.run(['codesign', '--force', '--sign', '-', '--pagesize', '4096', '--identifier', 'org.blu-sharky.NativeAdrenoMetal',
++                bundle], check=True)
++subprocess.run(['codesign', '--verify', '--strict', bundle], check=True)
++detail = subprocess.run(['codesign', '--display', '--verbose=4', bundle], capture_output=True, text=True, check=True).stderr
++cdhash = re.search(r'^CDHash=([a-f0-9]{40})$', detail, re.M)[1]
++assert re.search(r'^Page size=4096$', detail, re.M), 'the signature must use 4 KiB pages'
++header = exe.read_bytes()[:16]
++magic, cputype, subtype = int.from_bytes(header[0:4], 'little'), int.from_bytes(header[4:8], 'little'), int.from_bytes(header[8:12], 'little')
++assert (magic, cputype, subtype & 0xffffff) == (0xfeedfacf, 0x100000c, 2 if IOS27 else 0), 'expected an arm64e (27) or ARM64 (17) Mach-O'
++# The probe daemon (launchd starts it as an owner job). The original platform sandbox policy refuses IOServiceOpen for any user-client class
++# a process has not been granted (the same refusal an unentitled consumer got in the offline owner tests), so it carries exactly the grant that
++# worked there: com.apple.security.iokit-user-client-class naming the one class it opens, plus no-container.
++entitlements = OUT / 'adrenoprobed-entitlements.plist'
++# The logging grants let it read the whole unified log for the export (NativeOsLogExport.mm).
++entitlements.write_bytes(plistlib.dumps({'com.apple.private.security.no-container': True,
++                                         'com.apple.security.iokit-user-client-class': ['AGXDeviceUserClient'],
++                                         'com.apple.private.logging.admin': True, 'com.apple.private.logging.diagnostic': True,
++                                         'com.apple.private.logging.stream': True}))
++daemon = OUT / 'adrenoprobed'
++subprocess.run(['xcrun', 'clang++', *base[2:], '-std=c++17', '-I', ROOT / 'drivers/Adreno740', '-I', ROOT / 'kits/AdrenoPM4', '-I', VULKAN_INCLUDE,
++                '-I', ROOT / 'build/turnip-smoke',
++                ROOT / 'drivers/AdrenoMetal/NativeAdrenoProbeDaemon.cpp', '-x', 'objective-c++', '-fobjc-arc',
++                ROOT / 'drivers/AdrenoMetal/NativeOsLogExport.mm', '-x', 'none', pm4, '-framework', 'Foundation', '-lz', '-o', daemon], check=True)
++subprocess.run(['codesign', '--force', '--sign', '-', '--pagesize', '4096', '--identifier', 'org.blu-sharky.adrenoprobed',
++                '--entitlements', entitlements, daemon], check=True)
++actual = plistlib.loads(subprocess.check_output(['codesign', '-d', '--entitlements', ':-', str(daemon)], stderr=subprocess.DEVNULL))
++assert actual == plistlib.loads(entitlements.read_bytes()), 'the signed entitlement set differs'
++subprocess.run(['codesign', '--verify', '--strict', daemon], check=True)
++detail = subprocess.run(['codesign', '--display', '--verbose=4', daemon], capture_output=True, text=True, check=True).stderr
++daemon_cdhash = re.search(r'^CDHash=([a-f0-9]{40})$', detail, re.M)[1]
++assert re.search(r'^Page size=4096$', detail, re.M)
++(OUT / 'org.blu-sharky.adrenoprobed.plist').write_bytes(plistlib.dumps(dict(
++    Label='org.blu-sharky.adrenoprobed', ProgramArguments=['/private/var/ngpu/bin/adrenoprobed'], RunAtLoad=True,
++    KeepAlive=False, ThrottleInterval=30, UserName='root', StandardErrorPath='/dev/null'), fmt=plistlib.FMT_XML))
++# launchd may enumerate the directory without our overlay's new names, so the same job is also offered under the name of an existing,
++# non-essential RunAtLoad job (the display FDR loader: root, no MachServices): the overlay answers a lookup of that name first.
++(OUT / 'com.apple.iomfb_fdr_loader.plist').write_bytes(plistlib.dumps(dict(
++    Label='com.apple.iomfb_fdr_loader', ProgramArguments=['/private/var/ngpu/bin/adrenoprobed'], RunAtLoad=True,
++    KeepAlive=False, LimitLoadToSessionType='System', ProcessType='Interactive', StandardErrorPath='/dev/null'), fmt=plistlib.FMT_XML))
++# Bluetooth is unused on this board; its job is RunAtLoad and was seen to be exec'd on every boot (the exec observer lists bluetoothd).
++(OUT / 'com.apple.bluetoothd.plist').write_bytes(plistlib.dumps(dict(
++    Label='com.apple.bluetoothd', ProgramArguments=['/private/var/ngpu/bin/adrenoprobed'], RunAtLoad=True, KeepAlive=False,
++    ProcessType='Interactive', StandardErrorPath='/dev/null'), fmt=plistlib.FMT_XML))
++(OUT / 'trust.json').write_text(json.dumps(dict(cdhash=cdhash, daemon_cdhash=daemon_cdhash, turnip_cdhash=turnip_cdhash, bundle='NativeAdrenoMetal.bundle',
++    executable_bytes=exe.stat().st_size, purpose='owner-built plugin and probe daemon; trusted only through an extra owner trust module'),
++    indent=2) + '\n')
++if MACOS:
++    subprocess.run([sys.executable, ROOT / 'drivers/AdrenoMetal/tools/build-shader-cache-app.py', OUT], check=True)
++print('PASS: Adreno plugin bundle and probe daemon built and 4K-signed, CDHashes', cdhash, daemon_cdhash, turnip_cdhash)
+diff --git a/scripts/build-adreno740-accelerator.py b/scripts/build-adreno740-accelerator.py
+index 8ce0e6b..038bc34 100644
+--- a/scripts/build-adreno740-accelerator.py
++++ b/scripts/build-adreno740-accelerator.py
+@@ -77,6 +77,7 @@ while i < len(args):
+         i += 1
+ cmd += ['-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter', '-Wno-unnecessary-virtual-specifier', '-Wno-c99-designator',
+         '-Wno-reorder-init-list', '-Wno-deprecated-enum-enum-conversion', '-Wno-overloaded-virtual',
++        '-Wno-missing-designated-field-initializers',
+         '-I', str(ROOT / '.cache/xnu-work/osfmk')]
+ subprocess.run(cmd, cwd=record['directory'], check=True)
+ 
+@@ -96,13 +97,14 @@ undefined = {n for n, _, k in symbols if k == 1 and mangled in n}
+ extra = undefined - set(bindings)
+ if extra or not undefined & set(bindings):
+     sys.exit('Unexpected original-base imports: %s' % sorted(extra))
++import shutil
++clang_bin = shutil.which('clang')
++objcopy_bin = shutil.which('llvm-objcopy') or 'llvm-objcopy'
++ar_bin = shutil.which('llvm-ar') or shutil.which('ar') or 'ar'
++
+ asm = OUT / 'original-bindings.S'
+-sdk = run(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
+ binding_objects = [OUT / 'original-bindings.o']
+ if FILESET:
+-    # As for the Legacy display (build-gop-legacy-display-27.py): original functions are reached through owned stubs in kernel text
+-    # (signed and moved like native code). XnuPrelink retargets their branches after placing native text.
+-    # The metaclass is data, reached through the GOT at its fixed collection address.
+     slide = int(plan['collection_slide'], 16)
+     text, addresses = '.text\n.p2align 2\n', ''
+     for n, a in sorted(bindings.items()):
+@@ -115,15 +117,14 @@ if FILESET:
+             text += f'.globl {n}\n{n}:\n bti c\n b {n}.original\n'
+     asm.write_text(text)
+     (OUT / 'original-addresses.S').write_text(addresses)
+-    run(['xcrun', 'clang', '-target', TRIPLE, '-isysroot', sdk, '-c', OUT / 'original-addresses.S', '-o', OUT / 'original-addresses.o'])
++    run([clang_bin, '-target', TRIPLE, '-c', OUT / 'original-addresses.S', '-o', OUT / 'original-addresses.o'])
+     binding_objects.append(OUT / 'original-addresses.o')
+ else:
+     asm.write_text(''.join(f'.globl {n}\n.set {n}, {a:#x}\n' for n, a in sorted(bindings.items()) if n in undefined))
+-run(['xcrun', 'clang', '-target', TRIPLE, '-isysroot', sdk, '-c', asm, '-o', OUT / 'original-bindings.o'])
++run([clang_bin, '-target', TRIPLE, '-c', asm, '-o', OUT / 'original-bindings.o'])
+ 
+-llvm = Path(run(['brew', '--prefix', 'llvm'], text=True).strip()) / 'bin'
+ late = OUT / 'NativeAdrenoAccelerator.late.o'
+-run([llvm / 'llvm-objcopy', '--remove-section=__DATA,__mod_init_func',
++run([objcopy_bin, '--remove-section=__DATA,__mod_init_func',
+      '--globalize-symbol=__GLOBAL__sub_I_NativeAdrenoAccelerator.cpp', obj, late])
+ 
+ 
+@@ -137,11 +138,11 @@ if code(obj) != code(late):
+     sys.exit('Only the owned initializer registration may change')
+ archive = OUT / 'libAdreno740Accelerator.late.a'
+ archive.unlink(missing_ok=True)
+-run(['xcrun', 'ar', 'rcs', archive, late, *binding_objects])
++run([ar_bin, 'rcs', archive, late, *binding_objects])
+ # The kernel links libAdreno740.a; the staged class rides in it (its initializer is not in __mod_init_func).
+ native = ROOT / 'build/adreno740/libAdreno740.a'
+ if native.exists():
+-    run(['xcrun', 'ar', 'rcs', native, late, *binding_objects])
++    run([ar_bin, 'rcs', native, late, *binding_objects])
+ (OUT / 'build-report.json').write_text(json.dumps(dict(
+     # The header the source includes (#include "../AdrenoMetal/OriginalAcceleratorABI.h", beside the driver's own checkout).
+     source_sha256={str(source.relative_to(ROOT)): sha(source),
+diff --git a/scripts/build-arm-driver.py b/scripts/build-arm-driver.py
+index b027a9b..529cd5d 100644
+--- a/scripts/build-arm-driver.py
++++ b/scripts/build-arm-driver.py
+@@ -84,7 +84,8 @@ while index < len(arguments):
+     index += 1
+ command.extend(['-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
+                 '-Wno-c99-designator', '-Wno-reorder-init-list', '-Wno-deprecated-enum-enum-conversion',
+-                '-Wno-unnecessary-virtual-specifier', '-I', str(ROOT / '.cache/xnu-work/osfmk')])
++                '-Wno-unnecessary-virtual-specifier', '-Wno-missing-designated-field-initializers',
++                '-I', str(ROOT / '.cache/xnu-work/osfmk')])
+ if component in ('NativeVirtioBlock', 'NativeRamBlock', 'NativeUfs'):
+     command += ['-I', str(ROOT / 'build/storage-abi/include')]
+     if args.verified_root:
+diff --git a/scripts/build-turnip-darwin-ruanmac.py b/scripts/build-turnip-darwin-ruanmac.py
+new file mode 100644
+index 0000000..3b8afcf
+--- /dev/null
++++ b/scripts/build-turnip-darwin-ruanmac.py
+@@ -0,0 +1,152 @@
++#!/usr/bin/env python3
++"""Build Turnip (Mesa freedreno Vulkan) with the native Darwin kernel backend (patches/mesa/turnip-darwin-kmd.patch).
++
++--target host builds for the Mac only to prove the backend compiles and links against the real Turnip; --target ios
++cross-builds the ARM64/iOS 17 library, --target ios27 the arm64e/iOS 27 one, --target macos27 the arm64e/macOS 27 one. None runs a GPU: the backend talks to the NativeAdreno IOKit service, which
++exists only on the tablet. Output stays under build/ and is never committed."""
++import argparse
++import hashlib
++import json
++import os
++from pathlib import Path
++import re
++import shutil
++import subprocess
++import sys
++from mesa_patch_identity import validate_recorded_patches
++
++ROOT = Path(__file__).resolve().parents[1]
++parser = argparse.ArgumentParser(description=__doc__)
++parser.add_argument('--target', choices=('host', 'ios', 'ios27', 'macos27'), default='host')
++parser.add_argument('--configure-only', action='store_true')
++parser.add_argument('--builtin-pack', type=Path, help='Embed an exact-source/profile/GPU-bound own builtin pack; no runtime compiler fallback')
++args = parser.parse_args()
++SOURCE = ROOT / '.cache/mesa-work'
++OUT = ROOT / {'host': 'build/mesa-tu', 'ios': 'build/mesa-tu-ios', 'ios27': 'build/mesa-tu-ios27', 'macos27': 'build/mesa-tu-macos27'}[args.target]
++LOGS = ROOT / '.cache'
++
++
++def read(cmd):
++    return subprocess.check_output([str(c) for c in cmd], text=True).strip()
++
++
++pins = json.loads((ROOT / 'scripts/data/adreno-compiler-inputs.json').read_text())
++if read(['git', '-C', SOURCE, 'rev-parse', 'HEAD']) != pins['mesa']['commit']:
++    sys.exit('Pinned Mesa source differs')
++validate_recorded_patches(ROOT, SOURCE, pins)
++if not shutil.which('glslangValidator'):
++    sys.exit('glslangValidator is required by the Vulkan runtime build (brew install glslang)')
++
++env = {k: v for k, v in os.environ.items() if not k.startswith(('IR3_', 'FD_MESA_', 'NIR_', 'MESA_SHADER_', 'TU_'))}
++tools = ROOT / '.cache/mesa-tools/bin'
++tools.mkdir(parents=True, exist_ok=True)
++for candidate in (shutil.which('bison'), '/opt/homebrew/opt/bison/bin/bison', '/usr/local/opt/bison/bin/bison'):
++    if not candidate or not Path(candidate).is_file():
++        continue
++    version = re.search(r'\b(\d+)\.(\d+)', read([candidate, '--version']))
++    if version and tuple(map(int, version.groups())) >= (3, 7):
++        link = tools / 'bison'
++        target = Path(candidate).resolve()
++        if link.resolve() != target:
++            link.unlink(missing_ok=True)
++            link.symlink_to(target)
++        break
++else:
++    sys.exit('Bison 3.7 or newer is required by the IR3 parser (brew install bison)')
++env['PATH'] = str(ROOT / '.cache/mesa-tools/bin') + ':' + str(ROOT / '.cache/mesa-venv/bin') + ':' + env['PATH']
++options = ['-Dgallium-drivers=', '-Dvulkan-drivers=freedreno', '-Dfreedreno-kmds=darwin',
++           '-Dtu-darwin-abi-dir=' + str(ROOT / 'drivers/Adreno740'), '-Dplatforms=macos', '-Dglx=disabled',
++           '-Degl=disabled', '-Dgbm=disabled', '-Dopengl=false', '-Dgles1=disabled', '-Dgles2=disabled',
++           '-Dllvm=disabled', '-Dshared-glapi=disabled', '-Dxmlconfig=disabled', '-Dshader-cache=enabled',
++           '-Dtools=', '-Dbuild-tests=false', '-Dvideo-codecs=', '-Dvulkan-layers=']
++setup = [ROOT / '.cache/mesa-venv/bin/meson', 'setup', OUT, SOURCE, '--wrap-mode=nodownload']
++if args.target in ('ios', 'ios27', 'macos27'):
++    sdk_name = 'macosx' if args.target == 'macos27' else 'iphoneos'
++    sdk = read(['xcrun', '--sdk', sdk_name, '--show-sdk-path'])
++    find = lambda tool: read(['xcrun', '--sdk', sdk_name, '--find', tool])
++    triple = {'ios': 'arm64-apple-ios17.0', 'ios27': 'arm64e-apple-ios27.0', 'macos27': 'arm64-apple-macos26.0'}[args.target]
++    flags = ['-target', triple, '-isysroot', sdk, '-fstack-protector-strong']
++    # ruan (Snapdragon 7s Gen 2: Cortex-A78/A55, ARMv8.2): the macOS triple defaults to -mcpu=apple-m1, whose LRCPC2/SHA3
++    # instructions (ldapur, stlur, eor3) are undefined here; WindowServer died with SIGILL once it reached Metal.
++    if args.target == 'macos27':
++        flags.append('-mcpu=cortex-a78')
++    # TURNIP_EXTRA_CFLAGS (e.g. -mstrict-align): compile args only, meson's link probes run with -Werror=unused-command-line-argument.
++    cflags = flags + os.environ.get('TURNIP_EXTRA_CFLAGS', '').split()
++    cross = ROOT / ('build/mesa-tu-%s.cross' % args.target)
++    cross.parent.mkdir(exist_ok=True)
++    cross.write_text(
++        '[binaries]\nc = %r\ncpp = %r\nobjc = %r\nar = %r\nstrip = %r\npkg-config = \'/usr/bin/false\'\n'
++        % (find('clang'), find('clang++'), find('clang'), find('ar'), find('strip')) +
++        "[host_machine]\nsystem = 'darwin'\ncpu_family = 'aarch64'\ncpu = 'arm64'\nendian = 'little'\n"
++        "[properties]\nneeds_exe_wrapper = true\n[built-in options]\n" +
++        ''.join('%s = %r\n' % (k, flags if 'link' in k else cflags) for k in ('c_args', 'cpp_args', 'objc_args', 'c_link_args', 'cpp_link_args',
++                                                    'objc_link_args')))
++    # The cross file's built-in options apply only at the first setup; pass them on every run so --reconfigure picks up changes.
++    setup += ['--cross-file', cross] + ['-D%s=%s' % (k, ' '.join(cflags)) for k in ('c_args', 'cpp_args')]
++    # Release with NDEBUG for the tablet: Mesa's default debugoptimized keeps assertions and NIR validation after
++    # every pass, which the tablet's pipeline makings paid for (int-143: 58 pipeline states took 68 s). The host
++    # build keeps them for the simulation checks.
++    options += ['-Dlibunwind=disabled', '-Dlmsensors=disabled', '-Dvalgrind=disabled', '-Dexpat=disabled',
++                '-Dzstd=disabled', '-Dbuildtype=release', '-Db_ndebug=true']
++    env.update(CC=find('clang'), CXX=find('clang++'), CFLAGS='', CXXFLAGS='', CPPFLAGS='', LDFLAGS='')
++else:
++    env.update(CC='/usr/bin/clang', CXX='/usr/bin/clang++')
++# Bind raw variant layout and code to every actual source edit, untracked
++# source addition, compiler, target and build option. The generated embedded
++# header stays outside SOURCE and is deliberately excluded from this key;
++# otherwise the pack would make its own producer identity circular.
++source_diff = subprocess.check_output(['git', '-C', SOURCE, 'diff', 'HEAD', '--binary'])
++untracked = subprocess.check_output(['git', '-C', SOURCE, 'ls-files', '--others', '--exclude-standard', '-z']).split(b'\0')
++source_extras = {name.decode(): hashlib.sha256((SOURCE / name.decode()).read_bytes()).hexdigest()
++                 for name in untracked if name and (SOURCE / name.decode()).is_file()}
++profile = dict(mesa_revision=pins['mesa']['commit'], target=args.target,
++               source_diff_sha256=hashlib.sha256(source_diff).hexdigest(), extra_sources=source_extras,
++               patch_guard_sha256=hashlib.sha256((ROOT / 'scripts/mesa_patch_identity.py').read_bytes()).hexdigest(),
++               compiler=read([env['CXX'], '--version']), options=options,
++               build_script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
++if os.environ.get('TURNIP_EXTRA_CFLAGS'):
++    profile['extra_cflags'] = os.environ['TURNIP_EXTRA_CFLAGS']
++source_id = hashlib.sha256(json.dumps(profile, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
++OUT.mkdir(parents=True, exist_ok=True)
++pack_header = ''
++pack_sha = None
++if args.builtin_pack:
++    pack = args.builtin_pack.resolve().read_bytes()
++    if not 112 <= len(pack) <= 4 * 1024**2 or pack[:8] != b'TUBUILT1' or pack[16:80] != source_id.encode():
++        sys.exit('Builtin pack is not from this exact compiler source/profile; regenerate rather than relabel it')
++    header = OUT / 'tu_builtin_pack.generated.h'
++    header.write_text('/* Generated own compiler output: never commit. */\nstatic const unsigned char tu_builtin_pack_bytes[] = {\n' +
++                      ''.join(','.join('0x%02x' % b for b in pack[i:i+16]) + ',\n' for i in range(0,len(pack),16)) + '};\n')
++    pack_header = str(header)
++    pack_sha = hashlib.sha256(pack).hexdigest()
++(OUT / 'builtin-build-profile.json').write_text(json.dumps(dict(source_id=source_id, profile=profile,
++    embedded_pack_sha256=pack_sha, builtin_pack_required=bool(args.builtin_pack)), indent=2) + '\n')
++options += ['-Dtu-builtin-source-id=' + source_id, '-Dtu-builtin-pack-header=' + pack_header]
++# The pipeline cache's identity (VkPhysicalDeviceProperties::pipelineCacheUUID) from the compiler's source alone, the same for every
++# target: Mesa's own on Darwin is the library file's mtime (disk_cache_get_function_timestamp), which differs per install and per build,
++# so the pipelines a boot compiled into the persistent Data cache would miss after every image rebuild of the same compiler.
++build_id = hashlib.sha256(json.dumps(dict(mesa_revision=pins['mesa']['commit'], source_diff_sha256=profile['source_diff_sha256'],
++                                          extra_sources=source_extras), sort_keys=True).encode()).hexdigest()[:40]
++options += ['-Dtu-build-id=' + build_id]
++log = LOGS / ('mesa-tu-%s-configure.log' % args.target)
++with log.open('w') as stream:
++    # Reconfigure with the current host programs and build options.
++    command = setup + options if not (OUT / 'build.ninja').exists() else setup[:2] + ['--reconfigure', '--clearcache'] + setup[2:] + options
++    if subprocess.run([str(c) for c in command], env=env, stdout=stream, stderr=subprocess.STDOUT).returncode:
++        sys.exit('Configure failed; see ' + str(log) + '\n' + '\n'.join(log.read_text().splitlines()[-12:]))
++if args.configure_only:
++    print('PASS: Turnip darwin-kmd configuration (%s)' % args.target)
++    sys.exit(0)
++build_log = LOGS / ('mesa-tu-%s-build.log' % args.target)
++with build_log.open('w') as stream:
++    result = subprocess.run(['ninja', '-C', str(OUT), '-j6'], env=env, stdout=stream, stderr=subprocess.STDOUT)
++if result.returncode:
++    sys.exit('Build failed; see ' + str(build_log) + '\n' + '\n'.join(
++        l for l in build_log.read_text().splitlines() if ': error:' in l or 'fatal error:' in l or l.startswith('FAILED:'))[:3000])
++library = OUT / 'src/freedreno/vulkan/libvulkan_freedreno.dylib'
++# llvm-nm reads Mach-O on a Linux host, where nm is GNU's.
++symbols = subprocess.run([shutil.which('llvm-nm') or 'nm', '-gU', str(library)], capture_output=True, text=True).stdout
++if ' T _vk_icdGetInstanceProcAddr' not in symbols:
++    sys.exit('The library does not export vk_icdGetInstanceProcAddr')
++print('PASS: Turnip with the darwin kernel backend builds for %s (%d bytes); no GPU or IOKit service was exercised'
++      % (args.target, library.stat().st_size))
+diff --git a/scripts/build-turnip-darwin.py b/scripts/build-turnip-darwin.py
+index 62e2e0b..a66b681 100644
+--- a/scripts/build-turnip-darwin.py
++++ b/scripts/build-turnip-darwin.py
+@@ -66,6 +66,8 @@ if args.target in ('ios', 'ios27', 'macos27'):
+     find = lambda tool: read(['xcrun', '--sdk', sdk_name, '--find', tool])
+     triple = {'ios': 'arm64-apple-ios17.0', 'ios27': 'arm64e-apple-ios27.0', 'macos27': 'arm64e-apple-macos27.0'}[args.target]
+     flags = ['-target', triple, '-isysroot', sdk, '-fstack-protector-strong']
++    # TURNIP_EXTRA_CFLAGS (e.g. -mstrict-align): compile args only, meson's link probes run with -Werror=unused-command-line-argument.
++    cflags = flags + os.environ.get('TURNIP_EXTRA_CFLAGS', '').split()
+     cross = ROOT / ('build/mesa-tu-%s.cross' % args.target)
+     cross.parent.mkdir(exist_ok=True)
+     cross.write_text(
+@@ -73,9 +75,10 @@ if args.target in ('ios', 'ios27', 'macos27'):
+         % (find('clang'), find('clang++'), find('clang'), find('ar'), find('strip')) +
+         "[host_machine]\nsystem = 'darwin'\ncpu_family = 'aarch64'\ncpu = 'arm64'\nendian = 'little'\n"
+         "[properties]\nneeds_exe_wrapper = true\n[built-in options]\n" +
+-        ''.join('%s = %r\n' % (k, flags) for k in ('c_args', 'cpp_args', 'objc_args', 'c_link_args', 'cpp_link_args',
++        ''.join('%s = %r\n' % (k, flags if 'link' in k else cflags) for k in ('c_args', 'cpp_args', 'objc_args', 'c_link_args', 'cpp_link_args',
+                                                     'objc_link_args')))
+-    setup += ['--cross-file', cross]
++    # The cross file's built-in options apply only at the first setup; pass them on every run so --reconfigure picks up changes.
++    setup += ['--cross-file', cross] + ['-D%s=%s' % (k, ' '.join(cflags)) for k in ('c_args', 'cpp_args')]
+     # Release with NDEBUG for the tablet: Mesa's default debugoptimized keeps assertions and NIR validation after
+     # every pass, which the tablet's pipeline makings paid for (int-143: 58 pipeline states took 68 s). The host
+     # build keeps them for the simulation checks.
+@@ -97,6 +100,8 @@ profile = dict(mesa_revision=pins['mesa']['commit'], target=args.target,
+                patch_guard_sha256=hashlib.sha256((ROOT / 'scripts/mesa_patch_identity.py').read_bytes()).hexdigest(),
+                compiler=read([env['CXX'], '--version']), options=options,
+                build_script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
++if os.environ.get('TURNIP_EXTRA_CFLAGS'):
++    profile['extra_cflags'] = os.environ['TURNIP_EXTRA_CFLAGS']
+ source_id = hashlib.sha256(json.dumps(profile, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+ OUT.mkdir(parents=True, exist_ok=True)
+ pack_header = ''
+@@ -135,7 +140,8 @@ if result.returncode:
+     sys.exit('Build failed; see ' + str(build_log) + '\n' + '\n'.join(
+         l for l in build_log.read_text().splitlines() if ': error:' in l or 'fatal error:' in l or l.startswith('FAILED:'))[:3000])
+ library = OUT / 'src/freedreno/vulkan/libvulkan_freedreno.dylib'
+-symbols = subprocess.run(['nm', '-gU', str(library)], capture_output=True, text=True).stdout
++# llvm-nm reads Mach-O on a Linux host, where nm is GNU's.
++symbols = subprocess.run([shutil.which('llvm-nm') or 'nm', '-gU', str(library)], capture_output=True, text=True).stdout
+ if ' T _vk_icdGetInstanceProcAddr' not in symbols:
+     sys.exit('The library does not export vk_icdGetInstanceProcAddr')
+ print('PASS: Turnip with the darwin kernel backend builds for %s (%d bytes); no GPU or IOKit service was exercised'
+diff --git a/scripts/data/adreno-compiler-inputs.json b/scripts/data/adreno-compiler-inputs.json
+index 4da200b..9d0b859 100644
+--- a/scripts/data/adreno-compiler-inputs.json
++++ b/scripts/data/adreno-compiler-inputs.json
+@@ -65,10 +65,13 @@
+     "patches/mesa/turnip-darwin-submit-cuts.patch",
+     "patches/mesa/turnip-render-mode-turns.patch",
+     "patches/mesa/turnip-darwin-keep-device-after-restart.patch",
+-  "patches/mesa/ir3-fragment-consts-leave-pipeline-space.patch",
+-  "patches/mesa/turnip-shaders-shared-across-pipeline-caches.patch",
+-  "patches/mesa/turnip-darwin-sweep-retired-on-cache-miss.patch",
+-  "patches/mesa/turnip-darwin-bo-finish-clears-under-lock.patch"
++    "patches/mesa/ir3-fragment-consts-leave-pipeline-space.patch",
++    "patches/mesa/turnip-shaders-shared-across-pipeline-caches.patch",
++    "patches/mesa/turnip-darwin-sweep-retired-on-cache-miss.patch",
++    "patches/mesa/turnip-darwin-bo-finish-clears-under-lock.patch",
++    "patches/mesa/turnip-fd710.patch",
++    "patches/mesa/turnip-darwin-open-report.patch",
++    "patches/mesa/turnip-darwin-no-shared-unmap.patch"
+   ],
+   "integer_fma_reference": {
+     "repository": "https://github.com/ucb-bar/berkeley-softfloat-3",
+diff --git a/scripts/unixnu/devicetree.py b/scripts/unixnu/devicetree.py
+index 3dde210..3f580fe 100644
+--- a/scripts/unixnu/devicetree.py
++++ b/scripts/unixnu/devicetree.py
+@@ -412,7 +412,8 @@ def generate(dtb, config, *, unique_chip_id=None, data=False, trust=False, addon
+     children.append(node('arm-io', [('device_type', b'arm-io\0'), ('#address-cells', struct.pack('<I', 2)),
+                          ('#size-cells', struct.pack('<I', 2)), ('ranges', struct.pack('<QQQ', 0, base, size))],
+                          [node(name, hardware_properties(entry, handles, base)) for name, entry in zip(names, hardware)]))
+-    for name in ('defaults', 'options', 'product', 'buttons'):
++    # filesystems (as UniXNU-gts7xlwifi's host patch): APFS reads /filesystems/DoNotUseSEP before its unencrypted-Data guard.
++    for name in ('defaults', 'options', 'product', 'buttons', 'filesystems'):
+         if name in platform or name in ('defaults', 'options', 'product'):
+             children.append(platform_node(name, platform.get(name, {})))
+     # A configured root 'compatible' goes before the hardware DTS's own entries: an OS identity's board name comes first (the OS
+diff --git a/scripts/unixnu/tree.py b/scripts/unixnu/tree.py
+index 8b7d016..b4823bd 100644
+--- a/scripts/unixnu/tree.py
++++ b/scripts/unixnu/tree.py
+@@ -80,6 +80,11 @@ def assemble(ctx, modules):
+     for module, name in components.aliases(ctx, modules):
+         if module.path is not None:
+             _link(module.path, tree / {'driver': 'drivers', 'kit': 'kits'}[module.kind] / name)
++    for folder in ('drivers', 'kits'):
++        if (ctx.root / folder).is_dir():
++            for entry in (ctx.root / folder).iterdir():
++                if entry.is_dir() and not (tree / folder / entry.name).exists():
++                    (tree / folder / entry.name).symlink_to(entry.resolve())
+     if not (tree / 'package').is_symlink():
+         raise Error('no package module: this repository or --local-package must provide package/')
+     (tree / 'scripts').mkdir(exist_ok=True)

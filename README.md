@@ -3,9 +3,16 @@
 A native macOS port for the tablet, on a CPU without pointer authentication (PAC). It reuses the iPadOS port's drivers
 ([iPadOS port, `main` branch](https://github.com/F-e-n-y-x/UniXNU-Redmi-Pad-Pro-5G/tree/main)). This branch holds only the macOS port.
 
-**Status (2026-11-24, UFS boot 17):** macOS 27.3 (`26C5035r`) boots from the tablet's internal storage (`sda22`). The kernel, UFS
-root, dyld shared cache and launchd all work, and launchd spawns system daemons (`kernelmanagerd`, `syslogd`, `restored_external`).
-The root is still the **restore ramdisk** tree, so there is nothing to show yet. Next: build the root from the full macOS system volume.
+**Status (2026-11-26): first macOS desktop.** macOS 27.3 (`26C5035r`) reaches the Finder desktop with the Dock, menu bar and
+wallpaper (captured over USB from the framebuffer, below). Login works (usermanagerd, SecurityAgent, auto-login), WindowServer
+composes with Metal on the Adreno 710, and touch, battery, backlight and CPU clock drivers run. Open: an intermittent early reset
+with the buttons driver on, a GPU hang in one boot, and slow start-up on a single A55 core (~30 min to the desktop).
+Details: [docs/status-2026-11-26.md](docs/status-2026-11-26.md).
+
+<p align="center">
+  <img src="docs/img/first-desktop-usb.jpg" alt="macOS 27.3 Finder desktop with Dock and menu bar on the Redmi Pad Pro 5G, captured over USB" width="45%"><br>
+  <sub>First desktop, 2026-11-26: full-resolution framebuffer dump over the USB debug link (<code>tools/ruan-usbdbg.py fullshot</code>).</sub>
+</p>
 
 <p align="center">
   <img src="docs/img/ufs-launchd-console.jpg" alt="Kernel console on the tablet: dyld shared-region mappings and slides, then a launchd fault" width="45%"><br>
@@ -35,9 +42,13 @@ com.apple.xpc.launchd: (system/com.apple.syslogd [4]) service state: running
 | Root on internal UFS (`sda22`), APFS, dyld shared cache mapped and slid | ✅ |
 | launchd: bootstrap, boot tasks, spawning daemons through xpcproxy | ✅ |
 | Hands-free test loop: every panic resets into fastboot; the previous boot's log comes back over USB | ✅ |
-| Full macOS system volume + SystemOS cryptex as the root | ⏳ next (IPSW downloaded; needs AEA decryption) |
-| Data volume, setup skip, auto-login | ❌ |
-| WindowServer (Metal on Adreno, or software rendering) | ❌ |
+| Full macOS system volume + SystemOS cryptex as the root | ✅ |
+| Data volume, setup skip, auto-login (usermanagerd persona, SecurityAgent) | ✅ |
+| WindowServer (Metal on Adreno 710 via Turnip) | ✅ desktop drawn |
+| Finder, Dock, menu bar | ✅ (first desktop 2026-11-26) |
+| Touch (Novatek NT36532), battery, backlight, CPU clock | ✅ verified over USB |
+| Buttons (power, volume) | ⚠️ works, but intermittent early reset; off by default for now |
+| Speed (boot on A78 / SMP) | ⏳ staged |
 
 ## The problem: no PAC
 

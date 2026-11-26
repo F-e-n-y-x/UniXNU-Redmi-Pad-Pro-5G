@@ -26,16 +26,16 @@ if [ -n "${UFS:-}" ]; then
 	# build-gop-legacy-display-27.py and build-ufs-original-bindings.py take a previous ruan kernel as their reference candidate
 	if [ ! -f $O/kernel/kernel.macho ]; then mkdir -p $O/kernel; cp $U/out/ruan/macos-27.3-26C5035r/ruan_macos_arm64/kernel/kernel.{macho,json} $O/kernel/; fi
 	export UNIXNU_PMGR_CHECKED=1   # see UniXNU-macos scripts/unixnu/payload.py check_native_root
-	KERNEL_ARGS="native-ufs-root=1 native-ufs-partition=unixnu native-ufs-stream=0x20 native-ufs-smmu-reuse=1 native-ufs-zero-copy=0 native-ufs-allow-unverified=1 pmgr=2 ${KERNEL_ARGS:-}"
+	KERNEL_ARGS="native-ufs-root=1 native-ufs-partition=unixnu native-ufs-stream=0x20 native-ufs-smmu-reuse=1 native-ufs-zero-copy=0 native-ufs-allow-unverified=1 pmgr=2 ruan-mac-data=${MAC_DATA:-1} ruan-mac-data-uuid=$(cat ${DATA_UUID_FILE:-/root/unixnu-work/macos-build/data-full/macos-data.uuid}) ${KERNEL_ARGS:-}"
 fi
 HERE=$(cd "$(dirname "$0")" && pwd)
-EXTRACT=${EXTRACT:-$(cd "$HERE/../../.." && pwd)/macos-extract}
+EXTRACT=${EXTRACT:-$W/macos-extract}
 OUT=${OUT:-$W/macos-build/out}
 REF_IMG=${REF_IMG:-$W/macos-build/backup-arm64e-20261121/ruan-ramroot-usb-macos.img}
 IMG=ruan-ramroot-usb-macos.img
 # The first set's arguments (its payload.json), extras first as unixnu payload orders them; the board adds the rest.
 ARGS="${RD-rd=md0} cpus=1 serial=3 sheng-pmgr=2 dyld_flags=8 offline-legacy-register=1 offline-legacy-gop=1
-      ram-data-split=$(cat "$EXTRACT/root-usb.split") ram-data=1 ram-data-uuid=F8F27480-6A31-2156-1ACE-A905E4E7CFCF ${KERNEL_ARGS:-}"
+      ${KERNEL_ARGS:-}"   # no ram-data*: iPadOS-only args the macOS kernel ignores (the command line limit is 1000 bytes)
 mkdir -p "$OUT"
 export PATH=/opt/unixnu-linux/bin:$PATH
 
@@ -43,7 +43,11 @@ cd "$U"
 if [ -z "${SKIP_KERNEL:-}" ]; then
 	echo "== kernel (plain arm64) + prelink"
 	./unixnu defconfig $DEFCONFIG -D "$D" --os macos-27 >/dev/null
+	touch "$OUT/.kernel-start"
 	./unixnu build kernel -D "$D" --os macos-27 > "$OUT/kernel.log" 2>&1 || { tail -20 "$OUT/kernel.log"; exit 1; }
+	# unixnu can return 0 after make failed (2026-11-26: a link error, then the 07:11 kernel was packed): require a new kernel
+	[ "$O/kernel/kernel.macho" -nt "$OUT/.kernel-start" ] && ! grep -aq "linker command failed\|\*\*\* \[.*Error" "$OUT/kernel.log" \
+		|| { grep -a -B3 -A3 "Undefined symbols\|error:" "$OUT/kernel.log" | grep -av "was built for newer" | tail -20; echo "kernel build failed"; exit 1; }
 fi
 cp "$O/kernel/kernel.macho" "$OUT/kernel.macho"
 

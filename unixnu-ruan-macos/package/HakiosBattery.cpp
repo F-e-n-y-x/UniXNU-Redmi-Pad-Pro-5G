@@ -52,6 +52,12 @@ public:
 		flag("AppleRawExternalConnected", b->external != 0);
 		setCurrentCapacity((unsigned) percent);
 		setMaxCapacity(100);
+		/* macOS powerd: no fuel-gauge estimate, so "unknown" (65535) instead of a 0:00 time; warn/critical as a MacBook */
+		setTimeRemaining(65535);
+		number("AvgTimeToEmpty", 65535);
+		number("AvgTimeToFull", 65535);
+		setAtWarnLevel(!b->external && percent <= 10);
+		setAtCriticalLevel(!b->external && percent <= 5);
 		setVoltage(b->voltage_uv > 0 ? (unsigned) (b->voltage_uv / 1000) : 0);
 		setAmperage(b->current_ua / 1000);
 		number("InstantAmperage", b->current_ua / 1000);
@@ -156,7 +162,8 @@ HakiosBatteryReport(const void * state, unsigned size)
 		return;
 	}
 
-	if (s_power_source == nullptr) {
+	const bool fresh = s_power_source == nullptr;
+	if (fresh) {
 		s_power_source = RuanPowerSource::create();
 		if ((platform = IOService::getPlatform()) == nullptr || s_power_source == nullptr) {
 			OSSafeReleaseNULL(s_power_source);
@@ -174,9 +181,11 @@ HakiosBatteryReport(const void * state, unsigned size)
 			s_power_source = nullptr;
 			return;
 		}
-		s_power_source->registerService();
-		IOLog("HakiosBattery: IOPMPowerSource registered under platform\n");
 	}
 
 	s_power_source->report(b);
+	if (fresh) {    /* registered with its keys in place: powerd's first look already sees a battery */
+		s_power_source->registerService();
+		IOLog("HakiosBattery: IOPMPowerSource registered under platform\n");
+	}
 }

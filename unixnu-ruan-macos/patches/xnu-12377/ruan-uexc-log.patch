@@ -1,0 +1,71 @@
+ruan bring-up: log every user exception (pid, exc, code, pc/lr/sp/far/esr, the VM region at the fault address) and kill-type SIGBUS/SIGSEGV/SIGILL senders, so a SIGBUS is never silent (WindowServer died with SIGBUS and no ruan-uabort line).
+
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -202,6 +202,52 @@
+ 
+ static void handle_simd_trap(arm_saved_state_t *, uint64_t esr) __dead2;
+ 
++/* ruan bring-up (replaces ruan-uabort): one line for every EL0 exception sleh raises, whatever the path (data/instruction aborts,
++ * PC/SP alignment, PAC, BTI, undefined), with the registers and the VM region at codes[1] (the fault address, or pc/sp for the
++ * alignment traps). WindowServer died of SIGBUS with no ruan-uabort line: that path bypassed handle_user_abort. */
++#include <vm/vm_map_internal.h>
++#include <vm/vm_sanitize_internal.h>
++static void
++ruan_uexc_log(exception_type_t exc, mach_exception_data_t codes)
++{
++	thread_t thread = current_thread();
++	arm_saved_state_t *state = get_user_regs(thread);
++	vm_map_t map = thread->map;
++	if (!state || map == VM_MAP_NULL || map == kernel_map) {
++		return;
++	}
++	const uint64_t addr = VM_USER_STRIP_PTR((uint64_t)codes[1]);
++	vm_map_offset_ut start_u = addr;      /* plain integers in this configuration */
++	vm_map_size_ut size_u = 0;
++	natural_t depth = 4;    /* into the shared region's submap */
++	vm_region_submap_info_data_64_t ri = {};
++	mach_msg_type_number_t count = VM_REGION_SUBMAP_INFO_COUNT_64;
++	kern_return_t kr = KERN_FAILURE;
++	if (ml_get_interrupts_enabled()) {
++		kr = vm_map_region_recurse_64(map, &start_u, &size_u, &depth, &ri, &count);
++	}
++	const uint64_t start = (uint64_t)start_u, size = (uint64_t)size_u;
++	uint32_t insn = 0;      /* the instruction at pc: identifies an undefined one without the shared region's slide */
++	if (ml_get_interrupts_enabled()) {
++		(void)copyin((user_addr_t)get_saved_state_pc(state), &insn, sizeof(insn));
++	}
++	printf("ruan-uexc: pid %d (%s) insn 0x%08x exc 0x%x code 0x%llx addr 0x%llx pc 0x%llx lr 0x%llx sp 0x%llx fp 0x%llx esr 0x%llx far 0x%llx"
++	    " x0 0x%llx x1 0x%llx x8 0x%llx x16 0x%llx x17 0x%llx | region kr %d %s 0x%llx-0x%llx prot %d/%d tag %u share %u"
++	    " extpager %u obj 0x%x res %u wired %u depth %u\n",
++	    task_pid(current_task()), proc_best_name(current_proc()), insn, exc, (unsigned long long)codes[0], (unsigned long long)codes[1],
++	    (unsigned long long)get_saved_state_pc(state), (unsigned long long)get_saved_state_lr(state),
++	    (unsigned long long)get_saved_state_sp(state), (unsigned long long)get_saved_state_fp(state),
++	    (unsigned long long)get_saved_state_esr(state), (unsigned long long)get_saved_state_far(state),
++	    (unsigned long long)get_saved_state_reg(state, 0), (unsigned long long)get_saved_state_reg(state, 1),
++	    (unsigned long long)get_saved_state_reg(state, 8), (unsigned long long)get_saved_state_reg(state, 16),
++	    (unsigned long long)get_saved_state_reg(state, 17), kr,
++	    (kr == KERN_SUCCESS && start <= addr) ? "in" : "unmapped, next",
++	    (unsigned long long)start, (unsigned long long)(start + size), ri.protection, ri.max_protection, ri.user_tag,
++	    ri.share_mode, ri.external_pager, ri.object_id, ri.pages_resident, ri.user_wired_count, depth);
++}
++/* Every exception_triage below goes through the logger (a function-like macro does not expand inside itself). */
++#define exception_triage(exc, codes, n) (ruan_uexc_log((exc), (codes)), exception_triage((exc), (codes), (n)))
++
+ extern void current_cached_proc_cred_update(void);
+ void   mach_syscall_trace_exit(unsigned int retval, unsigned int call_number);
+ 
+--- a/bsd/kern/kern_sig.c
++++ b/bsd/kern/kern_sig.c
+@@ -2067,6 +2067,11 @@
+ 	if ((u_int)signum >= NSIG || signum == 0) {
+ 		panic("psignal: bad signal number %d", signum);
+ 	}
++	/* ruan bring-up: a fault signal that no exception raised (kill, killpg, pthread_kill); exception signals go through threadsignal. */
++	if (signum == SIGBUS || signum == SIGSEGV || signum == SIGILL) {
++		printf("ruan-sig: sig %d flavor 0x%x to pid %d from pid %d (%s)\n", signum, flavor,
++		    p != PROC_NULL ? proc_pid(p) : -1, proc_pid(current_proc()), proc_best_name(current_proc()));
++	}
+ 
+ 	mask = sigmask(signum);
+ 	prop = sigprop[signum];

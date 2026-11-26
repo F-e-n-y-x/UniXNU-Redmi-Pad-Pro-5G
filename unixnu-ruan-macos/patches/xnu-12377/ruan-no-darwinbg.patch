@@ -1,0 +1,55 @@
+ruan bring-up: ruan-no-darwinbg=1 keeps tasks and threads out of DARWIN_BG (no lowest-band CPU, no throttled I/O) on the single-CPU boot.
+
+--- a/osfmk/kern/task_policy.c
++++ b/osfmk/kern/task_policy.c
+@@ -36,6 +36,19 @@
+ #include <mach/host_special_ports.h>    /* RESOURCE_NOTIFY_PORT    */
+ #include <kern/sched.h>
+ #include <kern/task.h>
++
++/* ruan bring-up: see the DARWIN_BG side effects below */
++int ruan_no_darwinbg(void);
++int
++ruan_no_darwinbg(void)
++{
++	static int state;               /* 0 unknown, 1 off, 2 on */
++	if (!state) {
++		unsigned int on = 0;
++		state = PE_parse_boot_argn("ruan-no-darwinbg", &on, sizeof(on)) && on ? 2 : 1;
++	}
++	return state == 2;
++}
+ #include <mach/thread_policy.h>
+ #include <sys/errno.h>
+ #include <sys/resource.h>
+@@ -958,6 +971,13 @@
+ 		next.tep_runaway_mitigation = 1;
+ 	}
+ 
++	/* ruan bring-up: ruan-no-darwinbg=1 keeps every task out of DARWIN_BG (lowest CPU band and throttled I/O): on the
++	 * single-CPU boot the Background launchd jobs (iomfb_bics_daemon, ionodecache) never got past xpcproxy, and
++	 * WindowServer waited on one of them. */
++	if (wants_darwinbg && ruan_no_darwinbg()) {
++		wants_darwinbg = false;
++	}
++
+ 	/* Calculate side effects of DARWIN_BG */
+ 
+ 	if (wants_darwinbg) {
+--- a/osfmk/kern/thread_policy.c
++++ b/osfmk/kern/thread_policy.c
+@@ -1733,6 +1733,14 @@
+ 		wants_darwinbg = true;
+ 	}
+ 
++	/* ruan bring-up: ruan-no-darwinbg=1 (task_policy.c) */
++	if (wants_darwinbg) {
++		extern int ruan_no_darwinbg(void);
++		if (ruan_no_darwinbg()) {
++			wants_darwinbg = false;
++		}
++	}
++
+ 	/* Calculate side effects of DARWIN_BG */
+ 
+ 	if (wants_darwinbg) {

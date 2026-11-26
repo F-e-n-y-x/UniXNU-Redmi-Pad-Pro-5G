@@ -39,7 +39,24 @@ s += ('\n# UFS variant: the root partition (ShengUfs finds it by name, native-uf
 if os.environ.get('UFS_ROOT_UUID'):
     edit('[os_overrides."macos-27.3-26C5035r".payload.adt]\nchip_id = "6050"',
          f'[os_overrides."macos-27.3-26C5035r".payload.adt]\nchip_id = "6050"\nroot_match_volume_uuid = "{os.environ["UFS_ROOT_UUID"]}"')
+    # kern.bootuuid / kern.apfsprebootuuid name the booted volume; launchd's mount phases (apfs_boot_util), logd and dyld look it
+    # up ("lookup_boot_device: Failed to find an AppleAPFSVolume matching 84581E99…", the profile's OS image, full-OS boot 2).
+    s += (f'\n# The booted volume is our UFS root (make-macos-ufs-board.sh, UFS_ROOT_UUID)\n[adt.chosen.string]\n'
+          f'"boot-uuid" = "{os.environ["UFS_ROOT_UUID"]}"\n"apfs-preboot-uuid" = "{os.environ["UFS_ROOT_UUID"]}"\n')
+# kern.maxvnodes: without it XNU sized the vnode table at 1024 on ruan; full macOS filled it ("vnode: table is full") and
+# memorystatus kept killing daemons for vnodes (clocksyncd, amfid, logd_helper …, eth boot 3). 8 GiB / 64 KiB + 1024, as XNU's rule.
+s += '\n[adt.defaults.u32]\n"kern.maxvnodes" = 132096\n'
+# persistent_data: the Data volume is a RAM disk, but /chosen/ephemeral-storage must NOT be published: usermanagerd then never creates
+# its persona manager (main: os_variant_uses_ephemeral_storage skips it) and aborts on "_gPersonaManager != nil" at the first
+# login, so no user session starts (Dock, Finder; black screen). devicetree.py adds it for every data RAM disk unless
+# persistent_data is set. Rebuilding persona.kb each boot is fine (DroidVM log-2026-10:383, TODO.md:111).
+s = s.replace('[os_overrides."macos-27.3-26C5035r".payload.adt]\nchip_id = "6050"',
+              '[os_overrides."macos-27.3-26C5035r".payload.adt]\nchip_id = "6050"\npersistent_data = true', 1)
 b = tomllib.loads(s)
+assert b['adt']['defaults']['u32']['kern.maxvnodes'] == 132096
+assert b['os_overrides']['macos-27.3-26C5035r']['payload']['adt']['persistent_data'] is True
+assert 'ephemeral-storage' not in b['adt']['chosen'].get('u32', {})
+assert b['adt']['chosen']['asmb']['u64']['lp-sip0'] & 2   # board's 0x867: CSR_ALLOW_UNRESTRICTED_FS for /Library/GPUBundles
 assert 'ShengUfs' in b['components']['include'] and b['userdata']['partition'] == 'unixnu'
 assert 'component:ShengUfs' in b['os_overrides']['macos-27.3-26C5035r']['kernel']['archives']
 open(sys.argv[2], 'w').write(s)

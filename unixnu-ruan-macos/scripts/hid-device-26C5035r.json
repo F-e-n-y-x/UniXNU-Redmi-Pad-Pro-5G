@@ -1348,5 +1348,18 @@
   "__ZN11IOHIDDeviceD2Ev": "0xfffffe000ab35428",
   "__ZN11IOHIDDevice10gMetaClassE": "0xfffffe000cc24958",
   "__ZTV11IOHIDDevice": "0xfffffe00085ef6d0"
+ },
+ "family_text": [
+  "0xfffffe000ab21910",
+  "0xfffffe000abc7ac8"
+ ],
+ "methods": {
+  "handleStart": 272,
+  "newTransportString": 275,
+  "newProductString": 277,
+  "newPrimaryUsageNumber": 282,
+  "newPrimaryUsagePageNumber": 283,
+  "newReportDescriptor": 284,
+  "handleReport": 285
  }
 }

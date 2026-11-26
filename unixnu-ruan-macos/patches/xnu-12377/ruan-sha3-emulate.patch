@@ -1,0 +1,116 @@
+ruan bring-up: emulate FEAT_SHA3 (EOR3/BCAX/RAX1/XAR), FEAT_SHA512 (SHA512H/H2/SU0/SU1) and SB for EL0 on Cortex-A55/A78; SecurityAgent died on EOR3 in the dyld cache. Checked against qemu -cpu max, 20000 random inputs each.
+
+--- a/osfmk/arm64/pac_trap.c
++++ b/osfmk/arm64/pac_trap.c
+@@ -109,6 +109,84 @@
+ 	return 0;
+ }
+ 
++/* ruan bring-up: FEAT_SHA3 (EOR3, BCAX, RAX1, XAR) for cores without it (Cortex-A55/A78). Apple's frameworks assume it
++ * (SecurityAgent died on EOR3 0xce000820 in the dyld cache, so loginwindow's authorization failed and the session ended).
++ * v[n][0..1] = the low/high 64 bits of Vn. Returns false for any other instruction. */
++static bool
++ruan_sha3_emulate(uint32_t insn, uint64_t v[32][2])
++{
++	unsigned d = insn & 31, n = (insn >> 5) & 31, m = (insn >> 16) & 31, a = (insn >> 10) & 31, k;
++	uint64_t r[2];
++
++	if ((insn & 0xFFE08000u) == 0xCE000000u) {              /* EOR3 Vd.16B, Vn.16B, Vm.16B, Va.16B */
++		for (k = 0; k < 2; k++) {
++			r[k] = v[n][k] ^ v[m][k] ^ v[a][k];
++		}
++	} else if ((insn & 0xFFE08000u) == 0xCE200000u) {       /* BCAX Vd = Vn ^ (Vm & ~Va) */
++		for (k = 0; k < 2; k++) {
++			r[k] = v[n][k] ^ (v[m][k] & ~v[a][k]);
++		}
++	} else if ((insn & 0xFFE0FC00u) == 0xCE608C00u) {       /* RAX1 Vd.2D = Vn ^ rol(Vm, 1) */
++		for (k = 0; k < 2; k++) {
++			r[k] = v[n][k] ^ ((v[m][k] << 1) | (v[m][k] >> 63));
++		}
++	} else if ((insn & 0xFFE00000u) == 0xCE800000u) {       /* XAR Vd.2D = ror(Vn ^ Vm, imm6) */
++		unsigned sh = (insn >> 10) & 63;
++		for (k = 0; k < 2; k++) {
++			uint64_t x = v[n][k] ^ v[m][k];
++			r[k] = sh ? (x >> sh) | (x << (64 - sh)) : x;
++		}
++	} else {
++		return false;
++	}
++	v[d][0] = r[0];
++	v[d][1] = r[1];
++	return true;
++}
++
++/* ruan bring-up: FEAT_SHA512 (SHA512H, SHA512H2, SHA512SU0, SHA512SU1) and SB for cores without them (Cortex-A55/A78); dyld and
++ * libcorecrypto carry them. v[n][0] = bits 63:0 of Vn, v[n][1] = bits 127:64. Semantics from the Arm ARM pseudocode. */
++static inline uint64_t ruan_ror64(uint64_t x, unsigned s) { return (x >> s) | (x << (64 - s)); }
++
++static bool
++ruan_sha512_emulate(uint32_t insn, uint64_t v[32][2])
++{
++	unsigned d = insn & 31, n = (insn >> 5) & 31, m = (insn >> 16) & 31;
++	uint64_t r0, r1;
++
++	if ((insn & 0xFFE0FC00u) == 0xCE608000u) {              /* SHA512H Qd, Qn, Vm.2D */
++		uint64_t x0 = v[n][0], x1 = v[n][1], y0 = v[m][0], y1 = v[m][1], w0 = v[d][0], w1 = v[d][1];
++		uint64_t s1 = ruan_ror64(y1, 14) ^ ruan_ror64(y1, 18) ^ ruan_ror64(y1, 41);
++		uint64_t ch = (y1 & x0) ^ (~y1 & x1);
++		r1 = ch + s1 + w1;
++		uint64_t t = r1 + y0;
++		s1 = ruan_ror64(t, 14) ^ ruan_ror64(t, 18) ^ ruan_ror64(t, 41);
++		ch = (t & y1) ^ (~t & x0);
++		r0 = ch + s1 + w0;
++	} else if ((insn & 0xFFE0FC00u) == 0xCE608400u) {       /* SHA512H2 Qd, Qn, Vm.2D */
++		uint64_t x0 = v[n][0], y0 = v[m][0], y1 = v[m][1], w0 = v[d][0], w1 = v[d][1];
++		uint64_t s0 = ruan_ror64(y0, 28) ^ ruan_ror64(y0, 34) ^ ruan_ror64(y0, 39);
++		uint64_t maj = (x0 & y1) ^ (x0 & y0) ^ (y1 & y0);
++		r1 = maj + s0 + w1;
++		s0 = ruan_ror64(r1, 28) ^ ruan_ror64(r1, 34) ^ ruan_ror64(r1, 39);
++		maj = (r1 & y0) ^ (r1 & y1) ^ (y1 & y0);
++		r0 = maj + s0 + w0;
++	} else if ((insn & 0xFFFFFC00u) == 0xCEC08000u) {       /* SHA512SU0 Vd.2D, Vn.2D */
++		uint64_t w0 = v[d][0], w1 = v[d][1], x0 = v[n][0];
++		r0 = w0 + (ruan_ror64(w1, 1) ^ ruan_ror64(w1, 8) ^ (w1 >> 7));
++		r1 = w1 + (ruan_ror64(x0, 1) ^ ruan_ror64(x0, 8) ^ (x0 >> 7));
++	} else if ((insn & 0xFFE0FC00u) == 0xCE608800u) {       /* SHA512SU1 Vd.2D, Vn.2D, Vm.2D */
++		uint64_t w0 = v[d][0], w1 = v[d][1], x0 = v[n][0], x1 = v[n][1], y0 = v[m][0], y1 = v[m][1];
++		r1 = w1 + (ruan_ror64(x1, 19) ^ ruan_ror64(x1, 61) ^ (x1 >> 6)) + y1;
++		r0 = w0 + (ruan_ror64(x0, 19) ^ ruan_ror64(x0, 61) ^ (x0 >> 6)) + y0;
++	} else {
++		return false;
++	}
++	v[d][0] = r0;
++	v[d][1] = r1;
++	return true;
++}
++
+ /*
+  * Try to emulate a trapping arm64e instruction for a 64-bit user thread.
+  * Returns true if it was emulated (state advanced); false to let XNU deliver
+@@ -125,6 +203,26 @@
+ 		return false;
+ 	}
+ 
++	{
++		/* ruan: FEAT_SHA3 on the thread's saved NEON registers (restored from uNeon on return to EL0) */
++		static int sha3_logged;
++		arm_neon_saved_state_t *sn = current_thread()->machine.uNeon;
++		if (instr == 0xD50330FFu) {   /* SB (FEAT_SB): the exception return already orders everything after it */
++			set_saved_state_pc(state, get_saved_state_pc(state) + 4);
++			return true;
++		}
++		if (sn != NULL && (instr & 0xFF000000u) == 0xCE000000u &&
++		    (ruan_sha3_emulate(instr, (uint64_t (*)[2])(void *)neon_state64(sn)->v.q) ||
++		    ruan_sha512_emulate(instr, (uint64_t (*)[2])(void *)neon_state64(sn)->v.q))) {
++			if (sha3_logged < 8) {
++				sha3_logged++;
++				printf("ruan-sha3: emulated %08x at pc 0x%llx\n", instr, (unsigned long long)get_saved_state_pc(state));
++			}
++			set_saved_state_pc(state, get_saved_state_pc(state) + 4);
++			return true;
++		}
++	}
++
+ 	for (i = 0; i < 31; i++) {
+ 		ctx.x[i] = get_saved_state_reg(state, i);
+ 	}

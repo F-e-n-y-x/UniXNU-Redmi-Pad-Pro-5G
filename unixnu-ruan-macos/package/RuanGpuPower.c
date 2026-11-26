@@ -27,6 +27,28 @@
 #include "RuanA710Pm4.h"
 #include "RuanBuiltinFw.h"
 #include "RuanAdrenoGlue.h"   // gpu 17/18: UniXNU's Adreno740 driver on top of this power-up (package/RuanAdrenoGlue.cpp)
+#include "RuanDeviceMem.h"   // macOS: device-safe memcpy/memset for the GPU pool (no-op elsewhere)
+#if defined(RUAN_DEVICE_SAFE_MEM) && RUAN_DEVICE_SAFE_MEM
+/* The Adreno driver's copies, redirected here at link time (scripts/build-ruan-adreno.py: objcopy --redefine-sym), since it writes
+ * its GPU structures into the same Device-mapped pool ("Unaligned kernel data abort" at glue step 7, full-OS boot 15). */
+void *ruan_devx_memcpy(void *d, const void *s, size_t n) {return ruan_dev_memcpy(d, s, n);}
+void *ruan_devx_memset(void *d, int c, size_t n) {return ruan_dev_memset(d, c, n);}
+void ruan_devx_bzero(void *d, size_t n) {(void)ruan_dev_memset(d, 0, n);}
+void *ruan_devx_memmove(void *d, const void *s, size_t n)
+{
+	if ((uintptr_t)d <= (uintptr_t)s || (uintptr_t)d >= (uintptr_t)s + n) return ruan_dev_memcpy(d, s, n);
+	volatile uint8_t *q = (volatile uint8_t *)d;
+	const volatile uint8_t *r = (const volatile uint8_t *)s;
+	while (n--) q[n] = r[n];   /* overlapping, destination above the source: copy backwards */
+	return d;
+}
+int ruan_devx_memcmp(const void *a, const void *b, size_t n)
+{
+	const volatile uint8_t *x = (const volatile uint8_t *)a, *y = (const volatile uint8_t *)b;
+	for (size_t i = 0; i < n; ++i) if (x[i] != y[i]) return x[i] < y[i] ? -1 : 1;
+	return 0;
+}
+#endif
 
 extern void boot_progress_stage(const char *s);
 extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, uint32_t flags);

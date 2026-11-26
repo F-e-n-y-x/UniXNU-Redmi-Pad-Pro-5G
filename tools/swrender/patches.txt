@@ -1,0 +1,8 @@
+# file,fileoff,before,after,vmaddr,policy   (26C5035r, pacstripped cache in macos-extract/26C5035r__Mac17,11)
+dyld_shared_cache_arm64e.01,24dfd5c,ff4302d1f65706a9,ff2303d5c0035fd6,1828dfd5c,no-metal: WSSystemCanCompositeWithMetal once block +4 -> autibsp;ret
+dyld_shared_cache_arm64e.03,5de1134,08060037,1f2003d5,18e1e1134,bgra-fb (sheng, only if is_virtualized): framebuffer_pixel_format +0xec tbnz -> nop
+dyld_shared_cache_arm64e.03,5de104c,e923bc6df65701a9f44f02a9fd7b03a9,20488a52e048a872ff2303d5c0035fd6,18e1e104c,bgra-fb (link-lab style): framebuffer_pixel_format +4 -> return 'BGRA'
+dyld_shared_cache_arm64e.01,26cde70,f40300aa,140a80d2,182acde70,software-pool-bgra: SLCADisplay::begin_update +0x1810 mov x20,x0 -> mov x20,#80 (MTLPixelFormatBGRA8Unorm)
+dyld_shared_cache_arm64e.01,27259b0,7f2303d5ffc301d1,20008052c0035fd6,182b259b0,sw-cursor: CGXSWCursorIsForced -> return 1
+dyld_shared_cache_arm64e.03,5d2b03c,28c62ff008f143f9,00008052c0035fd6,18e12b03c,no-compression: CADeviceUseCompression -> return 0
+dyld_shared_cache_arm64e.03,5de5e48,00020034,10000014,18e1e5e48,vsync-off-uncompressed: vsync_off_pixel_format +0x90 cbz w0 -> b
