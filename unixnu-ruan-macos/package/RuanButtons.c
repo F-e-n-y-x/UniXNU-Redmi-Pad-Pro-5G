@@ -677,14 +677,13 @@ press_power_init(void)
 void
 hakios_buttons_init(void)
 {
-	uint32_t enabled = 1, steps = 5;
+	uint32_t enabled = 0, steps = 5;   /* off by default again: boots with it on reset early at random (2026-11-26 k2/k3/k4b) */
 	thread_t thread;
 
 	press_power_init();
 
 	/*
-	 * ruan: on by default (the macOS command line has no room for a boot-arg) unless buttons=0 or
-	 * garnet_buttons=0 says otherwise: a hand has pressed all three keys and each was read as it was made.
+	 * ruan: off by default (random early resets with it on, cause not found yet); buttons=1 or garnet_buttons=1 turns it on.
 	 */
 	if (!PE_parse_boot_argn("buttons", &enabled, sizeof(enabled))) {
 		PE_parse_boot_argn("garnet_buttons", &enabled, sizeof(enabled));

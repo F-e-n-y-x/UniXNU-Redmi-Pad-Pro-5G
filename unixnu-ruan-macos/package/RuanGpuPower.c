@@ -949,7 +949,10 @@ static void ruan_build_hfi_tables(uint32_t *perf, uint32_t *bw)
 				}
 			}
 
-			if (res[0].found && res[1].found) (void)ruan_arc_vote(&res[0], &res[1], 64, &gpu_vote);
+			/* ruan-gpu-corner=<RPMh level>: GX corner for the active level (DT gpu-pwrlevels: 0x100 NOM = 734 MHz); iPadOS default since rbu124u */
+			uint32_t corner = 256;   /* NOM: 734 MHz; was 64 LOW_SVS 295 MHz */
+			PE_parse_boot_argn("ruan-gpu-corner", &corner, sizeof(corner));
+			if (res[0].found && res[1].found) (void)ruan_arc_vote(&res[0], &res[1], corner, &gpu_vote);
 			if (res[2].found && res[1].found) (void)ruan_arc_vote(&res[2], &res[1], 48, &gmu_vote);
 			if (res[6].found) cn0_addr = res[6].address;
 			if (res[3].found) sh0_addr = res[3].address;
@@ -976,7 +979,9 @@ static void ruan_build_hfi_tables(uint32_t *perf, uint32_t *bw)
 	perf[4] = 0;              /* Level 0: 0 kHz */
 	perf[5] = gpu_vote;       /* Level 1: active vote */
 	perf[6] = 0xffffffffu;    /* Level 1: cx_vote disabled */
-	perf[7] = 295000;         /* Level 1: 295 MHz (lowest active on A710) */
+	perf[7] = 734000;         /* Level 1: 734 MHz at NOM (ruan-gpu-khz overrides); was 295 MHz */
+	/* ruan-gpu-khz=<kHz>: the active level's clock; must match ruan-gpu-corner's DT pwrlevel (734000 with 0x100) */
+	{ uint32_t khz = 0; if (PE_parse_boot_argn("ruan-gpu-khz", &khz, sizeof(khz)) && khz >= 295000 && khz <= 940000) perf[7] = khz; }
 	perf[50] = 0;             /* GMU Level 0: vote off */
 	perf[51] = 0;             /* GMU Level 0: 0 kHz */
 	perf[52] = gmu_vote;      /* GMU Level 1: active vote */
@@ -1213,11 +1218,13 @@ static void s3_hw_init(struct ruan_gpu_s3_hw *h, struct ruan_gpu_s3_gx *gx, stru
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_RBBM_SECVID_TSB_TRUSTED_SIZE * 4u, 0u);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_CACHE_WAYS * 4u, 0x800000u);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_CMDQ_CONFIG * 4u, (6u << 16) | (6u << 12) | (9u << 8) | (1u << 3) | (1u << 2) | 2u);
-	(void)wr(NULL, GPB_WIN_GPU, RUAN_RB_NC_MODE_CNTL * 4u, (1u << 11) | (1u << 4) | (3u << 1));
-	(void)wr(NULL, GPB_WIN_GPU, RUAN_TPL1_NC_MODE_CNTL * 4u, 3u << 1);
-	(void)wr(NULL, GPB_WIN_GPU, RUAN_SP_NC_MODE_CNTL * 4u, (2u << 4) | (3u << 1));
-	(void)wr(NULL, GPB_WIN_GPU, RUAN_GRAS_NC_MODE_CNTL * 4u, 3u << 5);
-	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_MODE_CNTL * 4u, 3u << 21);
+	// KGSL gen7_start with the A710's highest bank bit 15 (hbb_lo = 15 - 13 = 2), the value RuanAdrenoGlue.cpp reports to Turnip: at 3 (hbb 16,
+	// sheng's A740) the GPU's tiled layout and Turnip's CPU tiled copies (host_image_copy, Metal replaceRegion) disagreed -> scrambled icons.
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_RB_NC_MODE_CNTL * 4u, (1u << 11) | (1u << 4) | (2u << 1));
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_TPL1_NC_MODE_CNTL * 4u, 2u << 1);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_SP_NC_MODE_CNTL * 4u, (2u << 4) | (2u << 1));
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_GRAS_NC_MODE_CNTL * 4u, 2u << 5);
+	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_MODE_CNTL * 4u, 2u << 21);
 	(void)wr(NULL, GPB_WIN_GPU, RUAN_UCHE_CLIENT_PF * 4u, 1u);
 	{
 		uint32_t eco = 0;

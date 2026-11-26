@@ -1,5 +1,5 @@
 diff --git a/NativeLegacyDisplay.cpp b/NativeLegacyDisplay.cpp
-index a654ed8..37b760e 100644
+index a654ed8..521605e 100644
 --- a/NativeLegacyDisplay.cpp
 +++ b/NativeLegacyDisplay.cpp
 @@ -103,6 +103,9 @@ extern "C" void native_legacy_gpu_fallback_observed(int status);
@@ -12,6 +12,15 @@ index a654ed8..37b760e 100644
  // Display refresh tick (boot-arg vsync=<Hz>, 0 or absent: off). The original family sends the compositor's vsync message (type 5)
  // through native_legacy_vsync_notify, the unchanged original sender, but only a platform subclass calls it from the panel's vblank and
  // that subclass is not part of this port: without it the render server never saw a vsync. The GOP scanout has no vblank interrupt, so a
+@@ -112,7 +115,7 @@ extern "C" void native_legacy_vsync_notify(void *display,uint64_t timestamp,uint
+ // The panel's refresh rate in Hz for the tick and the refresh properties below (0: none, the render server's own 1/60 s). By default
+ // boot-arg vsync; a platform may answer otherwise (its display device's mode).
+ extern "C" __attribute__((weak)) unsigned native_legacy_refresh_hz(void) {
+-    unsigned hz=0;PE_parse_boot_argn("vsync",&hz,sizeof(hz));return hz;
++    unsigned hz=60;PE_parse_boot_argn("vsync",&hz,sizeof(hz));return hz;   // ruan: 60 Hz panel by default (no command-line room); vsync=0 turns it off
+ }
+ // The unchanged original setDisplayRefreshProperties: publishes IOMFBDisplayRefresh from slot 301 (getRefreshAttributes below).
+ extern "C" bool native_legacy_set_refresh_properties(void *display);
 @@ -300,19 +303,29 @@ class NativeLegacyDisplay : public IOMobileFramebufferLegacy {
      bool fenceCaptured=false,fenceSlow=false;
      IOTimerEventSource *fenceTimer=nullptr;
@@ -152,7 +161,18 @@ index a654ed8..37b760e 100644
              // Store only what changed since the previous frame (the scanout memory is slow device memory).
              uint64_t need=(uint64_t)width*height*4;
              // Differential copy is opt-in (fb-diff=1): on hardware it reads the whole source every frame and was not faster
-@@ -997,14 +1028,20 @@ public:
+@@ -972,7 +1003,9 @@ public:
+         if(!pitch)return kIOReturnBadArgument;
+         *pitch=0;IOService *provider=getProvider();if(!provider)return kIOReturnNotReady;
+         OSObject *property=provider->getProperty("dot-pitch");
+-        if(!property)return kIOReturnNotFound;
++        // ruan: GOP gives no size, and without one WindowServer offers no HiDPI mode (1x, tiny UI/cursor). Redmi Pad Pro 12.1" 1600x2560
++        // = 249 dpi (pad8pro NativeGopDisplay.cpp publishes its panel's mm the same way). fb-dpi=0: none, as before.
++        if(!property){unsigned dpi=249;PE_parse_boot_argn("fb-dpi",&dpi,sizeof(dpi));if(!dpi)return kIOReturnNotFound;*pitch=dpi;return kIOReturnSuccess;}
+         OSData *data=OSDynamicCast(OSData,property);
+         if(!data || data->getLength()!=sizeof(*pitch))return kIOReturnBadArgument;
+         memcpy(pitch,data->getBytesNoCopy(),sizeof(*pitch));return kIOReturnSuccess;
+@@ -997,14 +1030,20 @@ public:
             !video.v_width || !video.v_height || video.v_depth!=32 || video.v_rotate ||
             video.v_width>16384 || video.v_height>16384 || video.v_rowBytes<video.v_width*4 ||
             video.v_rowBytes>UINT64_MAX/video.v_height)return false;
@@ -176,7 +196,16 @@ index a654ed8..37b760e 100644
              if(valid) {
                  OSSafeReleaseNULL(bootMapping);bootMapping=mapping;mapping=nullptr;primary=video.v_display==1;
                  valid=native_legacy_gop_mapping_observed(this,bootMapping,width,height);
-@@ -1219,6 +1256,23 @@ public:
+@@ -1068,7 +1107,7 @@ public:
+             ident(color,kDisplayColorID);ident(timing,kDisplayTimingID);
+             if(!colors->setObject(color) || !timingColors->setObject(color) || !timings->setObject(timing))break;
+             native_legacy_ioav_timing_colors(timing,timingColors);
+-            if(!putString(product,"ManufacturerID","UNX") || !putNumber(product,"ProductID",0) || !putNumber(product,"SerialNumber",0) ||
++            if(!putString(product,"ManufacturerID","UNX") || !putNumber(product,"ProductID",0x5250) || !putNumber(product,"SerialNumber",width<<16|height) ||
+                !putString(product,"ProductName","UniXNU Display"))break;
+             if(!putPoint(chromaticity,"Red",41943,21627) || !putPoint(chromaticity,"Green",19661,39322) ||
+                !putPoint(chromaticity,"Blue",9830,3932) || !putNumber(white,"Gamma",144179))break;
+@@ -1219,6 +1258,23 @@ public:
      IOReturn getColorRemapMode(uint32_t *mode) override {if(!mode)return kIOReturnBadArgument;*mode=colorRemapMode;return kIOReturnSuccess;}
      // No color matrix hardware either; the compositor's matrix is accepted, as the virtual-machine display accepts it.
      IOReturn swapSetColorMatrix(void *,uint32_t,uint32_t) override {return kIOReturnSuccess;}

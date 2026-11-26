@@ -1,0 +1,15 @@
+--- a/drivers/Adreno740/NativeAdrenoMemory.cpp
++++ b/drivers/Adreno740/NativeAdrenoMemory.cpp
+@@ -333,6 +333,12 @@
+             status=maintainImported(0,bytes,NativeAdrenoClean);
+             NativeAdrenoNotePhase(NativeAdrenoPhaseAllocate,bytes);
+         }
++        /* ruan iPadOS rbu78 (UniXNU-ruan patches/adreno/0005, gpu-wc-clean): write-combined VM pages not prepared outside the lock keep a
++         * dirty cacheable alias (zero fill, last use) that can be written back over IBs the client stored through its WC view -> CP hang. */
++        if(status==kIOReturnSuccess && descriptor_ && write_combined && !cleaned) {
++            status=maintainImported(0,bytes,NativeAdrenoCleanInvalidate);
++            NativeAdrenoNotePhase(NativeAdrenoPhaseAllocate,bytes);
++        }
+         if(status!=kIOReturnSuccess) {write_combined_=false;(void)release();}
+     }
+     if(status!=kIOReturnSuccess) {

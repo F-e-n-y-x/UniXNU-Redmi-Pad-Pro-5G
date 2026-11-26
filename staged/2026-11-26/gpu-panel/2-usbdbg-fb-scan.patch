@@ -1,0 +1,74 @@
+--- a/package/UsbDebugCdc.cpp	2026-11-26 11:17:04.148091482 +0530
++++ b/package/UsbDebugCdc.cpp	2026-11-26 11:25:14.559207947 +0530
+@@ -558,7 +558,7 @@
+     if (strEq(raw, "ping")) {
+         s.reply.writeStr("[usb] PONG ruan\r\n");
+     } else if (strEq(raw, "features") || strEq(raw, "help")) {
+-        s.reply.writeStr("FEATURES: ping status bootargs display usb touch battery wifi wifi.log bt bt.log video video.log audio replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg fb gpu\r\n");
++        s.reply.writeStr("FEATURES: ping status bootargs display usb touch battery wifi wifi.log bt bt.log video video.log audio replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg fb fb.scan gpu\r\n");
+     } else if (strEq(raw, "wifi") || strEq(raw, "wlan")) {
+         if (&ruan_wifi_status_str && ruan_wifi_status_str) {
+             snprintf(buf, sizeof(buf), "[usb] WIFI: %s\r\n", ruan_wifi_status_str());
+@@ -980,6 +980,62 @@
+             snprintf(name, sizeof(name), "fb %ux%u bgra", native_legacy_gop_width, native_legacy_gop_height);
+             usbFileBegin(s.xfer, s.reply, name);
+         }
++    } else if (strEq(raw, "fb.scan")) {
++        // What the panel actually scans: VIG0's live address/stride/size, read through a fresh non-cacheable view of that address with
++        // no cache maintenance, streamed like `fb` (host: ruan-usbdbg.py fullshot --cmd fb.scan). First a line comparing it with the
++        // copy's own mapping (native_legacy_gop_virtual, what `fb` reads) and the INTF1 underrun latch before/after 500 ms.
++        static OSSharedPtr<IOMemoryMap> mdpMap, scanMap;
++        static uintptr_t mdp, scanVa;
++        static uint64_t scanPa, scanLen;
++        if (s.xfer.active) usbFileEnd(s.xfer);
++        ++s.xfer.id;
++        if (!mdp) mdp = mapRangeUncached(0xae00000, 0x84000, mdpMap);
++        auto r = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
++        const uint32_t size = mdp ? r(mdp + 0x5000) : 0, addr = mdp ? r(mdp + 0x5014) : 0, stride = mdp ? r(mdp + 0x5024) & 0xffff : 0;
++        const uint32_t fmt = mdp ? r(mdp + 0x5030) : 0, w = size & 0xffff, h = size >> 16;
++        const uint64_t len = (uint64_t)stride * h;
++        if (addr && w >= 64 && h >= 64 && stride >= w * 4 && len <= (64ull << 20) && (addr != scanPa || len != scanLen)) {
++            scanMap.reset(); scanVa = 0;
++            if (IODeviceMemory *mem = IODeviceMemory::withRange(addr, len)) {
++                scanMap = OSSharedPtr<IOMemoryMap>(mem->map(kIOMapAnywhere | kIOMapWriteCombineCache), OSNoRetain);
++                mem->release();
++            }
++            if (scanMap) { scanVa = static_cast<uintptr_t>(scanMap->getVirtualAddress()); scanPa = addr; scanLen = len; }
++        }
++        // Differing 64-byte blocks between the scanned buffer and the copy's mapping (same rows when the strides agree).
++        uint64_t diff = 0; int firstRow = -1;
++        const bool same = &native_legacy_gop_virtual && native_legacy_gop_virtual && &native_legacy_gop_bytes && scanVa &&
++                          native_legacy_gop_bytes == len;
++        if (same) {
++            const volatile uint64_t *a = reinterpret_cast<const volatile uint64_t *>(scanVa);
++            const volatile uint64_t *b = reinterpret_cast<const volatile uint64_t *>(native_legacy_gop_virtual);
++            for (uint64_t i = 0; i < len / 8; i += 8) {
++                bool d = false;
++                for (unsigned k = 0; k < 8; k++) d |= a[i + k] != b[i + k];
++                if (d) { if (firstRow < 0) firstRow = int(i * 8 / stride); diff++; }
++            }
++        }
++        const uint32_t i0 = mdp ? r(mdp + 0x1014) : 0, u0 = mdp ? r(mdp + 0x36268) : 0, f0 = mdp ? r(mdp + 0x360ac) : 0;
++        if (mdp) { *reinterpret_cast<volatile uint32_t *>(mdp + 0x1018) = 1u << 26; __asm__ volatile("dsb sy" ::: "memory"); }
++        IOSleep(500);
++        const uint32_t i1 = mdp ? r(mdp + 0x1014) : 0, u1 = mdp ? r(mdp + 0x36268) : 0, f1 = mdp ? r(mdp + 0x360ac) : 0;
++        snprintf(buf, sizeof(buf), "[usb] FBSCAN: vig0 addr=%08x stride=%u %ux%u fmt=%08x gop_pa=%llx gop_bytes=%llu cmp=%s diff64=%llu first_row=%d "
++                 "underrun_bit %u->%u (500 ms) underrun_pos %08x->%08x frames %u->%u\r\n",
++                 addr, stride, w, h, fmt, &native_legacy_gop_physical ? (unsigned long long)native_legacy_gop_physical : 0ULL,
++                 &native_legacy_gop_bytes ? (unsigned long long)native_legacy_gop_bytes : 0ULL, same ? "yes" : "no",
++                 (unsigned long long)diff, firstRow, (i0 >> 26) & 1, (i1 >> 26) & 1, u0, u1, f0, f1);
++        s.reply.writeStr(buf);
++        if (!scanVa || scanPa != addr || scanLen != len) {
++            usbFileErr(s.reply, s.xfer.id, ENXIO, "scanout not mappable");
++        } else {
++            s.xfer.mem = reinterpret_cast<uint8_t *>(scanVa);
++            s.xfer.borrowed = true;
++            s.xfer.memCap = 0;
++            s.xfer.size = static_cast<uint32_t>(len);
++            char name[64];
++            snprintf(name, sizeof(name), "fb %ux%u bgra stride %u", w, h, stride);
++            usbFileBegin(s.xfer, s.reply, name);
++        }
+     } else if (strEq(raw, "reboot") || strEq(raw, "reboot.fastboot")) {
+         const bool fastboot = strEq(raw, "reboot.fastboot");
+         (void)PE_parse_boot_argn("ruan-usbdbg-reboot", &gRebootAllowed, sizeof(gRebootAllowed));

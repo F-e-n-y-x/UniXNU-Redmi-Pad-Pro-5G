@@ -1,0 +1,146 @@
+ruan SMP (from UniXNU-sheng zzzz-sheng-ipados27-bringup.patch, same xnu-12377): the pieces sheng's macOS 27.3 multi-core boots
+need that ruan's tree lacks.
+- cpu_common.c: sheng_sigp_recover. A started core (InitState|StartedState) whose SIGPdisabled is still set lost its start-up
+  self-IPI; cpu_signal clears the flag instead of silently dropping the IPI (sheng: random early hangs, UFS root failures).
+  assert_ml_cpu_signal_is_enabled tolerates a recovered core (zzzzzzzzzz-sheng-sigp-reinit-assert.patch).
+- cpu.c cpu_idle: the same recovery for an idle core, so a core that missed the self-IPI WFIs instead of spinning.
+  Counters sheng_sigp_recovered, sheng_idle_sigp_cleared, sheng_idle_sigp_refused (USB `cpu`).
+- cpu.c cpu_start: clean ResetHandlerData, const_boot_args and cpu_ttep to PoC before PSCI CPU_ON; the new core reads them
+  with its MMU off.
+- sched_clutch.c: a matrix that sched_edge_config_verify rejects is logged instead of asserted (DEVELOPMENT has MACH_ASSERT;
+  armcpu-edge=1 with the zzyf matrix alone would panic here).
+No effect with cpus=1 (no secondary is started; SIGPdisabled of the boot core is cleared by its own self-IPI or never checked).
+
+diff --git a/osfmk/arm/cpu_common.c b/osfmk/arm/cpu_common.c
+index eadffaf..ccd89af 100755
+--- a/osfmk/arm/cpu_common.c
++++ b/osfmk/arm/cpu_common.c
+@@ -409,6 +409,34 @@ cpu_immediate_xcall(int cpu_number, broadcastFunc func, void *param)
+ 	return cpu_xcall_internal(SIGPxcallImm, cpu_number, func, param);
+ }
+ 
++/* ruan (from UniXNU-sheng): a started core whose SIGPdisabled is still set lost the self-IPI that should have cleared it (sheng saw
++ * random early hangs and UFS root failures under SMP: a wakeup IPI to that core was silently dropped). A core in
++ * InitState|StartedState runs and takes interrupts, so the flag is cleared here and the signal sent. Counted in sheng_sigp_recovered. */
++volatile uint32_t sheng_sigp_recovered;
++bool sheng_sigp_recover(cpu_data_t *target_proc);
++bool
++sheng_sigp_recover(cpu_data_t *target_proc)
++{
++	/* ruan: off unless ruan-sigp-recover=1. Forcing SIGPdisabled off turns on IPIs and WFI idle on every core, which the iPadOS
++	 * SMP boots (smp=1 smp-gic=1) never used and which hard-reset the macOS cpus=2/8 boots (2026-11-26). */
++	static int recover = -1;
++	if (recover < 0) {
++		extern boolean_t PE_parse_boot_argn(const char *, void *, int);
++		unsigned int on = 0;
++		(void)PE_parse_boot_argn("ruan-sigp-recover", &on, sizeof(on));
++		recover = on ? 1 : 0;
++	}
++	if (!recover) {
++		return false;
++	}
++	if ((os_atomic_load(&target_proc->cpu_flags, relaxed) & (InitState | StartedState)) != (InitState | StartedState)) {
++		return false;
++	}
++	os_atomic_andnot(&target_proc->cpu_signal, SIGPdisabled, acq_rel);
++	os_atomic_inc(&sheng_sigp_recovered, relaxed);
++	return true;
++}
++
+ static kern_return_t
+ cpu_signal_internal(cpu_data_t *target_proc,
+     cpu_signal_t signal,
+@@ -438,6 +454,9 @@ cpu_signal_internal(cpu_data_t *target_proc,
+ 
+ 		do {
+ 			current_signals = target_proc->cpu_signal;
++			if ((current_signals & SIGPdisabled) == SIGPdisabled && sheng_sigp_recover(target_proc)) {
++				current_signals = target_proc->cpu_signal;
++			}
+ 			if ((current_signals & SIGPdisabled) == SIGPdisabled) {
+ 				ml_set_interrupts_enabled(interruptible);
+ 				return KERN_FAILURE;
+@@ -481,6 +500,9 @@ cpu_signal_internal(cpu_data_t *target_proc,
+ 	} else {
+ 		do {
+ 			current_signals = target_proc->cpu_signal;
++			if ((current_signals & SIGPdisabled) == SIGPdisabled && current_proc != target_proc && sheng_sigp_recover(target_proc)) {
++				current_signals = target_proc->cpu_signal;
++			}
+ 			if ((current_signals & SIGPdisabled) == SIGPdisabled) {
+ 				if (current_proc == target_proc) {
+ 					panic("cpu_signal of self while signals are disabled");
+@@ -921,7 +943,8 @@ assert_ml_cpu_signal_is_enabled(bool enabled)
+ {
+ 	if (enabled) {
+ 		assert((getCpuDatap()->cpu_signal & SIGPdisabled) == 0);
+-	} else {
++	} else if (os_atomic_load(&sheng_sigp_recovered, relaxed) == 0) {
++		/* sheng_sigp_recover can enable a core that is on its way here, and a signal may then be pending. */
+ 		assert3u(getCpuDatap()->cpu_signal, ==, SIGPdisabled);
+ 	}
+ }
+diff --git a/osfmk/arm64/cpu.c b/osfmk/arm64/cpu.c
+index 3b34e35..eac602c 100755
+--- a/osfmk/arm64/cpu.c
++++ b/osfmk/arm64/cpu.c
+@@ -477,6 +477,9 @@ wfe_to_deadline_or_interrupt(uint32_t cid, uint64_t wfe_deadline, cpu_data_t *cd
+  *	Routine:	cpu_idle
+  *	Function:
+  */
++extern bool sheng_sigp_recover(cpu_data_t *target_proc);
++volatile uint32_t sheng_idle_sigp_cleared, sheng_idle_sigp_refused;
++
+ void __attribute__((noreturn))
+ cpu_idle(void)
+ {
+@@ -488,7 +491,14 @@ cpu_idle(void)
+ 	if (__improbable((!idle_enable))) {
+ 		idle_disallowed = true;
+ 	} else if (__improbable(cpu_data_ptr->cpu_signal & SIGPdisabled)) {
+-		idle_disallowed = true;
++		/* ruan (from UniXNU-sheng): SIGPdisabled leaves a core only when it takes an IPI and an idle core is never signalled, so a
++		 * core that missed its start-up self-IPI would spin in the idle thread forever. A started core takes interrupts: clear it. */
++		if (sheng_sigp_recover(cpu_data_ptr)) {
++			sheng_idle_sigp_cleared++;
++		} else {
++			sheng_idle_sigp_refused++;
++			idle_disallowed = true;
++		}
+ 	}
+ 
+ 	if (__improbable(idle_disallowed)) {
+@@ -938,6 +948,17 @@ cpu_start(int cpu)
+ 
+ 		flush_dcache((vm_offset_t)&CpuDataEntries[cpu], sizeof(cpu_data_entry_t), FALSE);
+ 		flush_dcache((vm_offset_t)cpu_data_ptr, sizeof(cpu_data_t), FALSE);
++#if !defined(APPLE_ARM64_ARCH_FAMILY)
++		{
++			/* UniXNU (sheng): the new core reads these with its MMU off, uncached, from DRAM (reset_vector, start_cpu,
++			 * common_start); written once at boot they can still be dirty in this core's caches, and a core that reads a stale
++			 * ResetHandlerData, const_boot_args or cpu_ttep spins in the early vectors. Write them back to the point of coherency. */
++			extern boot_args const_boot_args;
++			flush_dcache((vm_offset_t)&ResetHandlerData, sizeof(ResetHandlerData), FALSE);
++			flush_dcache((vm_offset_t)&const_boot_args, sizeof(const_boot_args), FALSE);
++			flush_dcache((vm_offset_t)&cpu_ttep, sizeof(cpu_ttep), FALSE);
++		}
++#endif
+ #if CONFIG_SPTM
+ 		/**
+ 		 * On SPTM devices, CTRR is configured entirely by the SPTM. Due to this, this logic
+diff --git a/osfmk/kern/sched_clutch.c b/osfmk/kern/sched_clutch.c
+index b27d291..bd3195b 100755
+--- a/osfmk/kern/sched_clutch.c
++++ b/osfmk/kern/sched_clutch.c
+@@ -6504,7 +6504,10 @@ sched_edge_cpu_init_completed(void)
+ 	}
+ 	sched_edge_config_final_push();
+ #if DEVELOPMENT || DEBUG
+-	assert(sched_edge_config_verify());
++	/* ruan (as UniXNU-sheng): report a matrix the verifier rejects instead of panicking the DEVELOPMENT kernel */
++	if (!sched_edge_config_verify()) {
++		kprintf("warn: sched_edge_config_verify failed; continuing\n");
++	}
+ #endif /* DEVELOPMENT || DEBUG */
+ 	splx(s);
+ }

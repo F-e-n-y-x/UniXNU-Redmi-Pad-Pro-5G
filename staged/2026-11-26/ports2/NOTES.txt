@@ -1,0 +1,11 @@
+4 Dock icons scrambled: bank-bit mismatch. GPU regs (UniXNU-ruan-macos/package/RuanGpuPower.c:1216-1220) program hbb_lo=3 (= hbb 16, copied
+  from sheng A740); RuanAdrenoGlue.cpp:96 tells Turnip hbb 15. Textures are VK_IMAGE_TILING_OPTIMAL (m2v image_plan.rs:296); Shared/Managed
+  textures' replaceRegion goes through VK_EXT_host_image_copy (m2v texture/host_copy.rs:260 vkCopyMemoryToImageEXT) -> Turnip
+  fd6_tiled_memcpy.cc:203-232 (bank xor uses highest_bank_bit). Turnip uses hbb ONLY for these CPU copies (tu_clear_blit.cc:3136.., tu_image.cc:1630),
+  so GPU-drawn content is fine and only CPU-uploaded textures are block-shuffled. KGSL gen7_start/msm a6xx_hw_init: hbb_lo=(hbb-13)&3.
+  Fix A: 01-turnip-hbb16-icons.patch (report 16; changes Turnip's pipeline-cache UUID, tu_device.cc:1578 -> primed shader caches miss once).
+  Fix B: 01b-alt-gpu-regs-hbb15.patch (program KGSL's A710 value 15; caches keep UUID). Apply ONE, not both.
+1 GpuHang: 02-gpuhang-wc-alias-clean.patch ports iPadOS rbu78 fix (UniXNU-ruan patches/adreno/0005) to the allocateSystem VM-descriptor WC path
+  that prepareSystem's uke-0008 clean doesn't cover.
+2 fallbacks: LegacyDisplayProbe.cpp:308-322: without fb-gpu=1 / fb-gpu-stream=1 every swap logs fallback -1 (= offer off, not a failure).
+3 HiDPI: 03-hidpi-panel-size-identity.patch: 249 dpi default (fb-dpi=), unique SerialNumber/ProductID (pad8pro NativeGopDisplay.cpp:707-725,2649-2667).

@@ -1,0 +1,31 @@
+--- a/macOS/tools/host/ruan-usbdbg.py	2026-11-26 11:17:04.320091593 +0530
++++ b/macOS/tools/host/ruan-usbdbg.py	2026-11-26 11:26:18.869477092 +0530
+@@ -203,6 +203,7 @@
+     sub.add_parser('reboot')
+     p = sub.add_parser('ls'); p.add_argument('path')
+     p = sub.add_parser('fullshot'); p.add_argument('-o', '--output'); p.add_argument('--timeout', type=float, default=300.0)
++    p.add_argument('--cmd', default='fb', help="fb (the copy's buffer) or fb.scan (what VIG0 scans, uncached)")
+     p = sub.add_parser('get'); p.add_argument('path'); p.add_argument('-o', '--output'); p.add_argument('--timeout', type=float, default=300.0)
+     p = sub.add_parser('dmesg'); p.add_argument('-o', '--output'); p.add_argument('--timeout', type=float, default=180.0)
+     p = sub.add_parser('pull-crashes'); p.add_argument('-d', '--dir', default='crashes')
+@@ -258,14 +259,17 @@
+             print(f'ruan-usbdbg: {name} -> {dest} ({len(data)} bytes, CRC ok)')
+     elif a.what == 'fullshot':
+         try:
+-            name, data = fetch(fd, wire, 'fb', a.timeout)
++            name, data = fetch(fd, wire, a.cmd, a.timeout)
+         except RuntimeError as e:
+             sys.exit(f'ruan-usbdbg: fullshot failed: {e} (a kernel without the `fb` command: use shot)')
+-        m = re.match(r'fb (\d+)x(\d+) bgra', name if isinstance(name, str) else name.decode())
++        m = re.match(r'fb (\d+)x(\d+) bgra(?: stride (\d+))?', name if isinstance(name, str) else name.decode())
+         if not m:
+             sys.exit(f'ruan-usbdbg: fullshot: unexpected header {name!r}')
+         w, h = int(m.group(1)), int(m.group(2))
+-        assert len(data) == w * h * 4, f'{len(data)} bytes for {w}x{h}'
++        stride = int(m.group(3) or w * 4)
++        assert len(data) == stride * h, f'{len(data)} bytes for {w}x{h} stride {stride}'
++        if stride != w * 4:
++            data = b''.join(data[y * stride:y * stride + w * 4] for y in range(h))
+         dest = a.output or time.strftime('fullshot-%Y%m%d-%H%M%S.png')
+         write_png_bgra(dest, w, h, data)
+         print(f'ruan-usbdbg: wrote {dest} ({w}x{h}, CRC ok)')

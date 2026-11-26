@@ -1,0 +1,9296 @@
+{
+"com.apple.mDNSResponder.reloaded": {
+"dom": "Daemons",
+"file": "com.apple.mDNSResponder.plist",
+"prog": "mDNSResponder",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.pfd": {
+"dom": "Daemons",
+"file": "com.apple.pfd.plist",
+"prog": "pfd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.smbd": {
+"dom": "Daemons",
+"file": "com.apple.smbd.plist",
+"prog": "smbd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.xscertd-helper": {
+"dom": "Daemons",
+"file": "com.apple.xscertd-helper.plist",
+"prog": "xscertd-helper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.tmp_cleaner": {
+"dom": "Daemons",
+"file": "com.apple.tmp_cleaner.plist",
+"prog": "tmp_cleaner",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.sysmond": {
+"dom": "Daemons",
+"file": "com.apple.sysmond.plist",
+"prog": "sysmond",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.biomed": {
+"dom": "Daemons",
+"file": "com.apple.biomed.plist",
+"prog": "biomed",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mobile.obliteration": {
+"dom": "Daemons",
+"file": "com.apple.mobile.obliteration.plist",
+"prog": "mobile_obliterator",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.revisiond": {
+"dom": "Daemons",
+"file": "com.apple.revisiond.plist",
+"prog": "revisiond",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.alf": {
+"dom": "Daemons",
+"file": "com.apple.alf.agent.plist",
+"prog": "socketfilterfw",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.trustdFileHelper": {
+"dom": "Daemons",
+"file": "com.apple.trustdFileHelper.plist",
+"prog": "trustdFileHelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.PerfPowerServicesExtended": {
+"dom": "Daemons",
+"file": "com.apple.PerfPowerServicesExtended.plist",
+"prog": "PerfPowerServicesExtended",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.centaurid": {
+"dom": "Daemons",
+"file": "com.apple.centaurid.plist",
+"prog": "centaurid",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.corekdld": {
+"dom": "Daemons",
+"file": "com.apple.corekdld.plist",
+"prog": "corekdld",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.uarphidd": {
+"dom": "Daemons",
+"file": "com.apple.uarphidd.plist",
+"prog": "uarphidd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.DumpPanic": {
+"dom": "Daemons",
+"file": "com.apple.DumpPanic.plist",
+"prog": "DumpPanic",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"org.cups.cupsd": {
+"dom": "Daemons",
+"file": "org.cups.cupsd.plist",
+"prog": "cupsd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.CoreAuthentication.daemon": {
+"dom": "Daemons",
+"file": "com.apple.CoreAuthentication.daemon.plist",
+"prog": "coreauthd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.locationd": {
+"dom": "Daemons",
+"file": "com.apple.locationd.plist",
+"prog": "locationd",
+"da": null,
+"ral": false,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.DumpGPURestart": {
+"dom": "Daemons",
+"file": "com.apple.DumpGPURestart.plist",
+"prog": "DumpGPURestart",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.cmio.iOSScreenCaptureAssistant": {
+"dom": "Daemons",
+"file": "com.apple.cmio.iOSScreenCaptureAssistant.plist",
+"prog": "iOSScreenCaptureAssistant",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.Kerberos.digest-service": {
+"dom": "Daemons",
+"file": "com.apple.Kerberos.digest-service.plist",
+"prog": "digest-service",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.msrpc.echosvc": {
+"dom": "Daemons",
+"file": "com.apple.msrpc.echosvc.plist",
+"prog": "rpcsvchost",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.filesystems.doubleagentd": {
+"dom": "Daemons",
+"file": "com.apple.doubleagentd.plist",
+"prog": "doubleagentd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.storagede.helper": {
+"dom": "Daemons",
+"file": "com.apple.storagede.helper.plist",
+"prog": "StorageDEHelper",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.vsdbutil": {
+"dom": "Daemons",
+"file": "com.apple.vsdbutil.plist",
+"prog": "vsdbutil",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.deleted_helper": {
+"dom": "Daemons",
+"file": "com.apple.deleted_helper.plist",
+"prog": "deleted_helper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.AEServer": {
+"dom": "Daemons",
+"file": "com.apple.eppc.plist",
+"prog": "AEServer",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.audio.systemsoundserverd": {
+"dom": "Daemons",
+"file": "com.apple.audio.systemsoundserverd.plist",
+"prog": "systemsoundserverd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.netauth.sys.gui": {
+"dom": "Daemons",
+"file": "com.apple.netauth.sys.gui.plist",
+"prog": "NetAuthAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.uarpassetmanagerd": {
+"dom": "Daemons",
+"file": "com.apple.uarpassetmanagerd.plist",
+"prog": "uarpassetmanagerd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.sandboxd": {
+"dom": "Daemons",
+"file": "com.apple.sandboxd.plist",
+"prog": "sandboxd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.airportd": {
+"dom": "Daemons",
+"file": "com.apple.airportd.plist",
+"prog": "airportd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.cloudd": {
+"dom": "Agents",
+"file": "com.apple.cloudd.plist",
+"prog": "cloudd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.testmanagerd.remote": {
+"dom": "Daemons",
+"file": "com.apple.testmanagerd.plist",
+"prog": "testmanagerd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mobile.usermanagerd": {
+"dom": "Daemons",
+"file": "com.apple.mobile.usermanagerd.plist",
+"prog": "usermanagerd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": "System",
+"dis": null
+},
+"com.apple.storage.spinandd": {
+"dom": "Daemons",
+"file": "com.apple.storage.spinandd.plist",
+"prog": "spinandd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.kernelmanager_helper": {
+"dom": "Daemons",
+"file": "com.apple.kernelmanager_helper.plist",
+"prog": "kernelmanager_helper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.security.xprotectd": {
+"dom": "Daemons",
+"file": "com.apple.security.xprotectd.plist",
+"prog": "xprotectd",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.audioanalyticsd": {
+"dom": "Daemons",
+"file": "com.apple.audioanalyticsd.plist",
+"prog": "audioanalyticsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.handwritingd": {
+"dom": "Daemons",
+"file": "com.apple.handwritingd.plist",
+"prog": "handwritingd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.atrun": {
+"dom": "Daemons",
+"file": "com.apple.atrun.plist",
+"prog": "atrun",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.corercd": {
+"dom": "Daemons",
+"file": "com.apple.corercd.plist",
+"prog": "corercd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.diagnosticextensions.osx.spotlight.helper": {
+"dom": "Daemons",
+"file": "com.apple.diagnosticextensions.osx.spotlight.helper.plist",
+"prog": "SpotlightHelper",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.taskgated-helper": {
+"dom": "Daemons",
+"file": "com.apple.taskgated-helper.plist",
+"prog": "taskgated-helper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.retimerd": {
+"dom": "Daemons",
+"file": "com.apple.retimerd.plist",
+"prog": "retimerd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.icloud.searchpartyd": {
+"dom": "Daemons",
+"file": "com.apple.icloud.searchpartyd.plist",
+"prog": "searchpartyd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.usbctelemetryd": {
+"dom": "Daemons",
+"file": "com.apple.usbctelemetryd.plist",
+"prog": "usbctelemetryd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.DesktopServicesHelper": {
+"dom": "Daemons",
+"file": "com.apple.DesktopServicesHelper.plist",
+"prog": "DesktopServicesHelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.displaypolicyd": {
+"dom": "Daemons",
+"file": "com.apple.displaypolicyd.plist",
+"prog": "displaypolicyd",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.inboxupdaterd": {
+"dom": "Daemons",
+"file": "com.apple.inboxupdaterd.plist",
+"prog": "inboxupdaterd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.dt.fetchsymbolsd": {
+"dom": "Daemons",
+"file": "com.apple.dt.fetchsymbolsd.plist",
+"prog": "dtfetchsymbolsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.uarpd": {
+"dom": "Daemons",
+"file": "com.apple.uarpd.plist",
+"prog": "uarpd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.systemkeychain": {
+"dom": "Daemons",
+"file": "com.apple.systemkeychain.plist",
+"prog": "systemkeychain",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.attentionawarenessd": {
+"dom": "Daemons",
+"file": "com.apple.attentionawarenessd.plist",
+"prog": "attentionawarenessd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.unmountassistant.sysagent": {
+"dom": "Daemons",
+"file": "com.apple.unmountassistant.sysagent.plist",
+"prog": "UASysAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.SubmitDiagInfo": {
+"dom": "Daemons",
+"file": "com.apple.SubmitDiagInfo.plist",
+"prog": "SubmitDiagInfo",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.UpdateSettings": {
+"dom": "Daemons",
+"file": "com.apple.UpdateSettings.plist",
+"prog": "UpdateSettingsTool",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.devicemanagementclient.teslad": {
+"dom": "Daemons",
+"file": "com.apple.devicemanagementclient.teslad.plist",
+"prog": "teslad",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.pfctl": {
+"dom": "Daemons",
+"file": "com.apple.pfctl.plist",
+"prog": "pfctl",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": false
+},
+"com.apple.diagnosticservicesd": {
+"dom": "Daemons",
+"file": "com.apple.diagnosticservicesd.plist",
+"prog": "diagnosticservicesd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "System",
+"dis": null
+},
+"com.apple.efilogin-helper": {
+"dom": "Daemons",
+"file": "com.apple.efilogin-helper.plist",
+"prog": "efilogin-helper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.postupgraded": {
+"dom": "Daemons",
+"file": "com.apple.postupgraded.plist",
+"prog": "postupgraded",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.CryptoTokenKit.ahp": {
+"dom": "Daemons",
+"file": "com.apple.CryptoTokenKit.ahp.plist",
+"prog": "ctkahp",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.runningboardd": {
+"dom": "Daemons",
+"file": "com.apple.runningboardd.plist",
+"prog": "runningboardd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.dhcp6d": {
+"dom": "Daemons",
+"file": "com.apple.dhcp6d.plist",
+"prog": "dhcp6d",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": true
+},
+"com.apple.diskmanagementstartup": {
+"dom": "Daemons",
+"file": "com.apple.diskmanagementstartup.plist",
+"prog": "diskmanagementstartup",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.audiomxd": {
+"dom": "Daemons",
+"file": "com.apple.audiomxd.plist",
+"prog": "audiomxd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.cvmsServ": {
+"dom": "Daemons",
+"file": "com.apple.cvmsServ.plist",
+"prog": "CVMServer",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.fairplayd": {
+"dom": "Daemons",
+"file": "com.apple.fairplayd.plist",
+"prog": "fairplayd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.logind": {
+"dom": "Daemons",
+"file": "com.apple.logind.plist",
+"prog": "logind",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.analyticsd": {
+"dom": "Daemons",
+"file": "com.apple.analyticsd.plist",
+"prog": "analyticsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": {
+"#IfFeatureFlagEnabled": "UserManagement/SystemSessionD1",
+"#Then": "System"
+},
+"dis": null
+},
+"org.cups.cups-lpd": {
+"dom": "Daemons",
+"file": "org.cups.cups-lpd.plist",
+"prog": "cups-lpd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.installcoordination_proxy": {
+"dom": "Daemons",
+"file": "com.apple.installcoordination_proxy.plist",
+"prog": "installcoordination_proxy",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.xartstorageremoted": {
+"dom": "Daemons",
+"file": "com.apple.xartstorageremoted.plist",
+"prog": "xartstorageremoted",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.prngseedd": {
+"dom": "Daemons",
+"file": "com.apple.prngseedd.plist",
+"prog": "seputil",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.jetsamproperties.Mac": {
+"dom": "Daemons",
+"file": "com.apple.jetsamproperties.Mac.plist",
+"prog": "",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.PasswordService": {
+"dom": "Daemons",
+"file": "com.apple.PasswordService.plist",
+"prog": "PasswordService",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": true
+},
+"com.apple.diskimagesiod": {
+"dom": "Daemons",
+"file": "com.apple.diskimagesiod.plist",
+"prog": "diskimagesiod",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.CrashReporterSupportHelper": {
+"dom": "Daemons",
+"file": "com.apple.CrashReporterSupportHelper.plist",
+"prog": "CrashReporterSupportHelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.liquiddetectiond": {
+"dom": "Daemons",
+"file": "com.apple.liquiddetectiond.plist",
+"prog": "liquiddetectiond",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.apfsd": {
+"dom": "Daemons",
+"file": "com.apple.apfsd.plist",
+"prog": "apfsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.threadradiod": {
+"dom": "Daemons",
+"file": "com.apple.threadradiod.plist",
+"prog": "threadradiod",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.odproxyd": {
+"dom": "Daemons",
+"file": "com.apple.odproxyd.plist",
+"prog": "odproxyd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.postfix.newaliases": {
+"dom": "Daemons",
+"file": "com.apple.postfix.newaliases.plist",
+"prog": "newaliases",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.akd": {
+"dom": "Agents",
+"file": "com.apple.akd.plist",
+"prog": "akd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.lightsoutmanagementd": {
+"dom": "Daemons",
+"file": "com.apple.lightsoutmanagementd.plist",
+"prog": "lightsoutmanagementd",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": true
+},
+"com.apple.mobile.storage_mounter_proxy": {
+"dom": "Daemons",
+"file": "com.apple.mobile.storage_mounter_proxy.plist",
+"prog": "mobile_storage_proxy",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.configd": {
+"dom": "Daemons",
+"file": "com.apple.configd.plist",
+"prog": "configd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.tftpd": {
+"dom": "Daemons",
+"file": "tftp.plist",
+"prog": "tftpd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.security.FDERecoveryAgent": {
+"dom": "Daemons",
+"file": "com.apple.security.FDERecoveryAgent.plist",
+"prog": "FDERecoveryAgent",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.nsurlsessiond_privileged": {
+"dom": "Daemons",
+"file": "com.apple.nsurlsessiond.plist",
+"prog": "nsurlsessiond",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.deviceconfigurationd": {
+"dom": "Daemons",
+"file": "com.apple.deviceconfigurationd.plist",
+"prog": "deviceconfigurationd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.powerlogHelperd": {
+"dom": "Daemons",
+"file": "com.apple.powerlogHelperd.plist",
+"prog": "powerlogHelperd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.iconservices.iconservicesd": {
+"dom": "Daemons",
+"file": "com.apple.iconservices.iconservicesd.plist",
+"prog": "iconservicesd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ionodecache": {
+"dom": "Daemons",
+"file": "com.apple.ionodecache.plist",
+"prog": "ionodecache",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.libsqlite3.dbtelemetryd": {
+"dom": "Daemons",
+"file": "com.apple.libsqlite3.dbtelemetryd.plist",
+"prog": "dbtelemetryd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.applessdstatistics": {
+"dom": "Daemons",
+"file": "com.apple.applessdstatistics.plist",
+"prog": "applessdstatistics",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ContainerMigrationService": {
+"dom": "Agents",
+"file": "com.apple.ContainerMigrationService.plist",
+"prog": "ContainerMigrationService",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Background",
+"CryptexContainer"
+],
+"dis": null
+},
+"com.apple.diskimagesiod.spb": {
+"dom": "Daemons",
+"file": "com.apple.diskimagesiod.spb.plist",
+"prog": "diskimagesiod",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.AppleCredentialManagerDaemon": {
+"dom": "Daemons",
+"file": "com.apple.AppleCredentialManagerDaemon.plist",
+"prog": "AppleCredentialManagerDaemon",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.tccd.system": {
+"dom": "Daemons",
+"file": "com.apple.tccd.system.plist",
+"prog": "tccd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.opendirectoryd": {
+"dom": "Daemons",
+"file": "com.apple.opendirectoryd.plist",
+"prog": "opendirectoryd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.logd_helper": {
+"dom": "Daemons",
+"file": "com.apple.logd_helper.plist",
+"prog": "logd_helper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.iomfb_bics_daemon": {
+"dom": "Daemons",
+"file": "com.apple.iomfb_bics_daemon.plist",
+"prog": "IOMFB_bics_daemon",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": "System",
+"dis": null
+},
+"com.apple.system_installd": {
+"dom": "Daemons",
+"file": "com.apple.system_installd.plist",
+"prog": "system_installd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ifdreader": {
+"dom": "Daemons",
+"file": "com.apple.ifdreader.plist",
+"prog": "com.apple.ifdreader",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.printtool.daemon": {
+"dom": "Daemons",
+"file": "com.apple.printtool.daemon.plist",
+"prog": "printtool",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": false
+},
+"com.apple.metadata.mds": {
+"dom": "Daemons",
+"file": "com.apple.metadata.mds.plist",
+"prog": "mds",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.security.cryptexd": {
+"dom": "Daemons",
+"file": "com.apple.security.cryptexd.plist",
+"prog": "cryptexd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.cmio.VDCAssistant": {
+"dom": "Daemons",
+"file": "com.apple.cmio.VDCAssistant.plist",
+"prog": "VDCAssistant",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.cmio.uvcassistantextension": {
+"dom": "Daemons",
+"file": "com.apple.cmio.uvcassistantextension.plist",
+"prog": "UVCAssistant",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.nand.aspcarry": {
+"dom": "Daemons",
+"file": "com.apple.nand.aspcarry.plist",
+"prog": "ASPCarryLog",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.eoshostd": {
+"dom": "Daemons",
+"file": "com.apple.eoshostd.plist",
+"prog": "eoshostd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.cfnetwork.cfnetworkagent": {
+"dom": "Daemons",
+"file": "com.apple.cfnetwork.cfnetworkagent.plist",
+"prog": "CFNetworkAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.audio.AudioComponentRegistrar": {
+"dom": "Agents",
+"file": "com.apple.audio.AudioComponentRegistrar.plist",
+"prog": "AudioComponentRegistrar",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.colorsync.displayservices": {
+"dom": "Daemons",
+"file": "com.apple.colorsync.displayservices.plist",
+"prog": "colorsync.displayservices",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.filesystems.userfsd": {
+"dom": "Daemons",
+"file": "com.apple.filesystems.userfsd.plist",
+"prog": "userfsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": false
+},
+"com.apple.ecosystemd": {
+"dom": "Daemons",
+"file": "com.apple.ecosystemd.plist",
+"prog": "ecosystemd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mdmclient.daemon.runatboot": {
+"dom": "Daemons",
+"file": "com.apple.mdmclient.daemon.runatboot.plist",
+"prog": "mdmclient",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.InstallerDiagnostics.installerdiagd": {
+"dom": "Daemons",
+"file": "com.apple.InstallerDiagnostics.installerdiagd.plist",
+"prog": "installerdiagd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.lockd": {
+"dom": "Daemons",
+"file": "com.apple.lockd.plist",
+"prog": "rpc.lockd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.wifip2pd": {
+"dom": "Daemons",
+"file": "com.apple.wifip2pd.plist",
+"prog": "wifip2pd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.symptomsd-diag": {
+"dom": "Daemons",
+"file": "com.apple.symptomsd-diag.plist",
+"prog": "symptomsd-diag",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ManagedClient.mechanism": {
+"dom": "Daemons",
+"file": "com.apple.ManagedClient.mechanism.plist",
+"prog": "ManagedClient",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.Kerberos.kadmind": {
+"dom": "Daemons",
+"file": "com.apple.Kerberos.kadmind.plist",
+"prog": "kadmind",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.mobilegestalt.xpc": {
+"dom": "Daemons",
+"file": "com.apple.mobilegestalt.xpc.plist",
+"prog": "MobileGestaltHelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": {
+"#IfFeatureFlagEnabled": "UserManagement/SystemSessionD2",
+"#Then": "System"
+},
+"dis": null
+},
+"org.net-snmp.snmpd": {
+"dom": "Daemons",
+"file": "org.net-snmp.snmpd.plist",
+"prog": "snmpd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": true
+},
+"com.apple.xsan": {
+"dom": "Daemons",
+"file": "com.apple.xsan.plist",
+"prog": "xsand",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": true
+},
+"com.apple.msrpc.wkssvc": {
+"dom": "Daemons",
+"file": "com.apple.msrpc.wkssvc.plist",
+"prog": "rpcsvchost",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.MobileFileIntegrity": {
+"dom": "Daemons",
+"file": "com.apple.MobileFileIntegrity.plist",
+"prog": "amfid",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.cmio.videodriverkithostextension": {
+"dom": "Daemons",
+"file": "com.apple.cmio.videodriverkithostextension.plist",
+"prog": "com.apple.cmio.videodriverkithostextension",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.startupdiskhelper": {
+"dom": "Daemons",
+"file": "com.apple.startupdiskhelper.plist",
+"prog": "startupdiskhelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.corestorage.corestoragehelperd": {
+"dom": "Daemons",
+"file": "com.apple.corestorage.corestoragehelperd.plist",
+"prog": "corestoragehelperd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.oahd": {
+"dom": "Daemons",
+"file": "com.apple.oahd.plist",
+"prog": "oahd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.lskdd": {
+"dom": "Daemons",
+"file": "com.apple.lskdd.plist",
+"prog": "lskdd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.dasd": {
+"dom": "Daemons",
+"file": "com.apple.dasd-OSX.plist",
+"prog": "dasd",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.netauth.sys.auth": {
+"dom": "Daemons",
+"file": "com.apple.netauth.sys.auth.plist",
+"prog": "NetAuthSysAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.modelmanagerd": {
+"dom": "Daemons",
+"file": "com.apple.modelmanagerd.plist",
+"prog": "modelmanagerd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.xscertadmin": {
+"dom": "Daemons",
+"file": "com.apple.xscertadmin.plist",
+"prog": "xscertadmin",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.aslmanager": {
+"dom": "Daemons",
+"file": "com.apple.aslmanager.plist",
+"prog": "aslmanager",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.IOAccelMemoryInfoCollector": {
+"dom": "Daemons",
+"file": "com.apple.IOAccelMemoryInfoCollector.plist",
+"prog": "IOAccelMemoryInfoCollector",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.accessoryaccessd": {
+"dom": "Daemons",
+"file": "com.apple.accessoryaccessd.plist",
+"prog": "accessoryaccessd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.AssetCacheLocatorService": {
+"dom": "Agents",
+"file": "com.apple.AssetCacheLocatorService.plist",
+"prog": "AssetCacheLocatorService",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.systemstats.microstackshot_periodic": {
+"dom": "Daemons",
+"file": "com.apple.systemstats.microstackshot_periodic.plist",
+"prog": "microstackshot",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.auditd": {
+"dom": "Daemons",
+"file": "com.apple.auditd.plist",
+"prog": "auditd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": true
+},
+"com.apple.corerepaird": {
+"dom": "Daemons",
+"file": "com.apple.corerepaird.plist",
+"prog": "corerepaird",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.cfprefsd.xpc.daemon": {
+"dom": "Daemons",
+"file": "com.apple.cfprefsd.xpc.daemon.plist",
+"prog": "cfprefsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.alwaysonexclavesd": {
+"dom": "Daemons",
+"file": "com.apple.alwaysonexclavesd.plist",
+"prog": "alwaysonexclavesd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.SafeEjectGPUStartupDaemon": {
+"dom": "Daemons",
+"file": "com.apple.SafeEjectGPUStartupDaemon.plist",
+"prog": "SafeEjectGPUStartupDaemon",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.sysdiagnose": {
+"dom": "Daemons",
+"file": "com.apple.sysdiagnose.darwinos.plist",
+"prog": "sysdiagnosed",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.powerexperienced": {
+"dom": "Daemons",
+"file": "com.apple.powerexperienced.plist",
+"prog": "powerexperienced",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.relatived": {
+"dom": "Daemons",
+"file": "com.apple.relatived.plist",
+"prog": "relatived",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.LocalAuthentication.UIAgent": {
+"dom": "Agents",
+"file": "com.apple.LocalAuthentication.UIAgent.plist",
+"prog": "coreautha",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.ospredictiond": {
+"dom": "Daemons",
+"file": "com.apple.ospredictiond.plist",
+"prog": "ospredictiond",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.InstallerProgress": {
+"dom": "Daemons",
+"file": "com.apple.InstallerProgress.plist",
+"prog": "Installer Progress",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.storereceiptinstaller": {
+"dom": "Daemons",
+"file": "com.apple.storereceiptinstaller.plist",
+"prog": "ReceiptInstaller",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.AppSSOAgent.login": {
+"dom": "Daemons",
+"file": "com.apple.AppSSOAgent.login.plist",
+"prog": "AppSSOAgent",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.avbdeviced": {
+"dom": "Daemons",
+"file": "com.apple.avbdeviced.plist",
+"prog": "avbdeviced",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.mbusertrampoline": {
+"dom": "Daemons",
+"file": "com.apple.mbusertrampoline.plist",
+"prog": "mbusertrampoline",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.contextstored": {
+"dom": "Daemons",
+"file": "com.apple.contextstored.plist",
+"prog": "contextstored",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.backgroundtaskmanagementd": {
+"dom": "Daemons",
+"file": "com.apple.backgroundtaskmanagementd.plist",
+"prog": "backgroundtaskmanagementd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.automountd": {
+"dom": "Daemons",
+"file": "com.apple.automountd.plist",
+"prog": "automountd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.AirPlayXPCHelper": {
+"dom": "Daemons",
+"file": "com.apple.AirPlayXPCHelper.plist",
+"prog": "AirPlayXPCHelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.tracd": {
+"dom": "Daemons",
+"file": "com.apple.tracd.plist",
+"prog": "tracd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.metadata.mds.index": {
+"dom": "Daemons",
+"file": "com.apple.metadata.mds.index.plist",
+"prog": "mds_stores",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.familycontrols": {
+"dom": "Daemons",
+"file": "com.apple.familycontrols.plist",
+"prog": "parentalcontrolsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mobileactivationd": {
+"dom": "Daemons",
+"file": "com.apple.mobileactivationd.plist",
+"prog": "mobileactivationd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.corespeechd_system": {
+"dom": "Daemons",
+"file": "com.apple.corespeechd.system.plist",
+"prog": "corespeechd_system",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.clocksyncd": {
+"dom": "Daemons",
+"file": "com.apple.clocksyncd.plist",
+"prog": "clocksyncd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.appinstalld": {
+"dom": "Daemons",
+"file": "com.apple.appinstalld.plist",
+"prog": "appinstalld",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.touchbarserver": {
+"dom": "Daemons",
+"file": "com.apple.touchbarserver.plist",
+"prog": "TouchBarServer",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.loginwindow": {
+"dom": "Daemons",
+"file": "com.apple.loginwindow.plist",
+"prog": "loginwindow",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.cameraispdarwinsimd": {
+"dom": "Daemons",
+"file": "com.apple.cameraispdarwinsimd.plist",
+"prog": "cameraispdarwinsimd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.wifivelocityd": {
+"dom": "Daemons",
+"file": "com.apple.wifivelocityd.plist",
+"prog": "wifivelocityd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.gamepolicyd": {
+"dom": "Daemons",
+"file": "com.apple.gamepolicyd.plist",
+"prog": "gamepolicyd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.smb.preferences": {
+"dom": "Daemons",
+"file": "com.apple.smb.preferences.plist",
+"prog": "smb-sync-preferences",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.nand_task_scheduler": {
+"dom": "Daemons",
+"file": "com.apple.nand_task_scheduler.plist",
+"prog": "NANDTaskScheduler",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.security.authhost": {
+"dom": "Daemons",
+"file": "com.apple.security.authhost.plist",
+"prog": "authorizationhost",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.security.syspolicy": {
+"dom": "Daemons",
+"file": "com.apple.security.syspolicy.plist",
+"prog": "syspolicyd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": false
+},
+"com.vix.cron": {
+"dom": "Daemons",
+"file": "com.vix.cron.plist",
+"prog": "cron",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.modelcatalogd": {
+"dom": "Daemons",
+"file": "com.apple.modelcatalogd.plist",
+"prog": "modelcatalogd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.wifiFirmwareLoader": {
+"dom": "Daemons",
+"file": "com.apple.wifiFirmwareLoader.plist",
+"prog": "wifiFirmwareLoader",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.timezoneupdates.tzd": {
+"dom": "Daemons",
+"file": "com.apple.timezoneupdates.tzd.plist",
+"prog": "tzd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.NetworkSharing": {
+"dom": "Daemons",
+"file": "com.apple.NetworkSharing.plist",
+"prog": "InternetSharing",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.usbpowerd": {
+"dom": "Daemons",
+"file": "com.apple.usbpowerd.plist",
+"prog": "usbpowerd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.adid": {
+"dom": "Daemons",
+"file": "com.apple.adid.plist",
+"prog": "adid",
+"da": null,
+"ral": false,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.installandsetup.systemmigrationd": {
+"dom": "Daemons",
+"file": "com.apple.installandsetup.systemmigrationd.plist",
+"prog": "systemmigrationd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.rapportd": {
+"dom": "Agents",
+"file": "com.apple.rapportd-user.plist",
+"prog": "rapportd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.storagekitd": {
+"dom": "Daemons",
+"file": "com.apple.storagekitd.plist",
+"prog": "storagekitd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.countryd": {
+"dom": "Daemons",
+"file": "com.apple.countryd.plist",
+"prog": "countryd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.nfsd": {
+"dom": "Daemons",
+"file": "com.apple.nfsd.plist",
+"prog": "nfsd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.postfix.master": {
+"dom": "Daemons",
+"file": "com.apple.postfix.master.plist",
+"prog": "master",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.coreduetd": {
+"dom": "Daemons",
+"file": "com.apple.coreduetd.plist",
+"prog": "coreduetd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.powerd": {
+"dom": "Daemons",
+"file": "com.apple.powerd.plist",
+"prog": "powerd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.pcapd": {
+"dom": "Daemons",
+"file": "com.apple.pcapd.plist",
+"prog": "pcapd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mediaremoted": {
+"dom": "Daemons",
+"file": "com.apple.mediaremoted.plist",
+"prog": "mediaremoted",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.Virtualization.AppleVirtualPlatformHIDBridge": {
+"dom": "Daemons",
+"file": "com.apple.Virtualization.AppleVirtualPlatformHIDBridge.plist",
+"prog": "AppleVirtualPlatformHIDBridge",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ValidUpdater": {
+"dom": "Daemons",
+"file": "com.apple.ValidUpdater.plist",
+"prog": "ValidUpdater",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": {
+"#IfFeatureFlagDisabled": "SwiftCRLite/EnableValidUpdater",
+"#Then": true
+}
+},
+"com.apple.AppleQEMUGuestAgent": {
+"dom": "Daemons",
+"file": "com.apple.AppleQEMUGuestAgent.plist",
+"prog": "AppleQEMUGuestAgent",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.ManagedClient.startup": {
+"dom": "Daemons",
+"file": "com.apple.ManagedClient.startup.plist",
+"prog": "ManagedClient",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.datastored": {
+"dom": "Daemons",
+"file": "com.apple.datastored.plist",
+"prog": "datastored",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.appleh16camerad": {
+"dom": "Daemons",
+"file": "com.apple.appleh16camerad.plist",
+"prog": "appleh16camerad",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.gssd": {
+"dom": "Daemons",
+"file": "com.apple.gssd.plist",
+"prog": "gssd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.SCHelper": {
+"dom": "Daemons",
+"file": "com.apple.SCHelper.plist",
+"prog": "SCHelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.DesktopServicesScriptingHelper": {
+"dom": "Daemons",
+"file": "com.apple.DesktopServicesScriptingHelper.plist",
+"prog": "DesktopServicesScriptingHelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.biometrickitd": {
+"dom": "Daemons",
+"file": "com.apple.biometrickitd.plist",
+"prog": "biometrickitd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.diagnosticd": {
+"dom": "Daemons",
+"file": "com.apple.diagnosticd.plist",
+"prog": "diagnosticd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.xscertd": {
+"dom": "Daemons",
+"file": "com.apple.xscertd.plist",
+"prog": "xscertd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.trustd": {
+"dom": "Daemons",
+"file": "com.apple.trustd.plist",
+"prog": "trustd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.tzlinkd": {
+"dom": "Daemons",
+"file": "com.apple.tzlinkd.plist",
+"prog": "tzlinkd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.audio.isolated.historicalaudiod": {
+"dom": "Daemons",
+"file": "com.apple.historicalaudiod.plist",
+"prog": "historicalaudiod",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.watchdogd": {
+"dom": "Daemons",
+"file": "com.apple.watchdogd.plist",
+"prog": "watchdogd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.assetsubscriptiond": {
+"dom": "Daemons",
+"file": "com.apple.assetsubscriptiond.plist",
+"prog": "assetsubscriptiond",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mobile.softwareupdated": {
+"dom": "Daemons",
+"file": "com.apple.mobile.softwareupdated.plist",
+"prog": "softwareupdated",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.kdumpd": {
+"dom": "Daemons",
+"file": "com.apple.kdumpd.plist",
+"prog": "kdumpd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.usbsmartcardreaderd": {
+"dom": "Daemons",
+"file": "com.apple.usbsmartcardreaderd.plist",
+"prog": "usbsmartcardreaderd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.asr": {
+"dom": "Daemons",
+"file": "com.apple.asr.plist",
+"prog": "asr",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.colorsyncd": {
+"dom": "Daemons",
+"file": "com.apple.colorsyncd.plist",
+"prog": "colorsyncd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.eligibilityd": {
+"dom": "Daemons",
+"file": "com.apple.eligibilityd.plist",
+"prog": "eligibilityd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.hidd": {
+"dom": "Daemons",
+"file": "com.apple.hidd.plist",
+"prog": "hidd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.diskimagesiod.ram": {
+"dom": "Daemons",
+"file": "com.apple.diskimagesiod.ram.plist",
+"prog": "diskimagesiod",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ftp-proxy": {
+"dom": "Daemons",
+"file": "com.apple.ftp-proxy.plist",
+"prog": "ftp-proxy",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.bsd.dirhelper": {
+"dom": "Daemons",
+"file": "com.apple.bsd.dirhelper.plist",
+"prog": "dirhelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.newsyslog": {
+"dom": "Daemons",
+"file": "com.apple.newsyslog.plist",
+"prog": "newsyslog",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.nfcd": {
+"dom": "Daemons",
+"file": "com.apple.nfcd.plist",
+"prog": "nfcd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.coreservices.sharedfilelistd": {
+"dom": "Agents",
+"file": "com.apple.coreservices.sharedfilelistd.plist",
+"prog": "sharedfilelistd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.PowerUIAgent": {
+"dom": "Daemons",
+"file": "com.apple.PowerUIAgent.plist",
+"prog": "PowerUIAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.securityd.system": {
+"dom": "Daemons",
+"file": "com.apple.securityd.system.plist",
+"prog": "securityd_system",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "System",
+"dis": null
+},
+"com.apple.containermanagerd.system": {
+"dom": "Daemons",
+"file": "com.apple.containermanagerd.system.plist",
+"prog": "containermanagerd_system",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.powerdatad": {
+"dom": "Daemons",
+"file": "com.apple.powerdatad.plist",
+"prog": "powerdatad",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"org.openldap.slapd": {
+"dom": "Daemons",
+"file": "org.openldap.slapd.plist",
+"prog": "slapd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": true
+},
+"com.apple.hdiejectd": {
+"dom": "Daemons",
+"file": "com.apple.hdiejectd.plist",
+"prog": "hdiejectd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.triald.system": {
+"dom": "Daemons",
+"file": "com.apple.triald.system.plist",
+"prog": "triald_system",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.spindump": {
+"dom": "Daemons",
+"file": "com.apple.spindump.plist",
+"prog": "spindump",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.racoon": {
+"dom": "Daemons",
+"file": "com.apple.racoon.plist",
+"prog": "racoon",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.kcproxy": {
+"dom": "Daemons",
+"file": "com.apple.kcproxy.plist",
+"prog": "kcproxy",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.DataDetectorsSourceAccess": {
+"dom": "Daemons",
+"file": "com.apple.DataDetectorsSourceAccess.plist",
+"prog": "DataDetectorsSourceAccess",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.LocalAuthentication.userauthd": {
+"dom": "Daemons",
+"file": "com.apple.LocalAuthentication.userauthd.plist",
+"prog": "userauthd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.softwareupdated": {
+"dom": "Daemons",
+"file": "com.apple.softwareupdated.plist",
+"prog": "softwareupdated",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.uninstalld": {
+"dom": "Daemons",
+"file": "com.apple.uninstalld.plist",
+"prog": "uninstalld",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ioupsd": {
+"dom": "Daemons",
+"file": "com.apple.ioupsd.plist",
+"prog": "ioupsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.statd.notify": {
+"dom": "Daemons",
+"file": "com.apple.statd.notify.plist",
+"prog": "rpc.statd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.bootpd": {
+"dom": "Daemons",
+"file": "bootps.plist",
+"prog": "bootpd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.eapolcfg_auth": {
+"dom": "Daemons",
+"file": "com.apple.eapolcfg_auth.plist",
+"prog": "eapolcfg_auth",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.fontmover": {
+"dom": "Daemons",
+"file": "com.apple.fontmover.plist",
+"prog": "fontmover",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.tailspind": {
+"dom": "Daemons",
+"file": "com.apple.tailspind.plist",
+"prog": "tailspind",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.csrutil.report": {
+"dom": "Daemons",
+"file": "com.apple.csrutil.report.plist",
+"prog": "csrutil",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.DumpPanicRecoveryOS": {
+"dom": "Daemons",
+"file": "com.apple.DumpPanicRecoveryOS.plist",
+"prog": "DumpPanicRecoveryOS",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.audio.isolated.micactivityd": {
+"dom": "Daemons",
+"file": "com.apple.audio.micactivityd.plist",
+"prog": "micactivityd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.sysextd": {
+"dom": "Daemons",
+"file": "com.apple.sysextd.plist",
+"prog": "sysextd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.logkextloadsd": {
+"dom": "Daemons",
+"file": "com.apple.logkextloadsd.plist",
+"prog": "logkextloadsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.coreservices.appleevents": {
+"dom": "Daemons",
+"file": "com.apple.coreservices.appleevents.plist",
+"prog": "appleeventsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.logd": {
+"dom": "Daemons",
+"file": "com.apple.logd.plist",
+"prog": "logd",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.distnoted.xpc.daemon": {
+"dom": "Daemons",
+"file": "com.apple.distnoted.xpc.daemon.plist",
+"prog": "distnoted",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": {
+"#Then": "System",
+"#IfFeatureFlagEnabled": "UserManagement/SystemSessionD1"
+},
+"dis": null
+},
+"com.apple.DumpPanic.Accessory": {
+"dom": "Daemons",
+"file": "com.apple.DumpPanic.Accessory.plist",
+"prog": "DumpPanic",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.appleh13camerad": {
+"dom": "Daemons",
+"file": "com.apple.appleh13camerad.plist",
+"prog": "appleh13camerad",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.AppSSODaemon": {
+"dom": "Daemons",
+"file": "com.apple.AppSSODaemon.plist",
+"prog": "AppSSODaemon",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ReportSystemMemory": {
+"dom": "Daemons",
+"file": "com.apple.ReportSystemMemory.plist",
+"prog": "ReportSystemMemory",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "System",
+"dis": null
+},
+"com.apple.mobileassetd": {
+"dom": "Daemons",
+"file": "com.apple.mobileassetd.plist",
+"prog": "mobileassetd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.mobile.keybagd": {
+"dom": "Daemons",
+"file": "com.apple.mobile.keybagd.plist",
+"prog": "keybagd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.IFCStart": {
+"dom": "Daemons",
+"file": "com.apple.IFCStart.plist",
+"prog": "ifcstart",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.BlueTool": {
+"dom": "Daemons",
+"file": "com.apple.BlueTool.plist",
+"prog": "BlueTool",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.devicerecoveryd": {
+"dom": "Daemons",
+"file": "com.apple.devicerecoveryd.plist",
+"prog": "devicerecoveryd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.dt.automationmode-writer": {
+"dom": "Daemons",
+"file": "com.apple.dt.automationmode-writer.plist",
+"prog": "automationmode-writer",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.AssetCacheTetheratorService": {
+"dom": "Daemons",
+"file": "com.apple.AssetCacheTetheratorService.plist",
+"prog": "AssetCacheTetheratorService",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.remoted": {
+"dom": "Daemons",
+"file": "com.apple.remoted.plist",
+"prog": "remoted",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.netbiosd": {
+"dom": "Daemons",
+"file": "com.apple.netbiosd.plist",
+"prog": "netbiosd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": false
+},
+"com.apple.rtcreportingd": {
+"dom": "Daemons",
+"file": "com.apple.rtcreportingd.plist",
+"prog": "rtcreportingd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.PerfPowerServices": {
+"dom": "Daemons",
+"file": "com.apple.PerfPowerServices.plist",
+"prog": "PerfPowerServices",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.appstored": {
+"dom": "Daemons",
+"file": "com.apple.appstored.plist",
+"prog": "appstored",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.fseventsd": {
+"dom": "Daemons",
+"file": "com.apple.fseventsd.plist",
+"prog": "fseventsd",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.kernelmanagerd": {
+"dom": "Daemons",
+"file": "com.apple.kernelmanagerd.plist",
+"prog": "kernelmanagerd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mbsystemadministration": {
+"dom": "Daemons",
+"file": "com.apple.mbsystemadministration.plist",
+"prog": "mbsystemadministration",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.Kerberos.kpasswdd": {
+"dom": "Daemons",
+"file": "com.apple.Kerberos.kpasswdd.plist",
+"prog": "kpasswdd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.security.agent.login": {
+"dom": "Daemons",
+"file": "com.apple.security.agent.login.plist",
+"prog": "SecurityAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ecosystemanalyticsd": {
+"dom": "Daemons",
+"file": "com.apple.ecosystemanalyticsd.plist",
+"prog": "ecosystemanalyticsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ocspd": {
+"dom": "Daemons",
+"file": "com.apple.ocspd.plist",
+"prog": "ocspd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.scsid": {
+"dom": "Daemons",
+"file": "com.apple.scsid.plist",
+"prog": "scsid",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.wifianalyticsd": {
+"dom": "Daemons",
+"file": "com.apple.wifianalyticsd.plist",
+"prog": "wifianalyticsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.diskarbitrationd": {
+"dom": "Daemons",
+"file": "com.apple.diskarbitrationd.plist",
+"prog": "diskarbitrationd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.systemstats.daily": {
+"dom": "Daemons",
+"file": "com.apple.systemstats.daily.plist",
+"prog": "systemstats",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.cameracaptured": {
+"dom": "Daemons",
+"file": "com.apple.cameracaptured.plist",
+"prog": "cameracaptured",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.screensharing": {
+"dom": "Daemons",
+"file": "com.apple.screensharing.plist",
+"prog": "screensharingd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.coresymbolicationd": {
+"dom": "Daemons",
+"file": "com.apple.coresymbolicationd.plist",
+"prog": "coresymbolicationd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": {
+"#IfFeatureFlagEnabled": "UserManagement/SystemSessionD1",
+"#Then": "System"
+},
+"dis": null
+},
+"com.apple.GameController.gamecontrollerd": {
+"dom": "Daemons",
+"file": "com.apple.GameController.gamecontrollerd.plist",
+"prog": "gamecontrollerd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.apsd": {
+"dom": "Daemons",
+"file": "com.apple.apsd.plist",
+"prog": "apsd",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.sessionlogoutd": {
+"dom": "Daemons",
+"file": "com.apple.sessionlogoutd.plist",
+"prog": "sessionlogoutd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.nlcd": {
+"dom": "Daemons",
+"file": "com.apple.NetworkLinkConditioner.plist",
+"prog": "nlcd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.backupd-helper": {
+"dom": "Daemons",
+"file": "com.apple.backupd-helper.plist",
+"prog": "backupd-helper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": false
+},
+"com.apple.sysdiagnose_helper": {
+"dom": "Daemons",
+"file": "com.apple.sysdiagnose_helper.plist",
+"prog": "sysdiagnose_helper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.signpost.signpost_reporter": {
+"dom": "Daemons",
+"file": "com.apple.signpost.signpost_reporter.plist",
+"prog": "signpost_reporter",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.aned": {
+"dom": "Daemons",
+"file": "com.apple.aned.plist",
+"prog": "aned",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.corestorage.corestoraged": {
+"dom": "Daemons",
+"file": "com.apple.corestorage.corestoraged.plist",
+"prog": "corestoraged",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.kcgend": {
+"dom": "Daemons",
+"file": "com.apple.kcgend.plist",
+"prog": "kcgend",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ReportCrash.Root": {
+"dom": "Daemons",
+"file": "com.apple.ReportCrash.Root.plist",
+"prog": "ReportCrash",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.msrpc.mdssvc": {
+"dom": "Daemons",
+"file": "com.apple.msrpc.mdssvc.plist",
+"prog": "rpcsvchost",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.autofsd": {
+"dom": "Daemons",
+"file": "com.apple.autofsd.plist",
+"prog": "autofsd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.endpointsecurity.endpointsecurityd": {
+"dom": "Daemons",
+"file": "com.apple.endpointsecurity.endpointsecurityd.plist",
+"prog": "endpointsecurityd",
+"da": null,
+"ral": false,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.iomfb_fdr_loader": {
+"dom": "Daemons",
+"file": "com.apple.iomfb_fdr_loader.plist",
+"prog": "IOMFB_FDR_Loader",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": "System",
+"dis": null
+},
+"com.apple.findmy.findmybeaconingd": {
+"dom": "Daemons",
+"file": "com.apple.findmy.findmybeaconingd.plist",
+"prog": "findmybeaconingd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.peakpowermanagerd": {
+"dom": "Daemons",
+"file": "com.apple.peakpowermanagerd.plist",
+"prog": "peakpowermanagerd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.nesessionmanager": {
+"dom": "Daemons",
+"file": "com.apple.nesessionmanager.plist",
+"prog": "nesessionmanager",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.xpc.roleaccountd": {
+"dom": "Daemons",
+"file": "com.apple.xpc.roleaccountd.plist",
+"prog": "xpcroleaccountd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "System",
+"dis": null
+},
+"com.apple.findmymacmessenger": {
+"dom": "Agents",
+"file": "com.apple.findmymacmessenger.plist",
+"prog": "FindMyMacMessenger",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.devicemanagementclient.managedeventsd": {
+"dom": "Daemons",
+"file": "com.apple.devicemanagementclient.managedeventsd.plist",
+"prog": "managedeventsd",
+"da": null,
+"ral": false,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.locate": {
+"dom": "Daemons",
+"file": "com.apple.locate.plist",
+"prog": "locate.updatedb",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": true
+},
+"com.apple.KernelEventAgent": {
+"dom": "Daemons",
+"file": "com.apple.KernelEventAgent.plist",
+"prog": "KernelEventAgent",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.installd": {
+"dom": "Daemons",
+"file": "com.apple.installd.plist",
+"prog": "installd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.warmd": {
+"dom": "Daemons",
+"file": "com.apple.warmd.plist",
+"prog": "warmd",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.RemoteDesktop.PrivilegeProxy": {
+"dom": "Daemons",
+"file": "com.apple.RemoteDesktop.PrivilegeProxy.plist",
+"prog": "VNCPrivilegeProxy",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.applekeystored": {
+"dom": "Daemons",
+"file": "com.apple.applekeystored.plist",
+"prog": "applekeystored",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.msrpc.lsarpc": {
+"dom": "Daemons",
+"file": "com.apple.msrpc.lsarpc.plist",
+"prog": "rpcsvchost",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.logd_reporter": {
+"dom": "Daemons",
+"file": "com.apple.logd_reporter.plist",
+"prog": "logd_reporter",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.memory-maintenance": {
+"dom": "Daemons",
+"file": "com.apple.memory-maintenance.plist",
+"prog": "mmaintenanced",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.AssetCacheManagerService": {
+"dom": "Daemons",
+"file": "com.apple.AssetCacheManagerService.plist",
+"prog": "AssetCacheManagerService",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.betaenrollmentd": {
+"dom": "Daemons",
+"file": "com.apple.betaenrollmentd.plist",
+"prog": "betaenrollmentd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.oahd-root-helper": {
+"dom": "Daemons",
+"file": "com.apple.oahd-root-helper.plist",
+"prog": "oahd-root-helper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.fpassetmanagerd": {
+"dom": "Daemons",
+"file": "com.apple.fpassetmanagerd.plist",
+"prog": "fpassetmanagerd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.secinitd": {
+"dom": "Agents",
+"file": "com.apple.secinitd.plist",
+"prog": "secinitd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Background",
+"CryptexContainer"
+],
+"dis": null
+},
+"com.apple.CSCSupportd": {
+"dom": "Daemons",
+"file": "com.apple.CSCSupportd.plist",
+"prog": "CSCSupportd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.lsd": {
+"dom": "Agents",
+"file": "com.apple.lsd.plist",
+"prog": "lsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.memoryanalyticsd": {
+"dom": "Daemons",
+"file": "com.apple.memoryanalyticsd.plist",
+"prog": "memoryanalyticsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.sntpd": {
+"dom": "Daemons",
+"file": "com.apple.sntpd.plist",
+"prog": "sntpd",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": true
+},
+"com.apple.bridgeOSUpdateProxy": {
+"dom": "Daemons",
+"file": "com.apple.bridgeOSUpdateProxy.plist",
+"prog": "bosUpdateProxy",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.kuncd": {
+"dom": "Daemons",
+"file": "com.apple.kuncd.plist",
+"prog": "kuncd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.iconservices.iconservicesagent": {
+"dom": "Agents",
+"file": "com.apple.iconservices.iconservicesagent.plist",
+"prog": "iconservicesagent",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.misagent": {
+"dom": "Daemons",
+"file": "com.apple.misagent.plist",
+"prog": "misagent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.security.authtrampoline": {
+"dom": "Daemons",
+"file": "com.apple.security.authtrampoline.plist",
+"prog": "authtrampoline",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.WirelessRadioManager": {
+"dom": "Daemons",
+"file": "com.apple.WirelessRadioManager-osx.plist",
+"prog": "WirelessRadioManagerd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.dvdplayback.setregion": {
+"dom": "Daemons",
+"file": "com.apple.dvdplayback.setregion.plist",
+"prog": "setregion",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.wallpaper.export": {
+"dom": "Daemons",
+"file": "com.apple.wallpaper.export.plist",
+"prog": "wallpaperexportd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.notifyd": {
+"dom": "Daemons",
+"file": "com.apple.notifyd.plist",
+"prog": "notifyd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "System",
+"dis": null
+},
+"com.apple.ctkd": {
+"dom": "Agents",
+"file": "com.apple.ctkd.plist",
+"prog": "ctkd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow",
+"Background"
+],
+"dis": null
+},
+"com.apple.aneuserd": {
+"dom": "Daemons",
+"file": "com.apple.aneuserd.plist",
+"prog": "aneuserd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.UserNotificationCenter": {
+"dom": "Daemons",
+"file": "com.apple.UserNotificationCenter.plist",
+"prog": "uncd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.taskgated": {
+"dom": "Daemons",
+"file": "com.apple.taskgated.plist",
+"prog": "taskgated",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.nfsconf": {
+"dom": "Daemons",
+"file": "com.apple.nfsconf.plist",
+"prog": "mount_nfs",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.fskit.fskit_helper": {
+"dom": "Daemons",
+"file": "com.apple.fskit.fskit_helper.plist",
+"prog": "fskit_helper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": false
+},
+"com.apple.ntalkd": {
+"dom": "Daemons",
+"file": "ntalk.plist",
+"prog": "ntalkd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.openssh.sshd": {
+"dom": "Daemons",
+"file": "ssh.plist",
+"prog": "sshd-keygen-wrapper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.systemstatusd": {
+"dom": "Daemons",
+"file": "com.apple.systemstatusd.plist",
+"prog": "systemstatusd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.configureLocalKDC": {
+"dom": "Daemons",
+"file": "com.apple.configureLocalKDC.plist",
+"prog": "configureLocalKDC",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.icloud.findmydeviced": {
+"dom": "Daemons",
+"file": "com.apple.icloud.findmydeviced.plist",
+"prog": "findmydeviced",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.diskimagespawner": {
+"dom": "Daemons",
+"file": "com.apple.diskimagespawner.plist",
+"prog": "diskimagespawner",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.remotemanagementd": {
+"dom": "Daemons",
+"file": "com.apple.remotemanagementd.plist",
+"prog": "remotemanagementd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.audio.coreaudiod": {
+"dom": "Daemons",
+"file": "com.apple.audio.coreaudiod.plist",
+"prog": "coreaudiod",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.RemotePairTool": {
+"dom": "Daemons",
+"file": "com.apple.remotepairtool.plist",
+"prog": "RemotePairTool",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.fairplaydeviceidentityd": {
+"dom": "Daemons",
+"file": "com.apple.fairplaydeviceidentityd.plist",
+"prog": "fairplaydeviceidentityd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.multiversed": {
+"dom": "Daemons",
+"file": "com.apple.multiversed.plist",
+"prog": "multiversed",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.Kerberos.kcm": {
+"dom": "Daemons",
+"file": "com.apple.Kerberos.kcm.plist",
+"prog": "kcm",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.captiveagent": {
+"dom": "Daemons",
+"file": "com.apple.captiveagent.plist",
+"prog": "captiveagent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.systemstats.analysis": {
+"dom": "Daemons",
+"file": "com.apple.systemstats.analysis.plist",
+"prog": "systemstats",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.msrpc.netlogon": {
+"dom": "Daemons",
+"file": "com.apple.msrpc.netlogon.plist",
+"prog": "rpcsvchost",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.metadata.mds.scan": {
+"dom": "Daemons",
+"file": "com.apple.metadata.mds.scan.plist",
+"prog": "mdsync",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.findmymacd": {
+"dom": "Daemons",
+"file": "com.apple.findmymac.plist",
+"prog": "FindMyMacd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.dynamic_pager": {
+"dom": "Daemons",
+"file": "com.apple.dynamic_pager.plist",
+"prog": "dynamic_pager",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.accessoryupdaterd": {
+"dom": "Daemons",
+"file": "com.apple.accessoryupdaterd.plist",
+"prog": "accessoryupdaterd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.musicd": {
+"dom": "Daemons",
+"file": "com.apple.musicd.plist",
+"prog": "musicd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.devicemanagementclient.managedappsd": {
+"dom": "Daemons",
+"file": "com.apple.devicemanagementclient.managedappsd.plist",
+"prog": "managedappsd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.rpcbind": {
+"dom": "Daemons",
+"file": "com.apple.rpcbind.plist",
+"prog": "rpcbind",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.cloudtelemetryd": {
+"dom": "Daemons",
+"file": "com.apple.cloudtelemetryd.plist",
+"prog": "cloudtelemetryd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.GSSCred": {
+"dom": "Daemons",
+"file": "com.apple.GSSCred.plist",
+"prog": "GSSCred",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.appledepthd": {
+"dom": "Daemons",
+"file": "com.apple.appledepthd.plist",
+"prog": "appledepthd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.griddatad": {
+"dom": "Daemons",
+"file": "com.apple.griddatad.plist",
+"prog": "griddatad",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.bootinstalld": {
+"dom": "Daemons",
+"file": "com.apple.bootinstalld.plist",
+"prog": "bootinstalld",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mobile.storage_mounter": {
+"dom": "Daemons",
+"file": "com.apple.mobile.storage_mounter.plist",
+"prog": "MobileStorageMounter",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.perfpowermetricd": {
+"dom": "Daemons",
+"file": "com.apple.perfpowermetricd.plist",
+"prog": "perfpowermetricd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.metadata.mds.index.readonly": {
+"dom": "Daemons",
+"file": "com.apple.metadata.mds.index.readonly.plist",
+"prog": "mds_stores",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": {
+"#IfFeatureFlagDisabled": "Spotlight/ReadOnlyIndexDaemon",
+"#Then": true
+}
+},
+"com.apple.cameraispd": {
+"dom": "Daemons",
+"file": "com.apple.cameraispd.plist",
+"prog": "cameraispd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.RFBEventHelper": {
+"dom": "Daemons",
+"file": "com.apple.RFBEventHelper.plist",
+"prog": "RFBEventHelperd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.diagnosticextensions.osx.timemachine.helper": {
+"dom": "Daemons",
+"file": "com.apple.diagnosticextensions.osx.timemachine.helper.plist",
+"prog": "timemachinehelper",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mobile.notification_proxy": {
+"dom": "Daemons",
+"file": "com.apple.mobile.notification_proxy.plist",
+"prog": "notification_proxy",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.nehelper": {
+"dom": "Daemons",
+"file": "com.apple.nehelper.plist",
+"prog": "nehelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.appleseed.fbahelperd": {
+"dom": "Daemons",
+"file": "com.apple.appleseed.fbahelperd.plist",
+"prog": "fbahelperd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.accessoryd": {
+"dom": "Daemons",
+"file": "com.apple.accessoryd.plist",
+"prog": "accessoryd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.erasecontentsettingshelperd": {
+"dom": "Daemons",
+"file": "com.apple.erasecontentsettingshelperd.plist",
+"prog": "erasecontentsettingshelperd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.bluetoothd": {
+"dom": "Daemons",
+"file": "com.apple.bluetoothd.plist",
+"prog": "bluetoothd",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.ManagedClient.enroll": {
+"dom": "Daemons",
+"file": "com.apple.ManagedClient.enroll.plist",
+"prog": "ManagedClient",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.backupd": {
+"dom": "Daemons",
+"file": "com.apple.backupd.plist",
+"prog": "backupd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.UserEventAgent-System": {
+"dom": "Daemons",
+"file": "com.apple.UserEventAgent-System.plist",
+"prog": "UserEventAgent",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.msrpc.srvsvc": {
+"dom": "Daemons",
+"file": "com.apple.msrpc.srvsvc.plist",
+"prog": "rpcsvchost",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.filesystems.fskitd": {
+"dom": "Daemons",
+"file": "com.apple.filesystems.fskitd.plist",
+"prog": "fskitd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": false
+},
+"com.apple.coreservicesd": {
+"dom": "Daemons",
+"file": "com.apple.coreservicesd.plist",
+"prog": "coreservicesd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.thermalmonitord": {
+"dom": "Daemons",
+"file": "com.apple.thermalmonitord.plist",
+"prog": "thermalmonitord",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.FileCoordination": {
+"dom": "Daemons",
+"file": "com.apple.FileCoordination.plist",
+"prog": "filecoordinationd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ReportMemoryException": {
+"dom": "Daemons",
+"file": "com.apple.ReportMemoryException.plist",
+"prog": "ReportMemoryException",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.WindowServer": {
+"dom": "Daemons",
+"file": "com.apple.WindowServer.plist",
+"prog": "WindowServer",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.metadata.mds.spindump": {
+"dom": "Daemons",
+"file": "com.apple.metadata.mds.spindump.plist",
+"prog": "mdworker",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.preferences.timezone.admintool": {
+"dom": "Daemons",
+"file": "com.apple.preferences.timezone.admintool.plist",
+"prog": "TimeZoneAdminTool",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.TrustEvaluationAgent.system": {
+"dom": "Daemons",
+"file": "com.apple.TrustEvaluationAgent.system.plist",
+"prog": "trustevaluationagent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mDNSResponderHelper.reloaded": {
+"dom": "Daemons",
+"file": "com.apple.mDNSResponderHelper.plist",
+"prog": "mDNSResponderHelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ManagedClient": {
+"dom": "Daemons",
+"file": "com.apple.ManagedClient.plist",
+"prog": "ManagedClient",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.managedappdistributiond": {
+"dom": "Daemons",
+"file": "com.apple.managedappdistributiond.plist",
+"prog": "managedappdistributiond",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.filesystems.userfs_helper": {
+"dom": "Daemons",
+"file": "com.apple.filesystems.userfs_helper.plist",
+"prog": "userfs_helper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": false
+},
+"com.apple.dprivacyd": {
+"dom": "Agents",
+"file": "com.apple.dprivacyd.plist",
+"prog": "dprivacyd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.usbaudiod": {
+"dom": "Daemons",
+"file": "com.apple.usbaudiod.plist",
+"prog": "usbaudiod",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": {
+"#IfFeatureFlagDisabled": "usbaudiod/useAUASD",
+"#Then": true
+}
+},
+"com.apple.installcoordinationd": {
+"dom": "Daemons",
+"file": "com.apple.installcoordinationd.plist",
+"prog": "installcoordinationd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.swiftuitracingsupport.xpc": {
+"dom": "Daemons",
+"file": "com.apple.swiftuitraced.plist",
+"prog": "swiftuitraced",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "System",
+"dis": null
+},
+"com.apple.Kerberos.kdc": {
+"dom": "Daemons",
+"file": "com.apple.Kerberos.kdc.plist",
+"prog": "kdc",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.srp-mdns-proxy": {
+"dom": "Daemons",
+"file": "com.apple.srp-mdns-proxy.plist",
+"prog": "srp-mdns-proxy",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.online-auth-agent.xpc": {
+"dom": "Daemons",
+"file": "com.apple.online-authd.xpc.plist",
+"prog": "online-auth-agent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.InstallerDiagnostics.installerdiagwatcher": {
+"dom": "Daemons",
+"file": "com.apple.InstallerDiagnostics.installerdiagwatcher.plist",
+"prog": "installerdiagwatcher",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.seld": {
+"dom": "Daemons",
+"file": "com.apple.seld.plist",
+"prog": "seld",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.powerd.swd": {
+"dom": "Daemons",
+"file": "com.apple.powerd.swd.plist",
+"prog": "swd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.mobile.NRDUpdated": {
+"dom": "Daemons",
+"file": "com.apple.mobile.NRDUpdated.plist",
+"prog": "NRDUpdated",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.syslogd": {
+"dom": "Daemons",
+"file": "com.apple.syslogd.plist",
+"prog": "syslogd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.AssetCache.builtin": {
+"dom": "Daemons",
+"file": "com.apple.AssetCache.builtin.plist",
+"prog": "AssetCache",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": false
+},
+"com.apple.getty": {
+"dom": "Daemons",
+"file": "com.apple.getty.plist",
+"prog": "getty",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": true
+},
+"com.apple.corebrightnessd": {
+"dom": "Daemons",
+"file": "com.apple.corebrightnessd.plist",
+"prog": "corebrightnessd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.nearbyd": {
+"dom": "Daemons",
+"file": "com.apple.nearbyd.plist",
+"prog": "nearbyd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.timed": {
+"dom": "Daemons",
+"file": "com.apple.timed.plist",
+"prog": "timed",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.mdmclient.daemon": {
+"dom": "Daemons",
+"file": "com.apple.mdmclient.daemon.plist",
+"prog": "mdmclient",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.cmio.registerassistantservice": {
+"dom": "Daemons",
+"file": "com.apple.cmio.registerassistantservice.plist",
+"prog": "com.apple.cmio.registerassistantservice",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.coreservices.launchservicesd": {
+"dom": "Daemons",
+"file": "com.apple.coreservices.launchservicesd.plist",
+"prog": "launchservicesd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.xpc.smd": {
+"dom": "Daemons",
+"file": "com.apple.xpc.smd.plist",
+"prog": "smd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.uucp": {
+"dom": "Daemons",
+"file": "com.apple.uucp.plist",
+"prog": "uucico",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.securityd": {
+"dom": "Daemons",
+"file": "com.apple.securityd.plist",
+"prog": "securityd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.BluetoothUIService": {
+"dom": "Daemons",
+"file": "com.apple.bluetoothuiservice.plist",
+"prog": "BluetoothUIService",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.corecaptured": {
+"dom": "Daemons",
+"file": "com.apple.corecaptured.plist",
+"prog": "corecaptured",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"org.apache.httpd": {
+"dom": "Daemons",
+"file": "org.apache.httpd.plist",
+"prog": "httpd-wrapper",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": true
+},
+"com.apple.osanalytics.osanalyticshelper": {
+"dom": "Daemons",
+"file": "com.apple.osanalytics.osanalyticshelper.plist",
+"prog": "osanalyticshelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": {
+"#IfFeatureFlagEnabled": "UserManagement/SystemSessionD1",
+"#Then": "System"
+},
+"dis": null
+},
+"com.apple.suhelperd": {
+"dom": "Daemons",
+"file": "com.apple.suhelperd.plist",
+"prog": "suhelperd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.BTServer.le": {
+"dom": "Daemons",
+"file": "com.apple.BTServer.le.plist",
+"prog": "BTLEServer",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.symptomsd": {
+"dom": "Daemons",
+"file": "com.apple.symptomsd.plist",
+"prog": "symptomsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.replayd": {
+"dom": "Agents",
+"file": "com.apple.replayd.plist",
+"prog": "replayd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.TrustEvaluationAgent": {
+"dom": "Agents",
+"file": "com.apple.TrustEvaluationAgent.plist",
+"prog": "trustevaluationagent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.accessibility.MotionTrackingAgent": {
+"dom": "Agents",
+"file": "com.apple.accessibility.MotionTrackingAgent.plist",
+"prog": "MotionTrackingAgent",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.quicklook.ThumbnailsAgent": {
+"dom": "Agents",
+"file": "com.apple.quicklook.ThumbnailsAgent.plist",
+"prog": "com.apple.quicklook.ThumbnailsAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.bluetoothuserd": {
+"dom": "Agents",
+"file": "com.apple.bluetoothuserd.plist",
+"prog": "bluetoothuserd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.financed": {
+"dom": "Agents",
+"file": "com.apple.financed.plist",
+"prog": "financed",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.TextInputMenuAgent": {
+"dom": "Agents",
+"file": "com.apple.TextInputMenuAgent.plist",
+"prog": "TextInputMenuAgent",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.companiond": {
+"dom": "Agents",
+"file": "com.apple.companiond.plist",
+"prog": "companiond",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.swcd": {
+"dom": "Agents",
+"file": "com.apple.swcd.plist",
+"prog": "swcd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.inputanalyticsd": {
+"dom": "Agents",
+"file": "com.apple.inputanalyticsd.plist",
+"prog": "inputanalyticsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": false
+},
+"com.apple.ptpcamerad": {
+"dom": "Agents",
+"file": "com.apple.ptpcamerad.plist",
+"prog": "ptpcamerad",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": false
+},
+"com.apple.notificationcenterui.agent": {
+"dom": "Agents",
+"file": "com.apple.notificationcenterui.plist",
+"prog": "NotificationCenter",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.accessibility.dfrhud": {
+"dom": "Agents",
+"file": "com.apple.accessibility.dfrhud.plist",
+"prog": "DFRHUD",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.arkitd": {
+"dom": "Agents",
+"file": "com.apple.arkitd.plist",
+"prog": "arkitd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.AutoFillPanel": {
+"dom": "Agents",
+"file": "com.apple.AutoFillPanel.plist",
+"prog": "AutoFillPanelService",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ATS.FontValidator": {
+"dom": "Agents",
+"file": "com.apple.FontValidator.plist",
+"prog": "FontValidator",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua",
+"CryptexContainer"
+],
+"dis": null
+},
+"com.apple.screensharing.agent": {
+"dom": "Agents",
+"file": "com.apple.screensharing.agent.plist",
+"prog": "ScreensharingAgent",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.midiserver": {
+"dom": "Agents",
+"file": "com.apple.midiserver.plist",
+"prog": "MIDIServer",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mbuseragent": {
+"dom": "Agents",
+"file": "com.apple.mbuseragent.plist",
+"prog": "mbuseragent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.AMPLibraryAgent": {
+"dom": "Agents",
+"file": "com.apple.AMPLibraryAgent.plist",
+"prog": "AMPLibraryAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.printuitool.agent": {
+"dom": "Agents",
+"file": "com.apple.printuitool.agent.plist",
+"prog": "PrintUITool",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": false
+},
+"com.apple.icloudmailagent": {
+"dom": "Agents",
+"file": "com.apple.icloudmailagent.plist",
+"prog": "icloudmailagent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.CommCenter": {
+"dom": "Agents",
+"file": "com.apple.CommCenter-osx.plist",
+"prog": "CommCenter",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.analyticsagent": {
+"dom": "Agents",
+"file": "com.apple.analyticsagent.plist",
+"prog": "analyticsagent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ak.auth.authKitUIMacService": {
+"dom": "Agents",
+"file": "com.apple.ak.auth.authKitUIMacService.plist",
+"prog": "AuthKitUIMacService",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.amsondevicestoraged": {
+"dom": "Agents",
+"file": "com.apple.amsondevicestoraged.plist",
+"prog": "amsondevicestoraged",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.testmanagerd": {
+"dom": "Agents",
+"file": "com.apple.testmanagerd.plist",
+"prog": "testmanagerd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.universalaccessd": {
+"dom": "Agents",
+"file": "com.apple.universalaccessd.plist",
+"prog": "universalaccessd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.WindowManager.agent": {
+"dom": "Agents",
+"file": "com.apple.WindowManager.plist",
+"prog": "WindowManager",
+"da": null,
+"ral": false,
+"ka": true,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.UserEventAgent-CryptexContainer": {
+"dom": "Agents",
+"file": "com.apple.UserEventAgent-CryptexContainer.plist",
+"prog": "UserEventAgent",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": "CryptexContainer",
+"dis": null
+},
+"com.apple.siriappintentsd": {
+"dom": "Agents",
+"file": "com.apple.siriappintentsd.plist",
+"prog": "siriappintentsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.containermanagerd": {
+"dom": "Agents",
+"file": "com.apple.containermanagerd.plist",
+"prog": "containermanagerd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.AOSPushRelay": {
+"dom": "Agents",
+"file": "com.apple.AOSPushRelay.plist",
+"prog": "AOSPushRelay",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.syncservices.SyncServer": {
+"dom": "Agents",
+"file": "com.apple.syncservices.SyncServer.plist",
+"prog": "SyncServer",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.callverificationd": {
+"dom": "Agents",
+"file": "com.apple.callverificationd.plist",
+"prog": "callverificationd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.intelligentroutingd": {
+"dom": "Agents",
+"file": "com.apple.intelligentroutingd.plist",
+"prog": "intelligentroutingd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.passd": {
+"dom": "Agents",
+"file": "com.apple.passd.plist",
+"prog": "passd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.coreimportd": {
+"dom": "Agents",
+"file": "com.apple.coreimportd.plist",
+"prog": "coreimportd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.metadata.mdflagwriter": {
+"dom": "Agents",
+"file": "com.apple.metadata.mdflagwriter.plist",
+"prog": "mdflagwriter",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.ThreadCommissionerService": {
+"dom": "Agents",
+"file": "com.apple.ThreadCommissionerService.plist",
+"prog": "CoreThreadCommissionerServiced",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ap.adprivacyd": {
+"dom": "Agents",
+"file": "com.apple.ap.adprivacyd.plist",
+"prog": "adprivacyd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.accessibility.axassetsd": {
+"dom": "Agents",
+"file": "com.apple.accessibility.axassetsd.plist",
+"prog": "axassetsd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.metadata.mdbulkimport": {
+"dom": "Agents",
+"file": "com.apple.metadata.mdbulkimport.plist",
+"prog": "mdbulkimport",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.icloudwebd": {
+"dom": "Agents",
+"file": "com.apple.icloudwebd.plist",
+"prog": "icloudwebd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.bluetoothaudiod": {
+"dom": "Agents",
+"file": "com.apple.bluetoothaudiod.plist",
+"prog": "bluetoothaudiod",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.dt.AutomationModeUI": {
+"dom": "Agents",
+"file": "com.apple.dt.AutomationModeUI.plist",
+"prog": "AutomationModeUI",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.ctkbind": {
+"dom": "Agents",
+"file": "com.apple.ctkbind.plist",
+"prog": "ctkbind",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.assistant_service": {
+"dom": "Agents",
+"file": "com.apple.assistant_service.plist",
+"prog": "assistant_service",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.speech.speechdatainstallerd": {
+"dom": "Agents",
+"file": "com.apple.speech.speechdatainstallerd.plist",
+"prog": "SpeechDataInstallerd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.Dock.agent": {
+"dom": "Agents",
+"file": "com.apple.Dock.plist",
+"prog": "Dock",
+"da": null,
+"ral": false,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.UserNotificationCenterAgent": {
+"dom": "Agents",
+"file": "com.apple.UserNotificationCenterAgent.plist",
+"prog": "UserNotificationCenter",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.LinkedNotesUIService": {
+"dom": "Agents",
+"file": "com.apple.LinkedNotesUIService.plist",
+"prog": "LinkedNotesUIService",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.duetexpertd": {
+"dom": "Agents",
+"file": "com.apple.duetexpertd.plist",
+"prog": "duetexpertd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.sociallayerd": {
+"dom": "Agents",
+"file": "com.apple.sociallayerd.plist",
+"prog": "sociallayerd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.speech.speechsynthesisd.arm64": {
+"dom": "Agents",
+"file": "com.apple.speech.speechsynthesisd.arm64.plist",
+"prog": "com.apple.speech.speechsynthesisd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Background"
+],
+"dis": null
+},
+"com.apple.ciphermld": {
+"dom": "Agents",
+"file": "com.apple.ciphermld.plist",
+"prog": "ciphermld",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.printtool.agent": {
+"dom": "Agents",
+"file": "com.apple.printtool.agent.plist",
+"prog": "printtool",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": false
+},
+"com.apple.contactsd": {
+"dom": "Agents",
+"file": "com.apple.contactsd.plist",
+"prog": "contactsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Background"
+],
+"dis": null
+},
+"com.apple.sportsd": {
+"dom": "Agents",
+"file": "com.apple.sportsd.plist",
+"prog": "sportsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.pluginkit.pkreporter": {
+"dom": "Agents",
+"file": "com.apple.pluginkit.pkreporter.plist",
+"prog": "pkreporter",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.sharereportingd": {
+"dom": "Agents",
+"file": "com.apple.sharereportingd.plist",
+"prog": "sharereportingd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.cvmsCompAgent3600_x86_64": {
+"dom": "Agents",
+"file": "com.apple.cvmsCompAgent3600_x86_64.plist",
+"prog": "CVMCompiler",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.avatarsd": {
+"dom": "Agents",
+"file": "com.apple.avatarsd.plist",
+"prog": "avatarsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.xpc.otherbsd": {
+"dom": "Agents",
+"file": "com.apple.xpc.otherbsd.plist",
+"prog": "otherbsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.reversetemplated": {
+"dom": "Agents",
+"file": "com.apple.reversetemplated.plist",
+"prog": "reversetemplated",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.appleseed.seedusaged.postinstall": {
+"dom": "Agents",
+"file": "com.apple.appleseed.seedusaged.postinstall.plist",
+"prog": "seedusaged",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.appleaccountd": {
+"dom": "Agents",
+"file": "com.apple.appleaccountd.plist",
+"prog": "appleaccountd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.nexusd": {
+"dom": "Agents",
+"file": "com.apple.nexusd.plist",
+"prog": "nexusd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mdworker.application": {
+"dom": "Agents",
+"file": "com.apple.mdworker.application.plist",
+"prog": "mdworker_shared",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.Safari.SafeBrowsing.Service": {
+"dom": "Agents",
+"file": "com.apple.Safari.SafeBrowsing.Service.plist",
+"prog": "com.apple.Safari.SafeBrowsing.Service",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.exchange.exchangesyncd": {
+"dom": "Agents",
+"file": "com.apple.exchange.exchangesyncd.plist",
+"prog": "exchangesyncd",
+"da": null,
+"ral": false,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.generativeexperiencesd": {
+"dom": "Agents",
+"file": "com.apple.generativeexperiencesd.plist",
+"prog": "generativeexperiencesd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.uikitsystemapp": {
+"dom": "Agents",
+"file": "com.apple.uikitsystemapp.plist",
+"prog": "UIKitSystem",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.ModelCatalogAgent": {
+"dom": "Agents",
+"file": "com.apple.ModelCatalogAgent.plist",
+"prog": "ModelCatalogAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.previewshellapp": {
+"dom": "Agents",
+"file": "com.apple.previewshellapp.plist",
+"prog": "PreviewShell",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.NVMeAgent": {
+"dom": "Agents",
+"file": "com.apple.NVMeAgent.plist",
+"prog": "NVMeAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.storeassetd": {
+"dom": "Agents",
+"file": "com.apple.storeassetd.plist",
+"prog": "storeassetd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.diagnosticspushd": {
+"dom": "Agents",
+"file": "com.apple.diagnosticspushd.plist",
+"prog": "diagnosticspushd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.TextInputSwitcher": {
+"dom": "Agents",
+"file": "com.apple.TextInputSwitcher.plist",
+"prog": "TextInputSwitcher",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.spindump_agent": {
+"dom": "Agents",
+"file": "com.apple.spindump_agent.plist",
+"prog": "spindump_agent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.AddressBook.AssistantService": {
+"dom": "Agents",
+"file": "com.apple.AddressBook.AssistantService.plist",
+"prog": "ABAssistantService",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.recentsd": {
+"dom": "Agents",
+"file": "com.apple.recentsd.plist",
+"prog": "recentsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.DeviceConfigurationAgent": {
+"dom": "Agents",
+"file": "com.apple.DeviceConfigurationAgent.plist",
+"prog": "DeviceConfigurationAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.dt.CommandLineTools.installondemand": {
+"dom": "Agents",
+"file": "com.apple.dt.CommandLineTools.installondemand.plist",
+"prog": "Install Command Line Developer Tools",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.ManagedClientAgent.agent": {
+"dom": "Agents",
+"file": "com.apple.ManagedClientAgent.agent.plist",
+"prog": "ManagedClientAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.Maps.mapssyncd": {
+"dom": "Agents",
+"file": "com.apple.Maps.mapssyncd.plist",
+"prog": "mapssyncd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.securemessagingagent": {
+"dom": "Agents",
+"file": "com.apple.securemessagingagent.plist",
+"prog": "SecureMessagingAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.geoanalyticsd": {
+"dom": "Agents",
+"file": "com.apple.geoanalyticsd.plist",
+"prog": "geoanalyticsd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mlruntimed": {
+"dom": "Agents",
+"file": "com.apple.mlruntimed.plist",
+"prog": "mlruntimed",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.parsec-fbf": {
+"dom": "Agents",
+"file": "com.apple.parsec-fbf.plist",
+"prog": "parsec-fbf",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ContextStoreAgent": {
+"dom": "Agents",
+"file": "com.apple.ContextStoreAgent.plist",
+"prog": "ContextStoreAgent",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.filevaultd": {
+"dom": "Agents",
+"file": "com.apple.filevaultd.plist",
+"prog": "filevaultd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ScreenTimeAgent": {
+"dom": "Agents",
+"file": "com.apple.ScreenTimeAgent.plist",
+"prog": "ScreenTimeAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.nsurlsessiond": {
+"dom": "Agents",
+"file": "com.apple.nsurlsessiond.plist",
+"prog": "nsurlsessiond",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.storeaccountd": {
+"dom": "Agents",
+"file": "com.apple.storeaccountd.plist",
+"prog": "storeaccountd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.ReportGPURestart": {
+"dom": "Agents",
+"file": "com.apple.ReportGPURestart.plist",
+"prog": "ReportGPURestart",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": true
+},
+"com.apple.screencaptureui.agent": {
+"dom": "Agents",
+"file": "com.apple.screencaptureui.plist",
+"prog": "screencaptureui",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.shazamd": {
+"dom": "Agents",
+"file": "com.apple.shazamd.plist",
+"prog": "shazamd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.StatusKitAgent": {
+"dom": "Agents",
+"file": "com.apple.StatusKitAgent.plist",
+"prog": "StatusKitAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.netauth.user.auth": {
+"dom": "Agents",
+"file": "com.apple.netauth.user.auth.plist",
+"prog": "NetAuthSysAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Background"
+],
+"dis": null
+},
+"com.apple.security.DiskUnmountWatcher": {
+"dom": "Agents",
+"file": "com.apple.security.DiskUnmountWatcher.plist",
+"prog": "DiskUnmountWatcher",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.appstorecomponentsd": {
+"dom": "Agents",
+"file": "com.apple.appstorecomponentsd.plist",
+"prog": "appstorecomponentsd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.imageplaygroundd": {
+"dom": "Agents",
+"file": "com.apple.imageplaygroundd.plist",
+"prog": "imageplaygroundd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mdworker.single.arm64": {
+"dom": "Agents",
+"file": "com.apple.mdworker.single.arm64.plist",
+"prog": "mdworker",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.pbs": {
+"dom": "Agents",
+"file": "com.apple.pbs.plist",
+"prog": "pbs",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.screensharing.liveactivityextra": {
+"dom": "Agents",
+"file": "com.apple.screensharing.liveactivityextra.plist",
+"prog": "ScreenSharingLiveActivityAgent",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.AddressBook.SourceSync": {
+"dom": "Agents",
+"file": "com.apple.AddressBook.SourceSync.plist",
+"prog": "AddressBookSourceSync",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.followupd": {
+"dom": "Agents",
+"file": "com.apple.followupd.plist",
+"prog": "followupd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.assistantd": {
+"dom": "Agents",
+"file": "com.apple.assistantd.plist",
+"prog": "assistantd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.accessibility.LiveTranscriptionAgent": {
+"dom": "Agents",
+"file": "com.apple.accessibility.LiveTranscriptionAgent.plist",
+"prog": "Live Captions",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.ReportCrash": {
+"dom": "Agents",
+"file": "com.apple.ReportCrash.plist",
+"prog": "ReportCrash",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.dataaccess.dataaccessd": {
+"dom": "Agents",
+"file": "com.apple.dataaccess.dataaccessd.plist",
+"prog": "dataaccessd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.cvmsCompAgent3600_x86_64_1": {
+"dom": "Agents",
+"file": "com.apple.cvmsCompAgent3600_x86_64_1.plist",
+"prog": "CVMCompiler",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.spotlightknowledged.importer": {
+"dom": "Agents",
+"file": "com.apple.spotlightknowledged.importer.plist",
+"prog": "spotlightknowledged.importer",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.IOUIAgent": {
+"dom": "Agents",
+"file": "com.apple.IOUIAgent.plist",
+"prog": "IOUIAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.synapse.contentlinkingd": {
+"dom": "Agents",
+"file": "com.apple.synapse.contentlinkingd.plist",
+"prog": "contentlinkingd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.amsengagementd": {
+"dom": "Agents",
+"file": "com.apple.amsengagementd.plist",
+"prog": "amsengagementd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.corespotlightd": {
+"dom": "Agents",
+"file": "com.apple.corespotlightd.plist",
+"prog": "corespotlightd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.appleaccounttransparencyd": {
+"dom": "Agents",
+"file": "com.apple.appleaccounttransparencyd.plist",
+"prog": "appleaccounttransparencyd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.ManagedClientAgent.enrollagent": {
+"dom": "Agents",
+"file": "com.apple.ManagedClientAgent.enrollagent.plist",
+"prog": "ManagedClientAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mobilerepaird": {
+"dom": "Agents",
+"file": "com.apple.mobilerepaird.plist",
+"prog": "mobilerepaird",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.icloud.findmydeviced.findmydevice-user-agent": {
+"dom": "Agents",
+"file": "com.apple.icloud.findmydeviced.findmydevice-user-agent.plist",
+"prog": "findmydevice-user-agent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.RapportUIAgent": {
+"dom": "Agents",
+"file": "com.apple.RapportUIAgent.plist",
+"prog": "RapportUIAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.coreidvd": {
+"dom": "Agents",
+"file": "com.apple.coreidvd.plist",
+"prog": "coreidvd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.pboard": {
+"dom": "Agents",
+"file": "com.apple.pboard.plist",
+"prog": "pboard",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.alf.useragent": {
+"dom": "Agents",
+"file": "com.apple.alf.useragent.plist",
+"prog": "Firewall",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.MobileAccessoryUpdater.fudHelperAgent": {
+"dom": "Agents",
+"file": "com.apple.MobileAccessoryUpdater.fudHelperAgent.plist",
+"prog": "fudHelperAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.installd.user": {
+"dom": "Agents",
+"file": "com.apple.installd.user.plist",
+"prog": "installd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.metadata.mdwrite": {
+"dom": "Agents",
+"file": "com.apple.metadata.mdwrite.plist",
+"prog": "mdwrite",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.thermaltrap": {
+"dom": "Agents",
+"file": "com.apple.thermaltrap.plist",
+"prog": "ThermalTrap",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.ServicesUIAgent": {
+"dom": "Agents",
+"file": "com.apple.ServicesUIAgent.plist",
+"prog": "ServicesUIAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.AssistiveControl": {
+"dom": "Agents",
+"file": "com.apple.AssistiveControl.plist",
+"prog": "Assistive Control",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.photoanalysisd": {
+"dom": "Agents",
+"file": "com.apple.photoanalysisd.plist",
+"prog": "photoanalysisd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.cmio.LaunchCMIOUserExtensionsAgent": {
+"dom": "Agents",
+"file": "com.apple.cmio.LaunchCMIOUserExtensionsAgent.plist",
+"prog": "true",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mdworker.single.x86_64": {
+"dom": "Agents",
+"file": "com.apple.mdworker.single.x86_64.plist",
+"prog": "mdworker",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.applespell": {
+"dom": "Agents",
+"file": "com.apple.applespell.plist",
+"prog": "AppleSpell",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.symptomsd-diag.agent": {
+"dom": "Agents",
+"file": "com.apple.symptomsd-diag.plist",
+"prog": "symptomsd-diag",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mediaanalysisd": {
+"dom": "Agents",
+"file": "com.apple.mediaanalysisd.plist",
+"prog": "mediaanalysisd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.controlstrip": {
+"dom": "Agents",
+"file": "com.apple.controlstrip.plist",
+"prog": "ControlStrip",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.cvmsCompAgent3600_arm64": {
+"dom": "Agents",
+"file": "com.apple.cvmsCompAgent3600_arm64.plist",
+"prog": "CVMCompiler",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.mbbackgrounduseragent": {
+"dom": "Agents",
+"file": "com.apple.mbbackgrounduseragent.plist",
+"prog": "mbbackgrounduseragent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Background"
+],
+"dis": null
+},
+"com.apple.coreservices.UASharedPasteboardProgressUI": {
+"dom": "Agents",
+"file": "com.apple.coreservices.UASharedPasteboardProgressUI.plist",
+"prog": "UASharedPasteboardProgressUI",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.homed": {
+"dom": "Agents",
+"file": "com.apple.homed.plist",
+"prog": "homed",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.diskspaced": {
+"dom": "Agents",
+"file": "com.apple.diskspaced.plist",
+"prog": "diskspaced",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.PIPAgent": {
+"dom": "Agents",
+"file": "com.apple.PIPAgent.plist",
+"prog": "PIPAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.controlcenter": {
+"dom": "Agents",
+"file": "com.apple.controlcenter.plist",
+"prog": "ControlCenter",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.AccessibilityVisualsAgent": {
+"dom": "Agents",
+"file": "com.apple.AccessibilityVisualsAgent.plist",
+"prog": "AccessibilityVisualsAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.identityservicesd": {
+"dom": "Agents",
+"file": "com.apple.identityservicesd.plist",
+"prog": "identityservicesd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.knowledge-agent": {
+"dom": "Agents",
+"file": "com.apple.knowledge-agent.plist",
+"prog": "knowledge-agent",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.remotecompositorclientd": {
+"dom": "Agents",
+"file": "com.apple.remotecompositorclientd.plist",
+"prog": "remotecompositorclientd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.enhancedloggingd": {
+"dom": "Agents",
+"file": "com.apple.enhancedloggingd.plist",
+"prog": "enhancedloggingd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.textcontextd": {
+"dom": "Agents",
+"file": "com.apple.Archetype.textcontextd.plist",
+"prog": "textcontextd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.asktod": {
+"dom": "Agents",
+"file": "com.apple.asktod.plist",
+"prog": "asktod",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.speechmaintenanced": {
+"dom": "Agents",
+"file": "com.apple.speechmaintenanced.plist",
+"prog": "speechmaintenanced",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.peopled": {
+"dom": "Agents",
+"file": "com.apple.peopled.plist",
+"prog": "peopled",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.findmy.findmylocateagent": {
+"dom": "Agents",
+"file": "com.apple.findmy.findmylocateagent.plist",
+"prog": "findmylocateagent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.trustd.agent": {
+"dom": "Agents",
+"file": "com.apple.trustd.agent.plist",
+"prog": "trustd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua",
+"Background",
+"CryptexContainer",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.siriknowledged": {
+"dom": "Agents",
+"file": "com.apple.siriknowledged.plist",
+"prog": "siriknowledged",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.assessmentagent": {
+"dom": "Agents",
+"file": "com.apple.assessmentagent.plist",
+"prog": "assessmentagent",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.mediacontinuityd": {
+"dom": "Agents",
+"file": "com.apple.mediacontinuityd.plist",
+"prog": "mediacontinuityd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.itunescloudd": {
+"dom": "Agents",
+"file": "com.apple.itunescloudd.plist",
+"prog": "itunescloudd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.systemprofiler": {
+"dom": "Agents",
+"file": "com.apple.systemprofiler.plist",
+"prog": "System Information",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.TMHelperAgent": {
+"dom": "Agents",
+"file": "com.apple.TMHelperAgent.plist",
+"prog": "TMHelperAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.callhistoryd": {
+"dom": "Agents",
+"file": "com.apple.callhistoryd.plist",
+"prog": "callhistoryd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.BTServer.le.agent": {
+"dom": "Agents",
+"file": "com.apple.BTServerAgent.le.plist",
+"prog": "BTLEServerAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.screensharing.MessagesAgent": {
+"dom": "Agents",
+"file": "com.apple.screensharing.MessagesAgent.plist",
+"prog": "AppleVNCServer",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.storekitagent": {
+"dom": "Agents",
+"file": "com.apple.storekitagent.plist",
+"prog": "storekitagent",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.MTLAssetUpgraderD": {
+"dom": "Agents",
+"file": "com.apple.MTLAssetUpgraderD.plist",
+"prog": "MTLAssetUpgraderD",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.intelligenceflowd": {
+"dom": "Agents",
+"file": "com.apple.intelligenceflowd.plist",
+"prog": "intelligenceflowd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": {
+"#Else": true,
+"#IfFeatureFlagEnabled": "IntelligenceFlow/IntelligenceFlow",
+"#Then": false
+}
+},
+"com.apple.netauth.user.gui": {
+"dom": "Agents",
+"file": "com.apple.netauth.user.gui.plist",
+"prog": "NetAuthAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.GameController.gamecontrolleragentd": {
+"dom": "Agents",
+"file": "com.apple.GameController.gamecontrolleragentd.plist",
+"prog": "gamecontrolleragentd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ScriptMenuApp": {
+"dom": "Agents",
+"file": "com.apple.ScriptMenuApp.plist",
+"prog": "Script Menu",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.siriactionsd": {
+"dom": "Agents",
+"file": "com.apple.siriactionsd.plist",
+"prog": "siriactionsd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.screensharing.menuextra": {
+"dom": "Agents",
+"file": "com.apple.screensharing.menuextra.plist",
+"prog": "SSMenuAgent",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.lockoutagent": {
+"dom": "Agents",
+"file": "com.apple.lockoutagent.plist",
+"prog": "lockoutagent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.devicemanagementclient.alertagent": {
+"dom": "Agents",
+"file": "com.apple.devicemanagementclient.alertagent.plist",
+"prog": "LaunchPolicyAlertAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.voicememod": {
+"dom": "Agents",
+"file": "com.apple.voicememod.plist",
+"prog": "voicememod",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.coreservices.uiagent": {
+"dom": "Agents",
+"file": "com.apple.coreservices.uiagent.plist",
+"prog": "CoreServicesUIAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.replicatord": {
+"dom": "Agents",
+"file": "com.apple.replicatord.plist",
+"prog": "replicatord",
+"da": null,
+"ral": false,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.appleidsetupd": {
+"dom": "Agents",
+"file": "com.apple.appleidsetupd.plist",
+"prog": "appleidsetupd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.sidecar-display-agent": {
+"dom": "Agents",
+"file": "com.apple.sidecar-hid-relay.plist",
+"prog": "SidecarDisplayAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.wifi.WiFiAgent": {
+"dom": "Agents",
+"file": "com.apple.wifi.WiFiAgent.plist",
+"prog": "WiFiAgent",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.telephonyutilities.callservicesd": {
+"dom": "Agents",
+"file": "com.apple.telephonyutilities.callservicesd.plist",
+"prog": "callservicesd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.diagnostics_agent": {
+"dom": "Agents",
+"file": "com.apple.diagnostics_agent.plist",
+"prog": "diagnostics_agent",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.siriinferenced": {
+"dom": "Agents",
+"file": "com.apple.siriinferenced.plist",
+"prog": "siriinferenced",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.intelligencecontextd": {
+"dom": "Agents",
+"file": "com.apple.intelligencecontextd.plist",
+"prog": "intelligencecontextd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.corepersonalizationd": {
+"dom": "Agents",
+"file": "com.apple.corepersonalizationd.plist",
+"prog": "corepersonalizationd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": {
+"#Else": true,
+"#IfFeatureFlagEnabled": "CorePersonalization/CorePersonalizationDaemon",
+"#Then": false
+}
+},
+"com.apple.storeuid": {
+"dom": "Agents",
+"file": "com.apple.storeuid.plist",
+"prog": "storeuid",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.distnoted.xpc.agent": {
+"dom": "Agents",
+"file": "com.apple.distnoted.xpc.agent.plist",
+"prog": "distnoted",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.imcore.imtransferagent": {
+"dom": "Agents",
+"file": "com.apple.imtransferagent.plist",
+"prog": "IMTransferAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.navd": {
+"dom": "Agents",
+"file": "com.apple.navd.plist",
+"prog": "navd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.visualintelligenced": {
+"dom": "Agents",
+"file": "com.apple.visualintelligenced.plist",
+"prog": "visualintelligenced",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": {
+"#IfFeatureFlagDisabled": "Tamale/DaemonEnabled",
+"#Then": true
+}
+},
+"com.apple.mobiletimerd": {
+"dom": "Agents",
+"file": "com.apple.mobiletimerd.plist",
+"prog": "mobiletimerd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.storedownloadd": {
+"dom": "Agents",
+"file": "com.apple.storedownloadd.plist",
+"prog": "storedownloadd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.campo": {
+"dom": "Agents",
+"file": "com.apple.campo.plist",
+"prog": "Siri AI",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": {
+"#IfFeatureFlagDisabled": "IntelligenceFlow/Campo",
+"#Then": true
+}
+},
+"com.apple.warmd_agent": {
+"dom": "Agents",
+"file": "com.apple.warmd_agent.plist",
+"prog": "warmd_agent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.ScreenReaderUIServer": {
+"dom": "Agents",
+"file": "com.apple.ScreenReaderUIServer.plist",
+"prog": "ScreenReaderUIServer",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.UserNotificationCenterAgent-LoginWindow": {
+"dom": "Agents",
+"file": "com.apple.UserNotificationCenterAgent-LoginWindow.plist",
+"prog": "UserNotificationCenter",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": "LoginWindow",
+"dis": null
+},
+"com.apple.talagent": {
+"dom": "Agents",
+"file": "com.apple.talagent.plist",
+"prog": "talagentd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.MenuBarAgent": {
+"dom": "Agents",
+"file": "com.apple.MenuBarAgent.plist",
+"prog": "MenuBarAgent",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": {
+"#IfFeatureFlagDisabled": "MenuBar/MenuBarQFA",
+"#Then": true
+}
+},
+"com.apple.languageassetd": {
+"dom": "Agents",
+"file": "com.apple.languageassetd.plist",
+"prog": "languageassetd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.transparencyd": {
+"dom": "Agents",
+"file": "com.apple.transparencyd.plist",
+"prog": "transparencyd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.intelligenceplatformd": {
+"dom": "Agents",
+"file": "com.apple.intelligenceplatformd.plist",
+"prog": "intelligenceplatformd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.secd": {
+"dom": "Agents",
+"file": "com.apple.secd.plist",
+"prog": "secd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Background",
+"CryptexContainer"
+],
+"dis": null
+},
+"com.apple.usernoted": {
+"dom": "Agents",
+"file": "com.apple.usernoted.plist",
+"prog": "usernoted",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.protectedcloudstorage.protectedcloudkeysyncing": {
+"dom": "Agents",
+"file": "com.apple.protectedcloudstorage.protectedcloudkeysyncing.plist",
+"prog": "ProtectedCloudKeySyncing",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.mlhostd": {
+"dom": "Agents",
+"file": "com.apple.mlhostd.plist",
+"prog": "mlhostd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.tipsd": {
+"dom": "Agents",
+"file": "com.apple.tipsd.plist",
+"prog": "tipsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.intelligencetasksd": {
+"dom": "Agents",
+"file": "com.apple.intelligencetasksd.plist",
+"prog": "intelligencetasksd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.keyboardservicesd": {
+"dom": "Agents",
+"file": "com.apple.keyboardservicesd.plist",
+"prog": "keyboardservicesd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.coredatad": {
+"dom": "Agents",
+"file": "com.apple.coredatad.plist",
+"prog": "coredatad",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.voicebankingd": {
+"dom": "Agents",
+"file": "com.apple.voicebankingd.plist",
+"prog": "voicebankingd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.toolkitd": {
+"dom": "Agents",
+"file": "com.apple.toolkitd.plist",
+"prog": "toolkitd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.cfprefsd.xpc.agent": {
+"dom": "Agents",
+"file": "com.apple.cfprefsd.xpc.agent.plist",
+"prog": "cfprefsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.wallpaper.agent": {
+"dom": "Agents",
+"file": "com.apple.wallpaper.plist",
+"prog": "WallpaperAgent",
+"da": null,
+"ral": false,
+"ka": true,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.imklaunchagent": {
+"dom": "Agents",
+"file": "com.apple.imklaunchagent.plist",
+"prog": "imklaunchagent",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.cvmsCompAgent_arm64_1": {
+"dom": "Agents",
+"file": "com.apple.cvmsCompAgent_arm64_1.plist",
+"prog": "CVMCompiler",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.sirittsd": {
+"dom": "Agents",
+"file": "com.apple.sirittsd.plist",
+"prog": "sirittsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.contacts.postersyncd": {
+"dom": "Agents",
+"file": "com.apple.contacts.postersyncd.plist",
+"prog": "postersyncd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.idsfoundation.IDSRemoteURLConnectionAgent": {
+"dom": "Agents",
+"file": "com.apple.idsremoteurlconnectionagent.plist",
+"prog": "IDSRemoteURLConnectionAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.calaccessd": {
+"dom": "Agents",
+"file": "com.apple.calaccessd.plist",
+"prog": "calaccessd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.security.KeychainStasher": {
+"dom": "Agents",
+"file": "com.apple.security.KeychainStasher.plist",
+"prog": "KeychainStasher",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.uarppersonalizationd": {
+"dom": "Agents",
+"file": "com.apple.uarppersonalizationd.plist",
+"prog": "uarppersonalizationd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.hybridsearchd": {
+"dom": "Agents",
+"file": "com.apple.hybridsearchd.plist",
+"prog": "hybridsearchd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": {
+"#Else": false,
+"#IfFeatureFlagDisabled": "GenerativeLearningPlatform/PlatformDaemons",
+"#Then": {
+"#Else": false,
+"#IfFeatureFlagDisabled": "GenerativeLearningPlatform/ObservationIndexing",
+"#Then": {
+"#Else": false,
+"#IfFeatureFlagDisabled": "GenerativeLearningPlatform/MailIndexing",
+"#Then": true
+}
+}
+}
+},
+"com.apple.FontRegistryUIAgent": {
+"dom": "Agents",
+"file": "com.apple.FontRegistryUIAgent.plist",
+"prog": "FontRegistryUIAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.webprivacyd": {
+"dom": "Agents",
+"file": "com.apple.webprivacyd.plist",
+"prog": "webprivacyd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mediaremoteagent": {
+"dom": "Agents",
+"file": "com.apple.mediaremoteagent.plist",
+"prog": "mediaremoteagent",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.accountsd": {
+"dom": "Agents",
+"file": "com.apple.accountsd.plist",
+"prog": "accountsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.accessibility.heard": {
+"dom": "Agents",
+"file": "com.apple.accessibility.heard.plist",
+"prog": "heard",
+"da": null,
+"ral": false,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.AirPlayReceiverLaunchAgent": {
+"dom": "Agents",
+"file": "com.apple.AirPlayReceiverLaunchAgent.plist",
+"prog": "AirPlay Receiver",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": "Aqua",
+"dis": {
+"#IfFeatureFlagDisabled": "AirPlay/AirPlayReceiverMacApp",
+"#Then": true
+}
+},
+"com.apple.translationd": {
+"dom": "Agents",
+"file": "com.apple.translationd.plist",
+"prog": "translationd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.swtransparencyd": {
+"dom": "Agents",
+"file": "com.apple.swtransparencyd.plist",
+"prog": "swtransparencyd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.liveactivitiesd": {
+"dom": "Agents",
+"file": "com.apple.liveactivitiesd.plist",
+"prog": "liveactivitiesd",
+"da": null,
+"ral": false,
+"ka": true,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.AquaAppearanceHelper": {
+"dom": "Agents",
+"file": "com.apple.AquaAppearanceHelper.agent.plist",
+"prog": "AquaAppearanceHelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.progressd": {
+"dom": "Agents",
+"file": "com.apple.progressd.plist",
+"prog": "progressd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.quicklook": {
+"dom": "Agents",
+"file": "com.apple.quicklook.plist",
+"prog": "quicklookd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.SpacesTouchBarAgent.app": {
+"dom": "Agents",
+"file": "com.apple.SpacesTouchBarAgent.plist",
+"prog": "SpacesTouchBarAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.neagent": {
+"dom": "Agents",
+"file": "com.apple.neagent.plist",
+"prog": "neagent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.GamePolicyAgent": {
+"dom": "Agents",
+"file": "com.apple.GamePolicyAgent.plist",
+"prog": "GamePolicyAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.BiomeAgent": {
+"dom": "Agents",
+"file": "com.apple.BiomeAgent.plist",
+"prog": "BiomeAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.accessibility.AXVisualSupportAgent": {
+"dom": "Agents",
+"file": "com.apple.accessibility.AXVisualSupportAgent.plist",
+"prog": "AXVisualSupportAgent",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.spotlightknowledged": {
+"dom": "Agents",
+"file": "com.apple.spotlightknowledged.plist",
+"prog": "spotlightknowledged",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ManagedSettingsAgent": {
+"dom": "Agents",
+"file": "com.apple.ManagedSettingsAgent.plist",
+"prog": "ManagedSettingsAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.dt.previewsviewservice": {
+"dom": "Agents",
+"file": "com.apple.dt.previewsviewservice.plist",
+"prog": "PreviewShellMac",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.backgroundtaskmanagement.agent": {
+"dom": "Agents",
+"file": "com.apple.backgroundtaskmanagement.agent.plist",
+"prog": "BackgroundTaskManagementAgent",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.FamilyControlsAgent": {
+"dom": "Agents",
+"file": "com.apple.FamilyControlsAgent.plist",
+"prog": "FamilyControlsAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.bookdatastored": {
+"dom": "Agents",
+"file": "com.apple.bookdatastored.plist",
+"prog": "bookdatastored",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.VoiceOver": {
+"dom": "Agents",
+"file": "com.apple.VoiceOver.plist",
+"prog": "VoiceOver",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.messagesescrowd": {
+"dom": "Agents",
+"file": "com.apple.messagesescrowd.plist",
+"prog": "messagesescrowd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.PackageUIKit.InstallStatus": {
+"dom": "Agents",
+"file": "com.apple.PackageUIKit.InstallStatus.plist",
+"prog": "Install in Progress",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.weatherd": {
+"dom": "Agents",
+"file": "com.apple.weatherd.plist",
+"prog": "weatherd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mbfloagent": {
+"dom": "Agents",
+"file": "com.apple.mbfloagent.plist",
+"prog": "mbfloagent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.frauddefensed": {
+"dom": "Agents",
+"file": "com.apple.frauddefensed.plist",
+"prog": "frauddefensed",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.DwellControl": {
+"dom": "Agents",
+"file": "com.apple.DwellControl.plist",
+"prog": "Dwell Control",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.SoftwareUpdateNotificationManager": {
+"dom": "Agents",
+"file": "com.apple.SoftwareUpdateNotificationManager.plist",
+"prog": "SoftwareUpdateNotificationManager",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.remindd": {
+"dom": "Agents",
+"file": "com.apple.remindd.plist",
+"prog": "remindd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.privatecloudcomputed": {
+"dom": "Agents",
+"file": "com.apple.privatecloudcomputed.plist",
+"prog": "privatecloudcomputed",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.biomesyncd": {
+"dom": "Agents",
+"file": "com.apple.biomesyncd.plist",
+"prog": "biomesyncd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.MemorySlotNotification": {
+"dom": "Agents",
+"file": "com.apple.MemorySlotNotification.plist",
+"prog": "MemorySlotNotification",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.AddressBook.abd": {
+"dom": "Agents",
+"file": "com.apple.AddressBook.abd.plist",
+"prog": "AddressBookManager",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.devicemanagementclient.ManagedAppsAgent": {
+"dom": "Agents",
+"file": "com.apple.devicemanagementclient.ManagedAppsAgent.plist",
+"prog": "managedappsd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.csuseragent": {
+"dom": "Agents",
+"file": "com.apple.csuseragent.plist",
+"prog": "CSUserAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.STMUIHelper": {
+"dom": "Agents",
+"file": "com.apple.StorageManagementUIHelper.plist",
+"prog": "STMUIHelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.spotlightknowledged.updater": {
+"dom": "Agents",
+"file": "com.apple.spotlightknowledged.updater.plist",
+"prog": "spotlightknowledged.updater",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.textcomposerd": {
+"dom": "Agents",
+"file": "com.apple.textcomposerd.plist",
+"prog": "textcomposerd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.studentd": {
+"dom": "Agents",
+"file": "com.apple.macos.studentd.plist",
+"prog": "studentd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.cache_delete": {
+"dom": "Agents",
+"file": "com.apple.cache_delete.plist",
+"prog": "deleted",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.usermanagerhelper": {
+"dom": "Agents",
+"file": "com.apple.usermanagerhelper.plist",
+"prog": "usermanagerhelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.proactived": {
+"dom": "Agents",
+"file": "com.apple.proactived.plist",
+"prog": "proactived",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.menuextra.battery.helper": {
+"dom": "Agents",
+"file": "com.apple.menuextra.battery.helper.plist",
+"prog": "bmehelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.seserviced": {
+"dom": "Agents",
+"file": "com.apple.seserviced.plist",
+"prog": "seserviced",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.bookassetd": {
+"dom": "Agents",
+"file": "com.apple.bookassetd.plist",
+"prog": "bookassetd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.EscrowSecurityAlert": {
+"dom": "Agents",
+"file": "com.apple.EscrowSecurityAlert.plist",
+"prog": "EscrowSecurityAlert",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.amp.mediasharingd": {
+"dom": "Agents",
+"file": "com.apple.amp.mediasharingd.plist",
+"prog": "mediasharingd",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.notes.exchangenotesd": {
+"dom": "Agents",
+"file": "com.apple.notes.exchangenotesd.plist",
+"prog": "exchangenotesd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.cloudsettingssyncagent": {
+"dom": "Agents",
+"file": "com.apple.CloudSettingsSyncAgent.plist",
+"prog": "CloudSettingsSyncAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.FilesystemUI": {
+"dom": "Agents",
+"file": "com.apple.FilesystemUI.plist",
+"prog": "FileSystemUIAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.AirPlayUIAgent": {
+"dom": "Agents",
+"file": "com.apple.AirPlayUIAgent.plist",
+"prog": "AirPlayUIAgent",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.cvmsCompAgent_x86_64": {
+"dom": "Agents",
+"file": "com.apple.cvmsCompAgent_x86_64.plist",
+"prog": "CVMCompiler",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.PlatformSSOUIAgent": {
+"dom": "Agents",
+"file": "com.apple.PlatformSSOUIAgent.plist",
+"prog": "PlatformSSOUIAgent",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.cmfsyncagent": {
+"dom": "Agents",
+"file": "com.apple.cmfsyncagent.plist",
+"prog": "CMFSyncAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.Siri.agent": {
+"dom": "Agents",
+"file": "com.apple.Siri.agent.plist",
+"prog": "Siri",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": false
+},
+"com.apple.mdmclient.agent": {
+"dom": "Agents",
+"file": "com.apple.mdmclient.agent.plist",
+"prog": "mdmclient",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.MENotificationService": {
+"dom": "Agents",
+"file": "com.apple.MENotificationAgent.plist",
+"prog": "MENotificationAgent",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.CallHistoryPluginHelper": {
+"dom": "Agents",
+"file": "com.apple.CallHistoryPluginHelper.plist",
+"prog": "CallHistoryPluginHelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.familycontrols.useragent": {
+"dom": "Agents",
+"file": "com.apple.familycontrols.useragent.plist",
+"prog": "ParentalControls",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.CoreLocationAgent": {
+"dom": "Agents",
+"file": "com.apple.CoreLocationAgent.plist",
+"prog": "CoreLocationAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.xtyped": {
+"dom": "Agents",
+"file": "com.apple.fontd.useragent.plist",
+"prog": "fontd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua",
+"CryptexContainer"
+],
+"dis": null
+},
+"com.apple.cksharingmanagementd": {
+"dom": "Agents",
+"file": "com.apple.cksharingmanagementd.plist",
+"prog": "cksharingmanagementd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.cvmsCompAgent3600_arm64_1": {
+"dom": "Agents",
+"file": "com.apple.cvmsCompAgent3600_arm64_1.plist",
+"prog": "CVMCompiler",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.gputoolsserviced": {
+"dom": "Agents",
+"file": "com.apple.gputoolsserviced.plist",
+"prog": "gputoolsserviced",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.textunderstandingd": {
+"dom": "Agents",
+"file": "com.apple.textunderstandingd.plist",
+"prog": "textunderstandingd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.filederivatived": {
+"dom": "Agents",
+"file": "com.apple.filederivatived.plist",
+"prog": "filederivatived",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Background",
+"Aqua"
+],
+"dis": {
+"#IfFeatureFlagEnabled": "FileDerivativeService/Daemon",
+"#Then": false,
+"#Else": true
+}
+},
+"com.apple.remotespatialpreviewd": {
+"dom": "Agents",
+"file": "com.apple.remotespatialpreviewd.plist",
+"prog": "spatialpreviewd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.businessservicesd": {
+"dom": "Agents",
+"file": "com.apple.businessservicesd.plist",
+"prog": "businessservicesd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.askpermissiond": {
+"dom": "Agents",
+"file": "com.apple.askpermissiond.plist",
+"prog": "askpermissiond",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.facetimemessagestored": {
+"dom": "Agents",
+"file": "com.apple.facetimemessagestored.plist",
+"prog": "facetimemessagestored",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.naturallanguaged": {
+"dom": "Agents",
+"file": "com.apple.naturallanguaged.plist",
+"prog": "naturallanguaged",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.dt.previewsd": {
+"dom": "Agents",
+"file": "com.apple.dt.previewsd.plist",
+"prog": "previewsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.metrickitd": {
+"dom": "Agents",
+"file": "com.apple.metrickitd.plist",
+"prog": "metrickitd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.pluginkit.pkd": {
+"dom": "Agents",
+"file": "com.apple.pluginkit.pkd.plist",
+"prog": "pkd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Background",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.CallHistorySyncHelper": {
+"dom": "Agents",
+"file": "com.apple.CallHistorySyncHelper.plist",
+"prog": "CallHistorySyncHelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.tccd": {
+"dom": "Agents",
+"file": "com.apple.tccd.plist",
+"prog": "tccd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.proactiveeventtrackerd": {
+"dom": "Agents",
+"file": "com.apple.proactiveeventtrackerd.plist",
+"prog": "proactiveeventtrackerd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.corespotlightservice": {
+"dom": "Agents",
+"file": "com.apple.corespotlightservice.plist",
+"prog": "CoreSpotlightService",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ecosystemagent": {
+"dom": "Agents",
+"file": "com.apple.ecosystemagent.plist",
+"prog": "ecosystemagent",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.accessoryaccess.uiagent": {
+"dom": "Agents",
+"file": "com.apple.accessoryaccess.uiagent.plist",
+"prog": "Virtual Machine Accessories",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.backgroundassets.user": {
+"dom": "Agents",
+"file": "com.apple.backgroundassets.user.plist",
+"prog": "backgroundassets.user",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.SiriTTSTrainingAgent": {
+"dom": "Agents",
+"file": "com.apple.SiriTTSTrainingAgent.plist",
+"prog": "SiriTTSTrainingAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.icdd": {
+"dom": "Agents",
+"file": "com.apple.icdd.plist",
+"prog": "icdd",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": false
+},
+"com.apple.appplaceholdersyncd": {
+"dom": "Agents",
+"file": "com.apple.appplaceholdersyncd.plist",
+"prog": "appplaceholdersyncd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.usbnotificationagent": {
+"dom": "Agents",
+"file": "com.apple.usbnotificationagent.plist",
+"prog": "usbnotificationagent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.locationaccessstored": {
+"dom": "Agents",
+"file": "com.apple.locationaccessstored.plist",
+"prog": "locationaccessstored",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.timezoneupdates.tznotify": {
+"dom": "Agents",
+"file": "com.apple.timezoneupdates.tznotify.plist",
+"prog": "tznotify",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.UserPictureSyncAgent": {
+"dom": "Agents",
+"file": "com.apple.UserPictureSyncAgent.plist",
+"prog": "UserPictureSyncAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.DiskArbitrationAgent": {
+"dom": "Agents",
+"file": "com.apple.DiskArbitrationAgent.plist",
+"prog": "DiskArbitrationAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.syncservices.uihandler": {
+"dom": "Agents",
+"file": "com.apple.syncservices.uihandler.plist",
+"prog": "syncuid",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.mdworker.sizing": {
+"dom": "Agents",
+"file": "com.apple.mdworker.sizing.plist",
+"prog": "mdworker",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.SecureBackupDaemon": {
+"dom": "Agents",
+"file": "com.apple.SecureBackupDaemon.plist",
+"prog": "com.apple.sbd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ScreenTimeSettingsAgent": {
+"dom": "Agents",
+"file": "com.apple.ScreenTimeSettingsAgent.plist",
+"prog": "ScreenTimeSettingsAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.routined": {
+"dom": "Agents",
+"file": "com.apple.routined.plist",
+"prog": "routined",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.maps.destinationd": {
+"dom": "Agents",
+"file": "com.apple.maps.destinationd.plist",
+"prog": "destinationd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.Spotlight": {
+"dom": "Agents",
+"file": "com.apple.Spotlight.plist",
+"prog": "Spotlight",
+"da": null,
+"ral": false,
+"ka": true,
+"lsc": null,
+"dis": {
+"#IfFeatureFlagEnabled": "IntelligenceFlow/Campo",
+"#Then": true,
+"#Else": false
+}
+},
+"com.apple.OSDUIHelper": {
+"dom": "Agents",
+"file": "com.apple.OSDUIHelper.plist",
+"prog": "OSDUIHelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.FileProvider": {
+"dom": "Agents",
+"file": "com.apple.FileProvider.plist",
+"prog": "fileproviderd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.preference.displays.MirrorDisplays": {
+"dom": "Agents",
+"file": "com.apple.preference.displays.MirrorDisplays.plist",
+"prog": "MirrorDisplays",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.appleseed.seedusaged": {
+"dom": "Agents",
+"file": "com.apple.appleseed.seedusaged.plist",
+"prog": "seedusaged",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.security.agent": {
+"dom": "Agents",
+"file": "com.apple.security.agent.plist",
+"prog": "SecurityAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.email.maild": {
+"dom": "Agents",
+"file": "com.apple.email.maild.plist",
+"prog": "maild",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.calendar.CalendarAgentBookmarkMigrationService": {
+"dom": "Agents",
+"file": "com.apple.calendar.CalendarAgentBookmarkMigrationService.plist",
+"prog": "CalendarAgentBookmarkMigrationService",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mediastream.mstreamd": {
+"dom": "Agents",
+"file": "com.apple.mediastream.mstreamd.plist",
+"prog": "mstreamd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.controlcenter.PreloginSystemBannerRenderer": {
+"dom": "Agents",
+"file": "com.apple.controlcenter.PreloginSystemBannerRenderer.plist",
+"prog": "PreloginSystemBannerRenderer",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": [
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.DiagnosticsReporter": {
+"dom": "Agents",
+"file": "com.apple.DiagnosticsReporter.plist",
+"prog": "Diagnostics Reporter",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.diagnosticextensionsd": {
+"dom": "Agents",
+"file": "com.apple.diagnosticextensionsd.plist",
+"prog": "diagnosticextensionsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.parsecd": {
+"dom": "Agents",
+"file": "com.apple.parsecd.plist",
+"prog": "parsecd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.btsa": {
+"dom": "Agents",
+"file": "com.apple.btsa.plist",
+"prog": "BluetoothSetupAssistant",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.helpd": {
+"dom": "Agents",
+"file": "com.apple.helpd.plist",
+"prog": "helpd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.AMPDeviceDiscoveryAgent": {
+"dom": "Agents",
+"file": "com.apple.AMPDeviceDiscoveryAgent.plist",
+"prog": "AMPDeviceDiscoveryAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.networkserviceproxy": {
+"dom": "Agents",
+"file": "com.apple.networkserviceproxy-osx.plist",
+"prog": "networkserviceproxy",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.managedcorespotlightd": {
+"dom": "Agents",
+"file": "com.apple.managedcorespotlightd.plist",
+"prog": "managedcorespotlightd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.UserEventAgent-Aqua": {
+"dom": "Agents",
+"file": "com.apple.UserEventAgent-Aqua.plist",
+"prog": "UserEventAgent",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.iCloudNotificationAgent": {
+"dom": "Agents",
+"file": "com.apple.iCloudNotificationAgent.plist",
+"prog": "iCloudNotificationAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.cloudphotod": {
+"dom": "Agents",
+"file": "com.apple.cloudphotod.plist",
+"prog": "cloudphotod",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.powerchime": {
+"dom": "Agents",
+"file": "com.apple.powerchime.plist",
+"prog": "PowerChime",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.AskPermissionUI": {
+"dom": "Agents",
+"file": "com.apple.AskPermissionUI.plist",
+"prog": "AskPermissionUI",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.videoconference.camera": {
+"dom": "Agents",
+"file": "com.apple.avconferenced.plist",
+"prog": "avconferenced",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ExpansionSlotNotification": {
+"dom": "Agents",
+"file": "com.apple.ExpansionSlotNotification.plist",
+"prog": "ExpansionSlotNotification",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.GenerativeFunctions.agentstored": {
+"dom": "Agents",
+"file": "com.apple.GenerativeFunctions.agentstored.plist",
+"prog": "agentstored",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.UsageTrackingAgent": {
+"dom": "Agents",
+"file": "com.apple.UsageTrackingAgent.plist",
+"prog": "UsageTrackingAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ndoagent": {
+"dom": "Agents",
+"file": "com.apple.ndoagent.plist",
+"prog": "ndoagent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.chronod": {
+"dom": "Agents",
+"file": "com.apple.chronod.plist",
+"prog": "chronod",
+"da": null,
+"ral": false,
+"ka": true,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.bluetoothUIServer": {
+"dom": "Agents",
+"file": "com.apple.bluetoothUIServer.plist",
+"prog": "BluetoothUIServer",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.universalaccessAuthWarn": {
+"dom": "Agents",
+"file": "com.apple.universalaccessAuthWarn.plist",
+"prog": "universalAccessAuthWarn",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.sensingpredictd": {
+"dom": "Agents",
+"file": "com.apple.sensingpredictd.plist",
+"prog": "sensingpredictd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.betaenrollmentagent": {
+"dom": "Agents",
+"file": "com.apple.betaenrollmentagent.plist",
+"prog": "betaenrollmentagent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.scopedbookmarksagent.xpc": {
+"dom": "Agents",
+"file": "com.apple.scopedbookmarkagent.xpc.plist",
+"prog": "ScopedBookmarkAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.newsd": {
+"dom": "Agents",
+"file": "com.apple.newsd.plist",
+"prog": "newsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.sharingd": {
+"dom": "Agents",
+"file": "com.apple.sharingd.plist",
+"prog": "sharingd",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.transparencyStaticKey": {
+"dom": "Agents",
+"file": "com.apple.transparencyStaticKey.plist",
+"prog": "transparencyStaticKey",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.amsaccountsd": {
+"dom": "Agents",
+"file": "com.apple.amsaccountsd.plist",
+"prog": "amsaccountsd",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.BTServer.cloudpairing": {
+"dom": "Agents",
+"file": "com.apple.cloudpaird.plist",
+"prog": "audioaccessoryd",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.cvmsCompAgent_x86_64_1": {
+"dom": "Agents",
+"file": "com.apple.cvmsCompAgent_x86_64_1.plist",
+"prog": "CVMCompiler",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.sysdiagnose_agent": {
+"dom": "Agents",
+"file": "com.apple.sysdiagnose_agent.plist",
+"prog": "sysdiagnose_helper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.StorageManagement.Service": {
+"dom": "Agents",
+"file": "com.apple.StorageManagement.Service.plist",
+"prog": "StorageManagementService",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.storelegacy": {
+"dom": "Agents",
+"file": "com.apple.storelegacy.plist",
+"prog": "storelegacy",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.contacts.donation-agent": {
+"dom": "Agents",
+"file": "com.apple.contacts.donation-agent.plist",
+"prog": "contactsdonationagent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.FeatureAccessAgent": {
+"dom": "Agents",
+"file": "com.apple.FeatureAccessAgent.plist",
+"prog": "FeatureAccessAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.agentmanagerd": {
+"dom": "Agents",
+"file": "com.apple.agentmanagerd.plist",
+"prog": "agentmanagerd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": {
+"#Else": false,
+"#IfFeatureFlagDisabled": "AgentManager/AgentManager",
+"#Then": true
+}
+},
+"com.apple.CryptoTokenKit.ahp.agent": {
+"dom": "Agents",
+"file": "com.apple.CryptoTokenKit.ahp.agent.plist",
+"prog": "ctkahp",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.AOSHeartbeat": {
+"dom": "Agents",
+"file": "com.apple.AOSHeartbeat.plist",
+"prog": "AOSHeartbeat",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.assistant_cdmd": {
+"dom": "Agents",
+"file": "com.apple.assistant_cdmd.plist",
+"prog": "assistant_cdmd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.gamed": {
+"dom": "Agents",
+"file": "com.apple.gamed.plist",
+"prog": "gamed",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.siriusergroundingd": {
+"dom": "Agents",
+"file": "com.apple.siriusergroundingd.plist",
+"prog": "siriusergroundingd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.loginwindow.LWWeeklyMessageTracer": {
+"dom": "Agents",
+"file": "com.apple.loginwindow.LWWeeklyMessageTracer.plist",
+"prog": "LWAnalytics",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.corespeechd": {
+"dom": "Agents",
+"file": "com.apple.corespeechd.plist",
+"prog": "corespeechd",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.ap.promotedcontentd": {
+"dom": "Agents",
+"file": "com.apple.ap.promotedcontentd.plist",
+"prog": "promotedcontentd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.UserEventAgent-LoginWindow": {
+"dom": "Agents",
+"file": "com.apple.UserEventAgent-LoginWindow.plist",
+"prog": "UserEventAgent",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": "LoginWindow",
+"dis": null
+},
+"com.apple.stickersd": {
+"dom": "Agents",
+"file": "com.apple.stickersd.plist",
+"prog": "stickersd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.cfnetwork.AuthBrokerAgent": {
+"dom": "Agents",
+"file": "com.apple.cfnetwork.AuthBrokerAgent.plist",
+"prog": "AuthBrokerAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.AppSSOAgent": {
+"dom": "Agents",
+"file": "com.apple.AppSSOAgent.plist",
+"prog": "AppSSOAgent",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.watchlistd": {
+"dom": "Agents",
+"file": "com.apple.watchlistd.plist",
+"prog": "watchlistd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.gamesaved": {
+"dom": "Agents",
+"file": "com.apple.gamesaved.plist",
+"prog": "gamesaved",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.managedappdistributionagent": {
+"dom": "Agents",
+"file": "com.apple.managedappdistributionagent.plist",
+"prog": "managedappdistributionagent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.donotdisturbd": {
+"dom": "Agents",
+"file": "com.apple.donotdisturbd.plist",
+"prog": "donotdisturbd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.keychainsharingmessagingd": {
+"dom": "Agents",
+"file": "com.apple.keychainsharingmessagingd.plist",
+"prog": "keychainsharingmessagingd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Background"
+],
+"dis": null
+},
+"com.apple.localizationswitcherd": {
+"dom": "Agents",
+"file": "com.apple.localizationswitcherd.plist",
+"prog": "localizationswitcherd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.jetpackassetd": {
+"dom": "Agents",
+"file": "com.apple.jetpackassetd.plist",
+"prog": "jetpackassetd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.cvmsCompAgent_arm64": {
+"dom": "Agents",
+"file": "com.apple.cvmsCompAgent_arm64.plist",
+"prog": "CVMCompiler",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.DataDetectorsLocalSources": {
+"dom": "Agents",
+"file": "com.apple.DataDetectorsLocalSources.plist",
+"prog": "DataDetectorsLocalSources",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.linkd": {
+"dom": "Agents",
+"file": "com.apple.linkd.plist",
+"prog": "linkd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.sidecar-relay": {
+"dom": "Agents",
+"file": "com.apple.sidecar-relay.plist",
+"prog": "SidecarRelay",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.FolderActionsDispatcher": {
+"dom": "Agents",
+"file": "com.apple.FolderActionsDispatcher.plist",
+"prog": "FolderActionsDispatcher",
+"da": null,
+"ral": true,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.cdpd": {
+"dom": "Agents",
+"file": "com.apple.cdpd.plist",
+"prog": "cdpd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.SystemUIServer.agent": {
+"dom": "Agents",
+"file": "com.apple.SystemUIServer.plist",
+"prog": "SystemUIServer",
+"da": null,
+"ral": false,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.accessorysensormgrd": {
+"dom": "Agents",
+"file": "com.apple.accessorysensormgrd.plist",
+"prog": "accessorysensormgrd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.commerce": {
+"dom": "Agents",
+"file": "com.apple.commerce.plist",
+"prog": "commerce",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.FollowUpUI": {
+"dom": "Agents",
+"file": "com.apple.FollowUpUI.plist",
+"prog": "FollowUpUI",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.ssinvitationagent": {
+"dom": "Agents",
+"file": "com.apple.SSInvitationAgent.plist",
+"prog": "SSInvitationAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.tvremoted": {
+"dom": "Agents",
+"file": "com.apple.tvremoted.plist",
+"prog": "tvremoted",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.rcd": {
+"dom": "Agents",
+"file": "com.apple.rcd.plist",
+"prog": "rcd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.installerauthagent": {
+"dom": "Agents",
+"file": "com.apple.installerauthagent.plist",
+"prog": "installerauthagent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.AMPArtworkAgent": {
+"dom": "Agents",
+"file": "com.apple.AMPArtworkAgent.plist",
+"prog": "AMPArtworkAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.KeyboardAccessAgent": {
+"dom": "Agents",
+"file": "com.apple.KeyboardAccessAgent.plist",
+"prog": "KeyboardAccessAgent",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.photolibraryd": {
+"dom": "Agents",
+"file": "com.apple.photolibraryd.plist",
+"prog": "photolibraryd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.RemoteDesktop.agent": {
+"dom": "Agents",
+"file": "com.apple.RemoteDesktop.plist",
+"prog": "ARDAgent",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.Maps.mapspushd": {
+"dom": "Agents",
+"file": "com.apple.Maps.pushdaemon.plist",
+"prog": "mapspushd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.speech.synthesisserver": {
+"dom": "Agents",
+"file": "com.apple.speech.synthesisserver.plist",
+"prog": "System Speech",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.videosubscriptionsd": {
+"dom": "Agents",
+"file": "com.apple.videosubscriptionsd.plist",
+"prog": "videosubscriptionsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.dmd": {
+"dom": "Agents",
+"file": "com.apple.dmd.agent.plist",
+"prog": "dmd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.knowledgeconstructiond": {
+"dom": "Agents",
+"file": "com.apple.knowledgeconstructiond.plist",
+"prog": "knowledgeconstructiond",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.homeeventsd": {
+"dom": "Agents",
+"file": "com.apple.homeeventsd.plist",
+"prog": "homeeventsd",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.mdworker.shared": {
+"dom": "Agents",
+"file": "com.apple.mdworker.shared.plist",
+"prog": "mdworker_shared",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.cmio.ContinuityCaptureAgent": {
+"dom": "Agents",
+"file": "com.apple.cmio.ContinuityCaptureAgent.plist",
+"prog": "ContinuityCaptureAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.iCloudUserNotificationsd": {
+"dom": "Agents",
+"file": "com.apple.iCloudUserNotifications.plist",
+"prog": "iCloudUserNotificationsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.searchtoold": {
+"dom": "Agents",
+"file": "com.apple.searchtoold.plist",
+"prog": "searchtoold",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.apfsuseragent": {
+"dom": "Agents",
+"file": "com.apple.apfsuseragent.plist",
+"prog": "APFSUserAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": null
+},
+"com.apple.coreservices.useractivityd": {
+"dom": "Agents",
+"file": "com.apple.coreservices.useractivityd.plist",
+"prog": "useractivityd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.syncdefaultsd": {
+"dom": "Agents",
+"file": "com.apple.syncdefaultsd.plist",
+"prog": "syncdefaultsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.DictationIM": {
+"dom": "Agents",
+"file": "com.apple.DictationIM.plist",
+"prog": "DictationIM",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.security.cloudkeychainproxy3": {
+"dom": "Agents",
+"file": "com.apple.security.cloudkeychainproxy3.plist",
+"prog": "CloudKeychainProxy",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": {
+"#IfFeatureFlagDisabled": "Security/EnableSecureObjectSync",
+"#Then": true
+}
+},
+"com.apple.usernotificationsd": {
+"dom": "Agents",
+"file": "com.apple.usernotificationsd.plist",
+"prog": "usernotificationsd",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.universalaccesscontrol": {
+"dom": "Agents",
+"file": "com.apple.universalaccesscontrol.plist",
+"prog": "UniversalAccessControl",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.imagent": {
+"dom": "Agents",
+"file": "com.apple.imagent.plist",
+"prog": "imagent",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.imautomatichistorydeletionagent": {
+"dom": "Agents",
+"file": "com.apple.imautomatichistorydeletionagent.plist",
+"prog": "IMAutomaticHistoryDeletionAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.quicklook.ui.helper": {
+"dom": "Agents",
+"file": "com.apple.quicklook.ui.helper.plist",
+"prog": "QuickLookUIHelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.systemsettingsagent": {
+"dom": "Agents",
+"file": "com.apple.systemsettingsagent.plist",
+"prog": "systemsettingsagent",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.CoreAuthentication.agent": {
+"dom": "Agents",
+"file": "com.apple.CoreAuthentication.agent.plist",
+"prog": "coreauthd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow",
+"Background",
+"CryptexContainer"
+],
+"dis": null
+},
+"com.apple.securityuploadd": {
+"dom": "Agents",
+"file": "com.apple.securityuploadd.plist",
+"prog": "securityuploadd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.icloud.searchpartyuseragent": {
+"dom": "Agents",
+"file": "com.apple.icloud.searchpartyuseragent.plist",
+"prog": "searchpartyuseragent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.bird": {
+"dom": "Agents",
+"file": "com.apple.bird.plist",
+"prog": "bird",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": false
+},
+"com.apple.SafeEjectGPUAgent": {
+"dom": "Agents",
+"file": "com.apple.SafeEjectGPUAgent.plist",
+"prog": "SafeEjectGPUAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.xpc.loginitemregisterd": {
+"dom": "Agents",
+"file": "com.apple.xpc.loginitemregisterd.plist",
+"prog": "loginitemregisterd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.FontWorker": {
+"dom": "Agents",
+"file": "com.apple.FontWorker.plist",
+"prog": "fontworker",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua",
+"CryptexContainer"
+],
+"dis": null
+},
+"com.apple.lockdownmoded": {
+"dom": "Agents",
+"file": "com.apple.lockdownmoded.plist",
+"prog": "lockdownmoded",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.milod": {
+"dom": "Agents",
+"file": "com.apple.milod.plist",
+"prog": "milod",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ckdiscretionaryd": {
+"dom": "Agents",
+"file": "com.apple.ckdiscretionaryd.plist",
+"prog": "ckdiscretionaryd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.AssetCache.agent": {
+"dom": "Agents",
+"file": "com.apple.AssetCache.agent.plist",
+"prog": "AssetCacheAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.fskit.fskit_agent": {
+"dom": "Agents",
+"file": "com.apple.fskit.fskit_agent.plist",
+"prog": "fskit_agent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Background",
+"Aqua"
+],
+"dis": false
+},
+"com.apple.mdworker.mail": {
+"dom": "Agents",
+"file": "com.apple.mdworker.mail.plist",
+"prog": "mdworker_shared",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.nowplayingtouchui": {
+"dom": "Agents",
+"file": "com.apple.NowPlayingTouchUI.plist",
+"prog": "NowPlayingTouchUI",
+"da": null,
+"ral": null,
+"ka": true,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.callintelligenced": {
+"dom": "Agents",
+"file": "com.apple.callintelligenced.plist",
+"prog": "callintelligenced",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.scrod": {
+"dom": "Agents",
+"file": "com.apple.scrod.plist",
+"prog": "scrod",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua",
+"LoginWindow"
+],
+"dis": null
+},
+"com.apple.AMPSystemPlayerAgent": {
+"dom": "Agents",
+"file": "com.apple.AMPSystemPlayerAgent.plist",
+"prog": "AMPSystemPlayerAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.suggestd": {
+"dom": "Agents",
+"file": "com.apple.suggestd.plist",
+"prog": "suggestd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.unmountassistant.useragent": {
+"dom": "Agents",
+"file": "com.apple.unmountassistant.useragent.plist",
+"prog": "UnmountAssistantAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.colorsync.useragent": {
+"dom": "Agents",
+"file": "com.apple.colorsync.useragent.plist",
+"prog": "colorsync.useragent",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": false
+},
+"com.apple.AMPDevicesAgent": {
+"dom": "Agents",
+"file": "com.apple.AMPDevicesAgent.plist",
+"prog": "AMPDevicesAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.shazameventsd": {
+"dom": "Agents",
+"file": "com.apple.shazameventsd.plist",
+"prog": "shazameventsd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.triald": {
+"dom": "Agents",
+"file": "com.apple.triald.plist",
+"prog": "triald",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.ensemble": {
+"dom": "Agents",
+"file": "com.apple.ensemble.plist",
+"prog": "UniversalControl",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.devicecheckd": {
+"dom": "Agents",
+"file": "com.apple.devicecheckd.plist",
+"prog": "devicecheckd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.RemoteManagementAgent": {
+"dom": "Agents",
+"file": "com.apple.RemoteManagementAgent.plist",
+"prog": "RemoteManagementAgent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.openssh.ssh-agent": {
+"dom": "Agents",
+"file": "com.openssh.ssh-agent.plist",
+"prog": "ssh-agent",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.speech.speechsynthesisd.x86_64": {
+"dom": "Agents",
+"file": "com.apple.speech.speechsynthesisd.x86_64.plist",
+"prog": "com.apple.speech.speechsynthesisd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Background"
+],
+"dis": null
+},
+"com.apple.familynotificationd": {
+"dom": "Agents",
+"file": "com.apple.familynotificationd.plist",
+"prog": "familynotificationd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"LoginWindow",
+"Aqua"
+],
+"dis": null
+},
+"com.apple.appstoreagent": {
+"dom": "Agents",
+"file": "com.apple.appstoreagent.plist",
+"prog": "appstoreagent",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.appsleep": {
+"dom": "Agents",
+"file": "com.apple.appsleepd.plist",
+"prog": "appsleepd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.security.keychain-circle-notification": {
+"dom": "Agents",
+"file": "com.apple.security.keychain-circle-notification.plist",
+"prog": "Keychain Circle Notification",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Aqua",
+"dis": {
+"#IfFeatureFlagDisabled": "Security/EnableSecureObjectSync",
+"#Then": true
+}
+},
+"com.apple.communicationtrustd": {
+"dom": "Agents",
+"file": "com.apple.communicationtrustd.plist",
+"prog": "communicationtrustd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.homeenergyd": {
+"dom": "Agents",
+"file": "com.apple.homeenergyd.plist",
+"prog": "homeenergyd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.mbproximityhelper": {
+"dom": "Agents",
+"file": "com.apple.mbproximityhelper.plist",
+"prog": "mbproximityhelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": [
+"Aqua"
+],
+"dis": null
+},
+"com.apple.geodMachServiceBridge": {
+"dom": "Agents",
+"file": "com.apple.geodMachServiceBridge.plist",
+"prog": "geodMachServiceBridge",
+"da": null,
+"ral": false,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.feedbackd": {
+"dom": "Agents",
+"file": "com.apple.feedbackd.plist",
+"prog": "feedbackd",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.Finder": {
+"dom": "Agents",
+"file": "com.apple.Finder.plist",
+"prog": "Finder",
+"da": null,
+"ral": false,
+"ka": true,
+"lsc": null,
+"dis": null
+},
+"com.apple.installandsetup.migrationhelper.user": {
+"dom": "Agents",
+"file": "com.apple.installandsetup.migrationhelper.user.plist",
+"prog": "migrationhelper",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": "Background",
+"dis": null
+},
+"com.apple.symptomsd.distributed-agent": {
+"dom": "Agents",
+"file": "com.apple.symptomsd.distributed-agent.plist",
+"prog": "symptomsd-distributed",
+"da": null,
+"ral": null,
+"ka": false,
+"lsc": null,
+"dis": null
+},
+"com.apple.parentalcontrols.check": {
+"dom": "Agents",
+"file": "com.apple.parentalcontrols.check.plist",
+"prog": "pcdCheck",
+"da": null,
+"ral": true,
+"ka": false,
+"lsc": null,
+"dis": null
+}
+}

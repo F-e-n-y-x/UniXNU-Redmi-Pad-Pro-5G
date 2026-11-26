@@ -1,0 +1,115 @@
+ArmCpu: an [ev] line (weak boot_progress_stage) per secondary step: ml_processor_register, CPU_ON call + rc, initCPU on the new core,
+GICR wake (frame, WAKER), GIC on, timer/running, first IPI per core, parked reasons, processor_start rc. Apply in drivers/ArmCpu with -p1.
+
+--- a/ArmCpu.cpp	2026-11-26 18:31:45.484076724 +0530
++++ b/ArmCpu.cpp	2026-11-26 18:34:52.850134110 +0530
+@@ -1,4 +1,5 @@
+ // SPDX-License-Identifier: BSD-2-Clause-Patent
++#include <stdarg.h>
+ #include <IOKit/IOCPU.h>
+ #include <IOKit/IODeviceTreeSupport.h>
+ #include <IOKit/IOMemoryDescriptor.h>
+@@ -21,6 +22,20 @@
+ extern "C" void thread_deallocate (thread_t);
+ extern "C" thread_t current_thread (void);
+ extern "C" kern_return_t thread_terminate (thread_t);
++// Board boot log (ruan: package/RuanMacBootProgress.c writes an [ev] line straight into the ramoops ring, which survives a hard
++// reset). Weak: boards without it log nothing.
++extern "C" void boot_progress_stage (const char *) __attribute__ ((weak_import));
++static void __attribute__ ((format (printf, 1, 2))) armEvent (const char *format, ...)
++{
++  if (&boot_progress_stage == nullptr) { return; }
++  char text[128];
++  va_list ap;
++  va_start (ap, format);
++  vsnprintf (text, sizeof (text), format, ap);
++  va_end (ap);
++  boot_progress_stage (text);
++}
++static volatile uint32_t gFirstIpiLogged = 0;   // bit per logical core: its first IPI is logged once
+ 
+ extern "C" {
+ volatile uint32_t armcpu_registered = 0;
+@@ -670,6 +685,7 @@
+   __atomic_fetch_or (&gCoreSeen, 1U << (logicalId & 7), __ATOMIC_RELEASE);
+   perfmon_interrupt_handler_func pmi = nullptr;
+   kern_return_t status = ml_processor_register (&info, &machProcessor, &ipi_handler, &pmi);
++  armEvent ("armcpu: cpu%u ml_processor_register phys %#llx cluster %u: %d", logicalId, affinity, info.cluster_id, status);
+   if (status != KERN_SUCCESS) { armcpu_smp_fail[logicalId] = 4; return false; }
+   setCPUNumber (info.log_id);
+   armcpu_smp_step[logicalId] = 2;
+@@ -716,7 +732,9 @@
+   armcpu_smp_step[self->logicalId] = 3;
+   // Kernels that leave the start to the driver block here until the new core reaches the scheduler; a core that never arrives only
+   // stalls this helper thread. Kernels that start a core when it registers return at once.
+-  processor_start (self->machProcessor);
++  const kern_return_t started_rc = processor_start (self->machProcessor);
++  armEvent ("armcpu: cpu%u start thread: processor_start %d (KERN_FAILURE is normal on 12377: ml_processor_register booted it)",
++            self->logicalId, started_rc);
+   // Once every secondary core has started, the scheduler sets up its cluster edges (Edge migration and steal rules).
+   static uint32_t started = 0;
+   // armcpu-edge=0 leaves the Edge matrix all-disallowed (no thread moves between clusters). On iPadOS 27 the matrix fails the scheduler's
+@@ -750,11 +768,20 @@
+     __asm__ volatile ("mrs %0, mpidr_el1" : "=r" (mpidr));
+     armcpu_smp_seen_mpidr[logicalId] = static_cast<uint32_t> (mpidr);
+     // A failure is recorded and the core parked (rather than a panic that hides the other cores' state).
+-    if ((mpidr & 0xffff) != (affinity & 0xffff)) { armcpu_smp_fail[logicalId] = 1; parkCore (); }
+-    if (!gRemoteGic && !wakeRedistributor (true)) { armcpu_smp_fail[logicalId] = 2; parkCore (); }
++    armEvent ("armcpu: cpu%u initCPU on the new core, mpidr %#llx (want %#llx)", logicalId, mpidr, affinity);
++    if ((mpidr & 0xffff) != (affinity & 0xffff)) { armcpu_smp_fail[logicalId] = 1; armEvent ("armcpu: cpu%u PARKED: MPIDR mismatch", logicalId); parkCore (); }
++    if (!gRemoteGic && !wakeRedistributor (true)) {
++      armcpu_smp_fail[logicalId] = 2;
++      armEvent ("armcpu: cpu%u PARKED: redistributor (frame va %#lx, last typer probe %#x/%#x)", logicalId, redist,
++                armcpu_gic_typer_probe[0], armcpu_gic_typer_probe[1]);
++      parkCore ();
++    }
+     armcpu_smp_step[logicalId] = 6;
++    armEvent ("armcpu: cpu%u GICR frame %#lx awake (WAKER %#x)%s", logicalId, redist - redistBase, read32 (redist, 0x14),
++              gRemoteGic ? " (prepared by the boot core)" : "");
+     enableGic ();
+     if (gSpiIpi) { spiIpiConfigure (gDist, logicalId, affinity); }
++    armEvent ("armcpu: cpu%u GIC CPU interface on%s", logicalId, gSpiIpi ? ", IPI SPI configured" : "");
+     // The shared IOCPUInterruptController blocks registrations until every core is enabled, so the secondary cores
+     // install their handler directly. ml_install_interrupt_handler() records it in the calling core's cpu_data.
+     ml_install_interrupt_handler (this, static_cast<int> (logicalId), this, reinterpret_cast<IOInterruptHandler> (&ArmCpu::dispatch), nullptr);
+@@ -762,6 +789,7 @@
+     setCPUState (kIOCPUStateRunning);
+     armcpu_smp_step[logicalId] = 7;
+     if (boot) { armcpu_smp_running = armcpu_smp_running + 1; }
++    armEvent ("armcpu: cpu%u timer on, running; self-IPI %s", logicalId, (gSelfIpi || !boot) ? "sent" : "not sent");
+     // XNU clears SIGPdisabled for a core the first time that core takes an IPI, and cpu_signal() silently skips a core until then; Apple's
+     // CPU driver provokes it with a self-IPI from initCPU (osfmk/kern/machine.c, processor_up).
+     // Back from platform sleep the self-IPI is sent whatever armcpu-self-ipi says: processor_cpu_reinit waits for it.
+@@ -855,6 +883,10 @@
+       armcpu_core_sgi[logicalId & 7] = armcpu_core_sgi[logicalId & 7] + 1;
+       wokenBy (core, 1);
+       ipiTaken (core, fromIdle);
++      if ((gFirstIpiLogged & (1U << (logicalId & 7))) == 0) {
++        __atomic_fetch_or (&gFirstIpiLogged, 1U << (logicalId & 7), __ATOMIC_RELAXED);
++        armEvent ("armcpu: cpu%u first IPI taken (intid %llu)", logicalId, id & 0xffffff);
++      }
+       armcpu_irq_phase=4;
+       if (ipi_handler != nullptr) { ipi_handler (); }
+       armcpu_irq_phase=5;
+@@ -863,6 +895,10 @@
+       armcpu_core_sgi[logicalId & 7] = armcpu_core_sgi[logicalId & 7] + 1;
+       wokenBy (core, 1);
+       ipiTaken (core, fromIdle);
++      if ((gFirstIpiLogged & (1U << (logicalId & 7))) == 0) {
++        __atomic_fetch_or (&gFirstIpiLogged, 1U << (logicalId & 7), __ATOMIC_RELAXED);
++        armEvent ("armcpu: cpu%u first IPI taken (intid %llu)", logicalId, id & 0xffffff);
++      }
+       armcpu_irq_phase = 4;
+       if (ipi_handler != nullptr) { ipi_handler (); }
+       armcpu_irq_phase = 5;
+@@ -1272,8 +1308,10 @@
+   cleanToMemory (ResetHandlerData, 0x1000);
+   cleanToMemory (const_boot_args, 0x1000);
+   armcpu_smp_step[logicalId] = 4;
++  armEvent ("armcpu: cpu%u PSCI CPU_ON (%s) target %#llx entry pa %#llx", logicalId, hvc ? "hvc" : "smc", affinity & 0xff00ffffffULL, entry);
+   int64_t result = psciCall (hvc, 0xc4000003ULL, affinity & 0xff00ffffffULL, entry, 0);
+   armcpu_smp_psci_rc[logicalId] = static_cast<int32_t> (result);
++  armEvent ("armcpu: cpu%u CPU_ON rc %lld", logicalId, result);
+   return result == 0 ? KERN_SUCCESS : KERN_FAILURE;
+ }
+ 

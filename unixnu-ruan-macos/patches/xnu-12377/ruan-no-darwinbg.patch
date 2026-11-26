@@ -14,8 +14,8 @@ ruan bring-up: ruan-no-darwinbg=1 keeps tasks and threads out of DARWIN_BG (no l
 +{
 +	static int state;               /* 0 unknown, 1 off, 2 on */
 +	if (!state) {
-+		unsigned int on = 0;
-+		state = PE_parse_boot_argn("ruan-no-darwinbg", &on, sizeof(on)) && on ? 2 : 1;
++		unsigned int on = 1;    /* default on (no command-line room for SMP args otherwise); ruan-no-darwinbg=0 turns it off */
++		(void)PE_parse_boot_argn("ruan-no-darwinbg", &on, sizeof(on)); state = on ? 2 : 1;
 +	}
 +	return state == 2;
 +}

@@ -34,7 +34,10 @@ OUT=${OUT:-$W/macos-build/out}
 REF_IMG=${REF_IMG:-$W/macos-build/backup-arm64e-20261121/ruan-ramroot-usb-macos.img}
 IMG=ruan-ramroot-usb-macos.img
 # The first set's arguments (its payload.json), extras first as unixnu payload orders them; the board adds the rest.
-ARGS="${RD-rd=md0} cpus=1 serial=3 sheng-pmgr=2 dyld_flags=8 offline-legacy-register=1 offline-legacy-gop=1
+# CPUS=N (default 1): cpus=N plus SMP_ARGS (smp-impl/README.md stages). The first cpus= on the line wins, so it is set here.
+SMP_ARGS=${SMP_ARGS-smp=1 smp-gic=1}   # the iPadOS UFS+SMP args (args-rbu138); self/spi-ipi hard-reset macOS cpus=2 (2026-11-26)
+[ "${CPUS:-1}" = 1 ] && SMP_ARGS=
+ARGS="${RD-rd=md0} cpus=${CPUS:-1} $SMP_ARGS serial=3 sheng-pmgr=2 dyld_flags=8 offline-legacy-register=1 offline-legacy-gop=1
       ${KERNEL_ARGS:-}"   # no ram-data*: iPadOS-only args the macOS kernel ignores (the command line limit is 1000 bytes)
 mkdir -p "$OUT"
 export PATH=/opt/unixnu-linux/bin:$PATH

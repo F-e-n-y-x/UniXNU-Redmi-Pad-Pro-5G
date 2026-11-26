@@ -1,0 +1,174 @@
+warning: --mode auto is not available for this account; continuing in the default mode.
+The patch, modified source files, unified diffs, and `README.md` have been prepared in `/tmp/claude-0/-DATA-tower-Projects-Redmi-Pad-Pro-5G/9932f143-ca16-4a12-8e3a-bb10afe23a95/scratchpad/agy-usbdata/`.
+
+No hardware was accessed, no builds were triggered, and no files outside the scratchpad directory were modified.
+
+---
+
+### Key Findings & Architecture
+
+1. **Receiver Buffer Initialization**:
+   - `DarwinBoot.c` lines 998–1017 show that the DRAM window is allocated to cover `Used` bytes (which includes `Layout.Ramdisk` of `RamdiskBytes = UsbRamdiskSize`), and `ZeroMem ((VOID *)(UINTN)Address, (UINTN)Used)` is called before `UsbRamdiskReceive()`.
+   - The destination buffer is therefore already zero-initialized in memory. The receiver patch adds an explicit, defensive `ZeroMem(Destination + DownloadSize, Size - DownloadSize)` to guarantee un-sent slack is always pure zeros regardless of caller state.
+   - The descriptor CRC32 covers the full `Size` bytes. Because the slack is zero-filled, the CRC32 computed over `Destination` for the full `Size` matches the descriptor CRC exactly (verified: `0xb66bfce0`).
+
+2. **Used Length Scan**:
+   - `root-usb.apfs` is 1,550,970,880 bytes (~1479 MiB).
+   - Scanning backward from EOF in 16 MiB blocks via C-level `memcmp` takes **~0.33 s** and detects the last non-zero 4 KiB block at index 18,206 (offset 74,575,872 bytes = **~71.12 MiB**).
+   - Streaming 71.12 MiB over USB cuts ~70 s off every test boot.
+
+---
+
+### Prepared Artifacts in Scratchpad
+
+- [README.md](file:///tmp/claude-0/-DATA-tower-Projects-Redmi-Pad-Pro-5G/9932f143-ca16-4a12-8e3a-bb10afe23a95/scratchpad/agy-usbdata/README.md) (comprehensive summary under 400 words)
+- [UsbRamdisk.h](file:///tmp/claude-0/-DATA-tower-Projects-Redmi-Pad-Pro-5G/9932f143-ca16-4a12-8e3a-bb10afe23a95/scratchpad/agy-usbdata/UsbRamdisk.h) (patched receiver source)
+- [UsbRamdisk.h.diff](file:///tmp/claude-0/-DATA-tower-Projects-Redmi-Pad-Pro-5G/9932f143-ca16-4a12-8e3a-bb10afe23a95/scratchpad/agy-usbdata/UsbRamdisk.h.diff) (receiver unified diff)
+- [zima-ramroot-macos.sh](file:///tmp/claude-0/-DATA-tower-Projects-Redmi-Pad-Pro-5G/9932f143-ca16-4a12-8e3a-bb10afe23a95/scratchpad/agy-usbdata/zima-ramroot-macos.sh) (patched host script)
+- [zima-ramroot-macos.sh.diff](file:///tmp/claude-0/-DATA-tower-Projects-Redmi-Pad-Pro-5G/9932f143-ca16-4a12-8e3a-bb10afe23a95/scratchpad/agy-usbdata/zima-ramroot-macos.sh.diff) (host script unified diff)
+- [test-usb-ramdisk.py](file:///tmp/claude-0/-DATA-tower-Projects-Redmi-Pad-Pro-5G/9932f143-ca16-4a12-8e3a-bb10afe23a95/scratchpad/agy-usbdata/test-usb-ramdisk.py) (extended test harness validating full download, prefix download, zero-fill, and bounds checks)
+
+---
+
+### Unified Diffs
+
+#### 1. Receiver (`UsbRamdisk.h.diff`)
+```diff
+--- UsbRamdisk.h.orig	2026-11-26 18:56:36.144396713 +0530
++++ UsbRamdisk.h	2026-11-26 18:57:13.291110466 +0530
+@@ -184,10 +184,11 @@
+   return EFI_ERROR (Status) ? Status : UsbRdWait (Rd, USBRD_EP_IN, USBRD_DATA_WAIT_US, &Bytes);
+ }
+ 
+-// The image, Size bytes, from "download:" into Destination. TRUE when every byte came and the CRC32 matches.
++// The image, DownloadSize bytes (<= Size) from "download:" into Destination. The remainder up to Size is zero-filled.
++// TRUE when every byte came and the CRC32 of Size bytes matches.
+ STATIC
+ BOOLEAN
+-UsbRdDownload (USBRD *Rd, UINT8 *Destination, UINT64 Size, UINT32 Crc)
++UsbRdDownload (USBRD *Rd, UINT8 *Destination, UINT64 Size, UINT64 DownloadSize, UINT32 Crc)
+ {
+   CHAR8       Reply[16];
+   CHAR16      Line[96];
+@@ -197,24 +198,27 @@
+   UINT32      Actual;
+   EFI_STATUS  Status;
+ 
+-  AsciiSPrint (Reply, sizeof (Reply), "%08x", (UINT32)Size);
++  AsciiSPrint (Reply, sizeof (Reply), "%08x", (UINT32)DownloadSize);
+   if (EFI_ERROR (UsbRdSend (Rd, "DATA", Reply))) { return FALSE; }
+-  for (Got = 0; Got < Size; Got += Bytes) {
+-    Want = MIN (Size - Got, USBRD_CHUNK);
++  for (Got = 0; Got < DownloadSize; Got += Bytes) {
++    Want = MIN (DownloadSize - Got, USBRD_CHUNK);
+     Status = Rd->Usb->Send (USBRD_EP_OUT, (UINTN)Want, Rd->Rx);
+     if (!EFI_ERROR (Status)) { Status = UsbRdWait (Rd, USBRD_EP_OUT, USBRD_DATA_WAIT_US, &Bytes); }
+     if (EFI_ERROR (Status) || (Bytes == 0)) { break; }
+     Bytes = MIN (Bytes, Want);  // a controller that reports more than was asked for must not carry the copy past the end
+     CopyMem (Destination + Got, Rd->Rx, (UINTN)Bytes);
+     if (((Got + Bytes) >> 26) != (Got >> 26)) {
+-      UnicodeSPrint (Line, sizeof (Line), L"USB RAMDISK %lu / %lu MiB", (Got + Bytes) >> 20, Size >> 20);
++      UnicodeSPrint (Line, sizeof (Line), L"USB RAMDISK %lu / %lu MiB", (Got + Bytes) >> 20, DownloadSize >> 20);
+       DiagDraw (Line, 1);
+     }
+   }
+-  if (Got != Size) {
++  if (Got != DownloadSize) {
+     UsbRdSend (Rd, "FAIL", "short download");
+     return FALSE;
+   }
++  if (DownloadSize < Size) {
++    ZeroMem (Destination + DownloadSize, (UINTN)(Size - DownloadSize));
++  }
+   Actual = 0;
+   gBS->CalculateCrc32 (Destination, (UINTN)Size, &Actual);
+   if (Actual != Crc) {
+@@ -284,10 +288,13 @@
+       AsciiSPrint (Value, sizeof (Value), "0x%08x", (UINT32)Size);
+       UsbRdSend (Rd, "OKAY", Value);
+     } else if (AsciiStrnCmp (Command, "download:", 9) == 0) {
+-      if ((AsciiStrLen (Command) != 17) || (AsciiStrHexToUint64 (Command + 9) != Size)) {
+-        UsbRdSend (Rd, "FAIL", "size differs from the descriptor");
++      UINT64  DownloadSize;
++
++      DownloadSize = (AsciiStrLen (Command) == 17) ? AsciiStrHexToUint64 (Command + 9) : 0;
++      if ((DownloadSize == 0) || (DownloadSize > Size)) {
++        UsbRdSend (Rd, "FAIL", "size exceeds descriptor");
+       } else {
+-        Received = UsbRdDownload (Rd, Destination, Size, Crc);
++        Received = UsbRdDownload (Rd, Destination, Size, DownloadSize, Crc);
+       }
+     } else if (AsciiStrCmp (Command, "upload") == 0) {
+       UsbRdUpload (Rd);
+```
+
+#### 2. Host Script (`zima-ramroot-macos.sh.diff`)
+```diff
+--- zima-ramroot-macos.sh.orig	2026-11-26 18:56:36.231402132 +0530
++++ zima-ramroot-macos.sh	2026-11-26 18:58:27.907962730 +0530
+@@ -48,10 +48,50 @@
+ echo "Receiver expected size: $((max_size)) bytes, root-usb.apfs size: $file_size bytes"
+ [ "$((max_size))" -eq "$file_size" ] || { echo "error: size mismatch between receiver descriptor and root-usb.apfs" >&2; exit 1; }
+ 
+-echo "== [5/5] Sending root-usb.apfs ($((file_size / 1048576)) MiB) via fastboot stage..."
++if [ "${FULL_STAGE:-0}" = "1" ]; then
++    used_bytes=$file_size
++elif [ -f root-usb.used ]; then
++    used_bytes=$(cat root-usb.used)
++else
++    used_bytes=$(python3 -c '
++import os, sys
++p = sys.argv[1]
++st = os.stat(p)
++bs = 4096; cs = 16 * 1024 * 1024
++zc = bytes(cs); zb = bytes(bs)
++with open(p, "rb") as f:
++    pos = st.st_size; last_nz = 0
++    while pos > 0:
++        take = min(pos, cs)
++        pos -= take
++        f.seek(pos)
++        buf = f.read(take)
++        if (take == cs and buf != zc) or (take < cs and buf != zc[:take]):
++            for b_off in range((take // bs) - 1, -1, -1):
++                if buf[b_off * bs : (b_off + 1) * bs] != zb:
++                    last_nz = pos + (b_off + 1) * bs
++                    break
++            break
++print(last_nz if last_nz > 0 else st.st_size)
++' root-usb.apfs)
++fi
++
++stage_file="root-usb.apfs"
++tmp_stage=""
++if [ "$used_bytes" -lt "$file_size" ]; then
++    tmp_stage=$(mktemp --tmpdir root-usb-stage.XXXXXX.apfs)
++    trap 'rm -f "$tmp_stage"' EXIT INT TERM
++    head -c "$used_bytes" root-usb.apfs > "$tmp_stage"
++    stage_file="$tmp_stage"
++    echo "== [5/5] Sending used prefix ($((used_bytes / 1048576)) / $((file_size / 1048576)) MiB) via fastboot stage..."
++else
++    echo "== [5/5] Sending root-usb.apfs ($((file_size / 1048576)) MiB) via fastboot stage..."
++fi
++
+ t0=$(date +%s)
+-fastboot -s unixnu-ramdisk stage root-usb.apfs
++fastboot -s unixnu-ramdisk stage "$stage_file"
+ echo "Transferred in $(( $(date +%s) - t0 ))s"
++[ -n "$tmp_stage" ] && rm -f "$tmp_stage"
+ 
+ echo "Sending fastboot continue..."
+ fastboot -s unixnu-ramdisk continue
+```
+
+---
+
+### Rebuild and Deployment Summary
+
+1. **Recompile DarwinBoot Loader**:
+   - `DarwinBootPkg` is compiled to `DarwinBoot.efi` via `scripts/build-darwinboot.sh` (or EDK2 build).
+2. **Package into Boot Image**:
+   - Replace the DarwinBoot PE inside `SILICIUM_UEFI.fd` via `boot_template.py:replace_loader()`.
+   - Re-pack `ruan-ramroot-usb-macos.img` (`gzip(BootShim + FD + XNUP) + DTB`).
+3. **No Kernel / Descriptor Changes**:
+   - `kernel.macho` and `root-usb.desc` do not change (`root-usb.desc` retains the total container size and full-image CRC32).

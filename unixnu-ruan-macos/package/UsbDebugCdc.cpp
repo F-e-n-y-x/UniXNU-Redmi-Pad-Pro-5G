@@ -13,6 +13,20 @@ extern "C" volatile uint32_t native_ufs_dpu_state __attribute__((weak_import));
 extern "C" volatile uint32_t native_ufs_dpu_smmu[24] __attribute__((weak_import));
 extern "C" volatile uint32_t native_ufs_dpu_check[8] __attribute__((weak_import));
 extern "C" void ruan_cpufreq_report(char *, unsigned) __attribute__((weak_import));
+// ArmCpu.cpp secondary bring-up evidence (smp=1), per logical core; USB `cpu` prints it before the stats rows. Steps: 1 nub,
+// 2 registered, 3 start thread, 4 PSCI CPU_ON issued, 5 initCPU on the new core, 6 GIC redistributor ready, 7 running.
+// fail: 1 MPIDR mismatch, 2 redistributor, 3 remote redistributor (smp-gic=1), 4 ml_processor_register.
+extern "C" volatile uint32_t armcpu_smp_step[8] __attribute__((weak_import)), armcpu_smp_mpidr[8] __attribute__((weak_import)),
+    armcpu_smp_seen_mpidr[8] __attribute__((weak_import)), armcpu_smp_fail[8] __attribute__((weak_import)),
+    armcpu_core_sgi[8] __attribute__((weak_import)), armcpu_core_timer[8] __attribute__((weak_import)),
+    armcpu_smp_requested __attribute__((weak_import)), armcpu_smp_running __attribute__((weak_import)),
+    armcpu_boot_mpidr __attribute__((weak_import)), armcpu_cpu_init_completed __attribute__((weak_import));
+extern "C" volatile int32_t armcpu_smp_psci_rc[8] __attribute__((weak_import));
+extern "C" volatile uint64_t armcpu_ipi_sent __attribute__((weak_import)), armcpu_ipi_interrupts __attribute__((weak_import));
+// xnu-12377/ruan-smp-sigp.patch and ruan-edge-matrix.patch (weak: 0 without them)
+extern "C" volatile uint32_t sheng_sigp_recovered __attribute__((weak_import)), sheng_idle_sigp_cleared __attribute__((weak_import)),
+    sheng_idle_sigp_refused __attribute__((weak_import)), sheng_edge_cross_type_steals[2] __attribute__((weak_import)),
+    sheng_edge_idle_beside_excess[2] __attribute__((weak_import));
 extern "C" unsigned armcpu_stats_row(unsigned, char *, unsigned) __attribute__((weak_import));   // ArmCpu.cpp, USB `cpu` (per-core rows need diag=1)   // RuanCpuFreq.c, USB `cpufreq`
 extern "C" volatile uint32_t native_legacy_direct[14] __attribute__((weak_import));   // NativeLegacyDisplay direct-scanout counters
 #include <IOKit/IOMemoryDescriptor.h>
@@ -861,6 +875,28 @@ static void handleCommand(TerminalSession &s, const char *raw) {
             s.reply.writeStr(buf);
         }
     } else if (strEq(raw, "cpu")) {
+        if (&armcpu_smp_step) {
+            snprintf(buf, sizeof(buf), "[usb] CPU smp: requested=%u running=%u boot_mpidr=%#x edge=%u ipi sent=%llu irqs=%llu | sigp recovered=%u "
+                     "idle cleared=%u refused=%u | edge steals E=%u P=%u idle-beside E=%u P=%u\r\n",
+                     armcpu_smp_requested, armcpu_smp_running, armcpu_boot_mpidr, armcpu_cpu_init_completed,
+                     (unsigned long long)armcpu_ipi_sent, (unsigned long long)armcpu_ipi_interrupts,
+                     &sheng_sigp_recovered ? sheng_sigp_recovered : 0, &sheng_idle_sigp_cleared ? sheng_idle_sigp_cleared : 0,
+                     &sheng_idle_sigp_refused ? sheng_idle_sigp_refused : 0,
+                     &sheng_edge_cross_type_steals ? sheng_edge_cross_type_steals[0] : 0,
+                     &sheng_edge_cross_type_steals ? sheng_edge_cross_type_steals[1] : 0,
+                     &sheng_edge_idle_beside_excess ? sheng_edge_idle_beside_excess[0] : 0,
+                     &sheng_edge_idle_beside_excess ? sheng_edge_idle_beside_excess[1] : 0);
+            s.reply.writeStr(buf);
+            for (unsigned i = 0; i < 8; i++) {
+                if (i != 0 && armcpu_smp_step[i] == 0 && armcpu_smp_mpidr[i] == 0) continue;   // core not in the topology (cpus=N)
+                snprintf(buf, sizeof(buf), "[usb] CPU%u: step=%u fail=%u psci_rc=%d mpidr=%#x seen=%#x sgi=%u timer=%u\r\n", i,
+                         armcpu_smp_step[i], armcpu_smp_fail[i], (int)armcpu_smp_psci_rc[i], armcpu_smp_mpidr[i], armcpu_smp_seen_mpidr[i],
+                         armcpu_core_sgi[i], armcpu_core_timer[i]);
+                s.reply.writeStr(buf);
+            }
+        } else {
+            s.reply.writeStr("[usb] CPU smp: ArmCpu counters not linked\r\n");
+        }
         char row[480];
         for (unsigned i = 0; &armcpu_stats_row && i < 32 && armcpu_stats_row(i, row, sizeof(row)) != 0; i++) {
             snprintf(buf, sizeof(buf), "[usb] %s\r\n", row);

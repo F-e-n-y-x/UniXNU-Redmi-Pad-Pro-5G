@@ -1,0 +1,28 @@
+--- a/package/RuanTouch.c	2026-11-26 11:18:40.673833398 +0530
++++ b/package/RuanTouch.c	2026-11-26 11:25:13.030073260 +0530
+@@ -939,6 +939,11 @@
+ 		seen.last_y = y;
+ 		x = x >= max_x ? 65535 : x * 65535 / max_x;
+ 		y = y >= max_y ? 65535 : y * 65535 / max_y;
++		if (swap_axes) {
++			uint32_t tmp = x;
++			x = y;
++			y = tmp;
++		}
+ 		if (flip & 1) {
+ 			x = 65535 - x;
+ 		}
+@@ -1904,6 +1909,13 @@
+ 	}
+ 	PE_parse_boot_argn("touch_flip", &flip, sizeof(flip));
+ 	PE_parse_boot_argn("touch_swap", &swap_axes, sizeof(swap_axes));
++	/* fb-rotate (landscape desktop, NativeLegacyDisplay): 1 = panel turned 90 deg, 3 = 270 deg. Swap, then mirror one axis. */
++	uint32_t fb_rotate = 0;
++	PE_parse_boot_argn("fb-rotate", &fb_rotate, sizeof(fb_rotate));
++	if (fb_rotate == 1 || fb_rotate == 3) {
++		swap_axes = 1;
++		flip ^= fb_rotate == 1 ? 2 : 1;
++	}
+ 	/* macOS: above the default kernel priority (81), so a busy WindowServer cannot stretch the poll (seen: ~4 reads/s) */
+ 	extern kern_return_t kernel_thread_start_priority(thread_continue_t, void *, integer_t, thread_t *);
+ 	if (kernel_thread_start_priority(goodix_thread, NULL, 92 /* BASEPRI_PREEMPT */, &thread) == KERN_SUCCESS) {

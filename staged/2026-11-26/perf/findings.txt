@@ -1,0 +1,20 @@
+Sources: live-k4c.log (latest desktop boot: kernel 1277s, WindowServer 1312, loginwindow 1313, login UI ~1570, SecurityAgent 1604,
+Dock/Finder 1679, WallpaperAgent 1751), ulog-k4/dec.txt, ulog-dt/b3.txt, dmesg-*.txt. idle=0s in almost every [hb] => CPU-bound start.
+
+1. mobileactivationd: in disabled.plist but launchd IGNORES it: 148 spawns in ulog-k4, 69 in k4c, each xpcproxy exit(78)
+   "posix_spawn EPERM" (launch constraint), ~4.7 s wall each, every ~10 s (364 s of xpcproxy wall in k4c).
+   Triggered by mdmclient/daemon(172) lookups and its xpc activities. Fix: drop its plist from the root
+   (/System/Library/LaunchDaemons/com.apple.mobileactivationd.plist) or satisfy its launch constraint; kill mdm stack.
+2. com.apple.postfixsetup: one job ran 694 s pre-login, a bash loop exec'ing bind_unix_socket/chmod/mkfifo (27x each in k4c).
+3. Kerberos.digest-service exit(1) x30-31 per boot (socket-activated).
+4. MDM: mdmclient, ManagedClient x3, remotemanagementd + 16 subscriber services.
+5. Log spam (ulog-k4): lsd 3.5k, locationd 2.0k, mediaremoted 1.8k (1475 HALC lines: no coreaudiod), contextstored 1.4k
+   (155x AppleKeyStoreUserClient MACF fail in dmesg), mobileassetd 1.2k, PerfPowerServices 1.1k, analyticsd 1.0k, geod 1.0k,
+   searchpartyd 0.8k, triald_system 0.8k, findmydeviced 0.7k (APSConnection with apsd disabled).
+6. Earlier boots: coreaudiod 456k lines, audiomxd 90k (already disabled), AirPlayXPCHelper 7.4k, identityservicesd 3.7k.
+7. Memory: wired 425k pages (1.66 GB) before userland; grows to 873k (3.4 GB) as gpu= goes 0 -> 1144 MiB: GPU buffers are wired
+   sysmem. Growth in exact 64 MiB steps (pool/heap chunks): +128 at login UI, +130 at Dock, +128 at 1721, +400 MiB 1875-1903,
+   +270 around 2100. tu-debug=noubwc keeps every surface uncompressed (2560x1600 BGRA = 15.6 MiB each).
+   Contributors: WindowServer backing stores + blur/glass materials, Aerials video wallpaper (b3: WallpaperAerialsExtension,
+   VTDecoderXPCService 140 MB RSS, software HEVC), desktop widgets (chronod + *WidgetExtension).
+   jetsam only did idle-exit kills (183 distinct, e.g. VTDecoderXPCService, homed 13 MB, speech synthesizers).

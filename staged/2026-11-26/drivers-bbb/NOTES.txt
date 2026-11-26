@@ -1,0 +1,10 @@
+Apply in /root/unixnu-work/UniXNU-ruan-macos: patch -p1 < 0N-*.patch (all four dry-run clean). Nothing compiled.
+01 buttons: RuanButtons on by default (buttons=0 / garnet_buttons=0 turns it off); NativeHidInput consumer collection always on
+   macOS (NATIVE_HID_MACOS). Drop garnet_buttons=1 buttons-consumer=1: 0 bytes added.
+02+04 battery: HakiosBattery.cpp built for macOS in place of the no-op stub (the stub was a shortcut, not a real link error:
+   IOPMPowerSource is in our XNU, kernel.map.json has its symbols; RuanPowerSource has no metaclass, so no static init needed —
+   04 asserts no __mod_init_func). Adds TimeRemaining/AvgTimeTo* = 65535, warn/critical; registerService after the first report.
+03+04 brightness: RuanBacklight.cpp linked on macOS (-DRUAN_MACOS=1): BrightnessMilliNits, force-brightness-control,
+   brightness-nits; RuanBacklightSvc entry points stubbed. Plus userland brightnessd/: build per ruan-brightnessd.c header,
+   then copy add-ruan-brightnessd.py + plist next to adhoc-resign.py and run: add-ruan-brightnessd.py FULL ./ruan-brightnessd
+   before make-macos-ufs-root.py.

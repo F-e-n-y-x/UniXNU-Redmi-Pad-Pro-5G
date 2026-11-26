@@ -1,0 +1,25 @@
+ruan SMP: never 'recover' (sheng_sigp_recover) a core the CPU driver parked. ArmCpu parks a secondary that fails its MPIDR or
+redistributor check in WFI with interrupts off, after cpu_machine_init set InitState|StartedState; the recovery then clears its
+SIGPdisabled and every later cross-call/IPI to it waits forever instead of being skipped. Pairs with ArmCpu/armcpu-park-flag.patch.
+Goes after ruan-smp-sigp.patch.
+
+--- a/osfmk/arm/cpu_common.c	2026-11-26 18:38:00.991070567 +0530
++++ b/osfmk/arm/cpu_common.c	2026-11-26 18:38:01.159052633 +0530
+@@ -413,10 +413,17 @@
+  * random early hangs and UFS root failures under SMP: a wakeup IPI to that core was silently dropped). A core in
+  * InitState|StartedState runs and takes interrupts, so the flag is cleared here and the signal sent. Counted in sheng_sigp_recovered. */
+ volatile uint32_t sheng_sigp_recovered;
++/* ruan: bit per cpu_number that the CPU driver parked for good (ArmCpu parkCore: WFI, interrupts off). Such a core passed
++ * cpu_machine_init (InitState|StartedState) but never takes an IPI: recovering it would turn a skipped signal into a cross-call or
++ * IPI wait that never ends. */
++volatile uint32_t ruan_cpu_parked;
+ bool sheng_sigp_recover(cpu_data_t *target_proc);
+ bool
+ sheng_sigp_recover(cpu_data_t *target_proc)
+ {
++	if (os_atomic_load(&ruan_cpu_parked, relaxed) & (1U << (target_proc->cpu_number & 31))) {
++		return false;
++	}
+ 	if ((os_atomic_load(&target_proc->cpu_flags, relaxed) & (InitState | StartedState)) != (InitState | StartedState)) {
+ 		return false;
+ 	}

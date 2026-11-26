@@ -1,0 +1,372 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+#ifndef DARWIN_BOOT_USB_RAMDISK_H
+#define DARWIN_BOOT_USB_RAMDISK_H
+
+// A RAM disk too big for the payload volume, sent by the host over USB once the window is placed.
+//
+// The entry's initrd is then a 32-byte descriptor instead of the image: "DBUSBRD1", version 1 (UINT32), the CRC32 of
+// the image (UINT32), its size (UINT64: whole 4 KiB pages, below 4 GiB) and 8 zero bytes. DarwinBoot lays the window
+// out for that size and receives the image straight into the RAM disk's place in it, so there is never a second copy
+// (a root image of a few GiB fits next to the kernel only once).
+//
+// The transport is the fastboot protocol on Qualcomm's EFI_USB_DEVICE_PROTOCOL, the polled peripheral interface the
+// stock ABL fastboot is built on (QcomModulePkg/Include/Protocol/EFIUsbDevice.h). The host runs:
+//   fastboot getvar product   unixnu-ramdisk
+//   fastboot stage IMAGE      download:<size>, the bytes; OKAY when the CRC32 matches the descriptor
+//   fastboot continue         the boot goes on
+//   fastboot get_staged FILE  upload: the 2 MiB at USBRD_LOG_BASE, read only (ruan: the stock ramoops region, where Android's
+//                             and a ruan-ramoops=1 XNU's last log survive a warm reset; the platform's memory map must
+//                             describe it, ruanPkg MemoryMapLib "RAM Oops")
+// No command writes storage: "reboot" resets, every other command is refused. Without the protocol, or when no host
+// sends the image in time, Boot() fails and the firmware is kept.
+
+#define USBRD_EP_OUT         0x01
+#define USBRD_EP_IN          0x81
+#define USBRD_CHUNK          SIZE_1MB
+#define USBRD_COMMAND_BYTES  511
+#define USBRD_IDLE_US        100
+#define USBRD_HOST_WAIT_US   (600ULL * 1000000)  // for the host to connect and finish, between commands
+#define USBRD_DATA_WAIT_US   (20ULL * 1000000)   // without a byte during a download
+#define USBRD_LOG_BASE       0x80D00000ULL       // ruan: reserved-memory ramoops@80D00000 of the stock device tree
+#define USBRD_LOG_SIZE       SIZE_2MB
+
+typedef struct {
+  CHAR8   Magic[8];
+  UINT32  Version;
+  UINT32  Crc32;
+  UINT64  Size;
+  UINT64  Reserved;
+} DARWIN_USB_RAMDISK;
+
+// Qualcomm EFI_USB_DEVICE_PROTOCOL, as the open-source ABL publishes it.
+#define QCOM_USB_DEVICE_PROTOCOL_GUID \
+  { 0xd9d9ce48, 0x44b8, 0x4f49, { 0x8e, 0x3e, 0x2a, 0x3b, 0x92, 0x7d, 0xc6, 0xc1 } }
+#define QCOM_USB_INIT_EVENT_GUID \
+  { 0x1c0cffce, 0xfc8d, 0x4e44, { 0x8c, 0x78, 0x9c, 0x9e, 0x5b, 0x53, 0x0d, 0x36 } }
+
+enum { UsbRdEventNone, UsbRdEventState, UsbRdEventTransfer };
+enum { UsbRdTransferActive, UsbRdTransferOk };
+enum { UsbRdStateConnected };
+
+typedef union {
+  UINT32  DeviceState;
+  struct {
+    UINT32  Status;
+    UINT8   Endpoint;
+    UINTN   Bytes;
+    VOID    *Buffer;
+  } Transfer;
+  UINT64  Raw[8];
+} USBRD_EVENT_DATA;
+
+typedef struct {
+  CONST VOID  *DeviceDescriptor;
+  CONST VOID  **Descriptors;
+  CONST VOID  *SsDeviceDescriptor;
+  CONST VOID  **SsDescriptors;
+  CONST VOID  *Qualifier;
+  CONST VOID  *Bos;
+  UINT8       StringCount;
+  CONST VOID  **Strings;
+} USBRD_DESCRIPTOR_SET;
+
+typedef struct {
+  UINT64      Revision;
+  VOID        *Start;
+  EFI_STATUS  (EFIAPI *Send)(UINT8 Endpoint, UINTN Size, VOID *Buffer);
+  EFI_STATUS  (EFIAPI *HandleEvent)(UINT32 *Event, UINTN *Size, USBRD_EVENT_DATA *Data);
+  EFI_STATUS  (EFIAPI *AllocateTransferBuffer)(UINTN Size, VOID **Buffer);
+  EFI_STATUS  (EFIAPI *FreeTransferBuffer)(VOID *Buffer);
+  EFI_STATUS  (EFIAPI *Stop)(VOID);
+  EFI_STATUS  (EFIAPI *AbortXfer)(UINT8 Endpoint);
+  EFI_STATUS  (EFIAPI *SetEndpointStallState)(UINT8 Endpoint, BOOLEAN Stall);
+  EFI_STATUS  (EFIAPI *StartEx)(USBRD_DESCRIPTOR_SET *Set);
+} USBRD_PROTOCOL;
+
+// A fastboot device (Google's IDs, interface ff/42/03), as the stock fastboot tool looks for it; super and high speed.
+STATIC CONST UINT8 mUsbRdDevice[18] = { 18, 1, 0x10, 0x02, 0, 0, 0, 64, 0xd1, 0x18, 0x0d, 0xd0, 0x00, 0x01, 1, 2, 3, 1 };
+STATIC CONST UINT8 mUsbRdSsDevice[18] = { 18, 1, 0x00, 0x03, 0, 0, 0, 9, 0xd1, 0x18, 0x0d, 0xd0, 0x00, 0x01, 1, 2, 3, 1 };
+STATIC CONST UINT8 mUsbRdConfig[32] = {
+  9, 2, 32, 0, 1, 1, 0, 0x80, 0x50,
+  9, 4, 0, 0, 2, 0xff, 0x42, 0x03, 4,
+  7, 5, USBRD_EP_IN, 2, 0x00, 0x02, 0,
+  7, 5, USBRD_EP_OUT, 2, 0x00, 0x02, 0,
+};
+STATIC CONST UINT8 mUsbRdSsConfig[44] = {
+  9, 2, 44, 0, 1, 1, 0, 0x80, 0x10,
+  9, 4, 0, 0, 2, 0xff, 0x42, 0x03, 4,
+  7, 5, USBRD_EP_IN, 2, 0x00, 0x04, 0, 6, 0x30, 4, 0, 0, 0,
+  7, 5, USBRD_EP_OUT, 2, 0x00, 0x04, 0, 6, 0x30, 4, 0, 0, 0,
+};
+STATIC CONST UINT8 mUsbRdQualifier[10] = { 10, 6, 0x00, 0x02, 0xff, 0xff, 0xff, 64, 1, 0 };
+STATIC CONST UINT8 mUsbRdBos[42] = {
+  5, 0x0f, 42, 0, 3,
+  7, 0x10, 0x02, 0x06, 0, 0, 0,
+  10, 0x10, 0x03, 0x00, 0x0e, 0x00, 0x01, 0x07, 0x65, 0x00,
+  20, 0x10, 0x0a, 0x00, 0x01, 0, 0, 0, 0x00, 0x11, 0, 0, 0x30, 0x40, 0x0a, 0x00, 0xb0, 0x40, 0x0a, 0x00,
+};
+STATIC CONST UINT8 mUsbRdLang[4] = { 4, 3, 0x09, 0x04 };
+STATIC CONST UINT8 mUsbRdMaker[14] = { 14, 3, 'U', 0, 'n', 0, 'i', 0, 'X', 0, 'N', 0, 'U', 0 };
+STATIC CONST UINT8 mUsbRdProduct[30] = { 30, 3, 'u', 0, 'n', 0, 'i', 0, 'x', 0, 'n', 0, 'u', 0, '-', 0, 'r', 0, 'a', 0,
+                                         'm', 0, 'd', 0, 'i', 0, 's', 0, 'k', 0 };
+STATIC CONST UINT8 mUsbRdIface[18] = { 18, 3, 'f', 0, 'a', 0, 's', 0, 't', 0, 'b', 0, 'o', 0, 'o', 0, 't', 0 };
+
+typedef struct {
+  USBRD_PROTOCOL  *Usb;
+  UINT8           *Rx;
+  UINT8           *Tx;
+  BOOLEAN         Connected;
+} USBRD;
+
+STATIC VOID DiagDraw (CONST CHAR16 *Text, UINTN Row);
+
+// 1 for a well-formed descriptor, 0 for anything that is not one, -1 for a descriptor that is malformed.
+STATIC
+INTN
+UsbRamdiskDescriptor (CONST VOID *Input, UINTN InputSize, UINT64 *Size, UINT32 *Crc)
+{
+  DARWIN_USB_RAMDISK  Descriptor;
+
+  if ((Input == NULL) || (InputSize < 8) || (CompareMem (Input, "DBUSBRD1", 8) != 0)) { return 0; }
+  if (InputSize != sizeof (Descriptor)) { return -1; }
+  CopyMem (&Descriptor, Input, sizeof (Descriptor));
+  if ((Descriptor.Version != 1) || (Descriptor.Reserved != 0) || (Descriptor.Size == 0) ||
+      (Descriptor.Size & (EFI_PAGE_SIZE - 1)) || (Descriptor.Size > 0xFFFFF000ULL)) { return -1; }
+  *Size = Descriptor.Size;
+  *Crc = Descriptor.Crc32;
+  return 1;
+}
+
+// Pump the controller's events until the transfer on Endpoint ends; *Bytes is its byte count. EFI_ABORTED: the cable
+// state changed (Rd->Connected says to what). EFI_TIMEOUT: no event for Limit microseconds (the transfer is aborted).
+STATIC
+EFI_STATUS
+UsbRdWait (USBRD *Rd, UINT8 Endpoint, UINT64 Limit, UINT64 *Bytes)
+{
+  UINT32            Event;
+  UINTN             Size;
+  USBRD_EVENT_DATA  Data;
+  UINT64            Idle;
+
+  for (Idle = 0; ; ) {
+    Event = UsbRdEventNone;
+    Size = 0;
+    ZeroMem (&Data, sizeof (Data));
+    Rd->Usb->HandleEvent (&Event, &Size, &Data);
+    if (Event == UsbRdEventState) {
+      Rd->Connected = (Data.DeviceState == UsbRdStateConnected);
+      return EFI_ABORTED;
+    }
+    if ((Event == UsbRdEventTransfer) && (Data.Transfer.Endpoint == Endpoint)) {
+      *Bytes = Data.Transfer.Bytes;
+      return (Data.Transfer.Status == UsbRdTransferOk) ? EFI_SUCCESS : EFI_DEVICE_ERROR;
+    }
+    if (Event != UsbRdEventNone) { Idle = 0; continue; }
+    if (Idle >= Limit) {
+      if (Endpoint != 0) { Rd->Usb->AbortXfer (Endpoint); }
+      return EFI_TIMEOUT;
+    }
+    gBS->Stall (USBRD_IDLE_US);
+    Idle += USBRD_IDLE_US;
+  }
+}
+
+STATIC
+EFI_STATUS
+UsbRdSend (USBRD *Rd, CONST CHAR8 *Code, CONST CHAR8 *Text)
+{
+  UINTN       Length;
+  UINT64      Bytes;
+  EFI_STATUS  Status;
+
+  Length = AsciiSPrint ((CHAR8 *)Rd->Tx, 64, "%a%a", Code, Text);
+  Status = Rd->Usb->Send (USBRD_EP_IN, Length, Rd->Tx);
+  return EFI_ERROR (Status) ? Status : UsbRdWait (Rd, USBRD_EP_IN, USBRD_DATA_WAIT_US, &Bytes);
+}
+
+// The image, DownloadSize bytes (<= Size) from "download:" into Destination. The remainder up to Size is zero-filled.
+// TRUE when every byte came and the CRC32 of Size bytes matches.
+STATIC
+BOOLEAN
+UsbRdDownload (USBRD *Rd, UINT8 *Destination, UINT64 Size, UINT64 DownloadSize, UINT32 Crc)
+{
+  CHAR8       Reply[16];
+  CHAR16      Line[96];
+  UINT64      Got;
+  UINT64      Want;
+  UINT64      Bytes;
+  UINT32      Actual;
+  EFI_STATUS  Status;
+
+  AsciiSPrint (Reply, sizeof (Reply), "%08x", (UINT32)DownloadSize);
+  if (EFI_ERROR (UsbRdSend (Rd, "DATA", Reply))) { return FALSE; }
+  for (Got = 0; Got < DownloadSize; Got += Bytes) {
+    Want = MIN (DownloadSize - Got, USBRD_CHUNK);
+    Status = Rd->Usb->Send (USBRD_EP_OUT, (UINTN)Want, Rd->Rx);
+    if (!EFI_ERROR (Status)) { Status = UsbRdWait (Rd, USBRD_EP_OUT, USBRD_DATA_WAIT_US, &Bytes); }
+    if (EFI_ERROR (Status) || (Bytes == 0)) { break; }
+    Bytes = MIN (Bytes, Want);  // a controller that reports more than was asked for must not carry the copy past the end
+    CopyMem (Destination + Got, Rd->Rx, (UINTN)Bytes);
+    if (((Got + Bytes) >> 26) != (Got >> 26)) {
+      UnicodeSPrint (Line, sizeof (Line), L"USB RAMDISK %lu / %lu MiB", (Got + Bytes) >> 20, DownloadSize >> 20);
+      DiagDraw (Line, 1);
+    }
+  }
+  if (Got != DownloadSize) {
+    UsbRdSend (Rd, "FAIL", "short download");
+    return FALSE;
+  }
+  if (DownloadSize < Size) {
+    ZeroMem (Destination + DownloadSize, (UINTN)(Size - DownloadSize));
+  }
+  Actual = 0;
+  gBS->CalculateCrc32 (Destination, (UINTN)Size, &Actual);
+  if (Actual != Crc) {
+    UnicodeSPrint (Line, sizeof (Line), L"USB RAMDISK CRC %08x, WANT %08x", Actual, Crc);
+    DiagDraw (Line, 1);
+    UsbRdSend (Rd, "FAIL", "crc32 mismatch");
+    return FALSE;
+  }
+  UnicodeSPrint (Line, sizeof (Line), L"USB RAMDISK %lu MiB CRC OK", Size >> 20);
+  DiagDraw (Line, 1);
+  return !EFI_ERROR (UsbRdSend (Rd, "OKAY", ""));
+}
+
+// "upload": DATA<size>, the log region in USBRD_CHUNK pieces (through the transfer buffer: the controller sends from
+// memory it owns), then OKAY. FALSE when the host went away.
+STATIC
+BOOLEAN
+UsbRdUpload (USBRD *Rd)
+{
+  CHAR8       Reply[16];
+  UINT64      Sent;
+  UINT64      Want;
+  UINT64      Bytes;
+  EFI_STATUS  Status;
+
+  AsciiSPrint (Reply, sizeof (Reply), "%08x", (UINT32)USBRD_LOG_SIZE);
+  if (EFI_ERROR (UsbRdSend (Rd, "DATA", Reply))) { return FALSE; }
+  for (Sent = 0; Sent < USBRD_LOG_SIZE; Sent += Want) {
+    Want = MIN (USBRD_LOG_SIZE - Sent, USBRD_CHUNK);
+    CopyMem (Rd->Rx, (CONST VOID *)(UINTN)(USBRD_LOG_BASE + Sent), (UINTN)Want);
+    Status = Rd->Usb->Send (USBRD_EP_IN, (UINTN)Want, Rd->Rx);
+    if (!EFI_ERROR (Status)) { Status = UsbRdWait (Rd, USBRD_EP_IN, USBRD_DATA_WAIT_US, &Bytes); }
+    if (EFI_ERROR (Status)) { return FALSE; }
+  }
+  DiagDraw (L"USB RAMDISK: LOG REGION SENT, 2 MiB", 2);
+  return !EFI_ERROR (UsbRdSend (Rd, "OKAY", ""));
+}
+
+// Serve fastboot commands until the image is in Destination and the host said "continue".
+STATIC
+EFI_STATUS
+UsbRdServe (USBRD *Rd, UINT8 *Destination, UINT64 Size, UINT32 Crc)
+{
+  CHAR8       Command[USBRD_COMMAND_BYTES + 1];
+  CHAR8       Value[24];
+  UINT64      Bytes;
+  BOOLEAN     Received;
+  EFI_STATUS  Status;
+
+  Received = FALSE;
+  for (;;) {
+    if (!Rd->Connected) {
+      if (UsbRdWait (Rd, 0, USBRD_HOST_WAIT_US, &Bytes) == EFI_TIMEOUT) { break; }
+      continue;
+    }
+    Status = Rd->Usb->Send (USBRD_EP_OUT, USBRD_COMMAND_BYTES, Rd->Rx);
+    if (EFI_ERROR (Status)) { return Status; }
+    Status = UsbRdWait (Rd, USBRD_EP_OUT, USBRD_HOST_WAIT_US, &Bytes);
+    if (Status == EFI_TIMEOUT) { break; }
+    if (EFI_ERROR (Status) || (Bytes == 0)) { continue; }
+    Bytes = MIN (Bytes, USBRD_COMMAND_BYTES);
+    CopyMem (Command, Rd->Rx, (UINTN)Bytes);
+    Command[Bytes] = 0;
+    if (AsciiStrCmp (Command, "getvar:product") == 0) {
+      UsbRdSend (Rd, "OKAY", "unixnu-ramdisk");
+    } else if (AsciiStrCmp (Command, "getvar:max-download-size") == 0) {
+      AsciiSPrint (Value, sizeof (Value), "0x%08x", (UINT32)Size);
+      UsbRdSend (Rd, "OKAY", Value);
+    } else if (AsciiStrnCmp (Command, "download:", 9) == 0) {
+      UINT64  DownloadSize;
+
+      DownloadSize = (AsciiStrLen (Command) == 17) ? AsciiStrHexToUint64 (Command + 9) : 0;
+      if ((DownloadSize == 0) || (DownloadSize > Size)) {
+        UsbRdSend (Rd, "FAIL", "size exceeds descriptor");
+      } else {
+        Received = UsbRdDownload (Rd, Destination, Size, DownloadSize, Crc);
+      }
+    } else if (AsciiStrCmp (Command, "upload") == 0) {
+      UsbRdUpload (Rd);
+    } else if (AsciiStrCmp (Command, "continue") == 0) {
+      if (Received) {
+        UsbRdSend (Rd, "OKAY", "");
+        return EFI_SUCCESS;
+      }
+      UsbRdSend (Rd, "FAIL", "no image yet");
+    } else if (AsciiStrCmp (Command, "reboot") == 0) {
+      UsbRdSend (Rd, "OKAY", "");
+      gST->RuntimeServices->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
+    } else {
+      UsbRdSend (Rd, "FAIL", "unsupported");
+    }
+  }
+  DiagDraw (L"USB RAMDISK: NO HOST, FIRMWARE KEPT", 1);
+  return EFI_TIMEOUT;
+}
+
+// Receive the image into Destination (Size bytes, CRC32 Crc) over USB. The controller is stopped on return.
+STATIC
+EFI_STATUS
+UsbRamdiskReceive (VOID *Destination, UINT64 Size, UINT32 Crc)
+{
+  STATIC CONST EFI_GUID  UsbGuid = QCOM_USB_DEVICE_PROTOCOL_GUID;
+  STATIC CONST EFI_GUID  InitGuid = QCOM_USB_INIT_EVENT_GUID;
+  STATIC CONST VOID      *Config[1] = { mUsbRdConfig };
+  STATIC CONST VOID      *SsConfig[1] = { mUsbRdSsConfig };
+  STATIC CONST VOID      *Strings[5] = { mUsbRdLang, mUsbRdMaker, mUsbRdProduct, mUsbRdProduct, mUsbRdIface };
+  USBRD_DESCRIPTOR_SET   Set;
+  USBRD                  Rd;
+  EFI_EVENT              Event;
+  EFI_STATUS             Status;
+
+  ZeroMem (&Rd, sizeof (Rd));
+  // Ask the platform for the controller in peripheral mode, as the stock fastboot does.
+  if (!EFI_ERROR (gBS->CreateEventEx (EVT_NOTIFY_SIGNAL, TPL_CALLBACK, EfiEventEmptyFunction, NULL, &InitGuid, &Event))) {
+    gBS->SignalEvent (Event);
+    gBS->CloseEvent (Event);
+  }
+  Status = gBS->LocateProtocol ((EFI_GUID *)&UsbGuid, NULL, (VOID **)&Rd.Usb);
+  if (EFI_ERROR (Status)) {
+    DiagDraw (L"USB RAMDISK: NO USB DEVICE PROTOCOL", 1);
+    return Status;
+  }
+  ZeroMem (&Set, sizeof (Set));
+  Set.DeviceDescriptor = mUsbRdDevice;
+  Set.Descriptors = Config;
+  Set.SsDeviceDescriptor = mUsbRdSsDevice;
+  Set.SsDescriptors = SsConfig;
+  Set.Qualifier = mUsbRdQualifier;
+  Set.Bos = mUsbRdBos;
+  Set.StringCount = 5;
+  Set.Strings = Strings;
+  Status = Rd.Usb->StartEx (&Set);
+  if (EFI_ERROR (Status)) {
+    DiagDraw (L"USB RAMDISK: USB START FAILED", 1);
+    return Status;
+  }
+  Status = Rd.Usb->AllocateTransferBuffer (USBRD_CHUNK, (VOID **)&Rd.Rx);
+  if (!EFI_ERROR (Status)) { Status = Rd.Usb->AllocateTransferBuffer (64, (VOID **)&Rd.Tx); }
+  if (!EFI_ERROR (Status)) {
+    // The firmware's boot-option watchdog (five minutes) must not reset the device during a long upload.
+    gBS->SetWatchdogTimer (0, 0, 0, NULL);
+    DiagDraw (L"USB RAMDISK: WAITING FOR fastboot stage", 1);
+    Status = UsbRdServe (&Rd, Destination, Size, Crc);
+  }
+  if (Rd.Rx != NULL) { Rd.Usb->FreeTransferBuffer (Rd.Rx); }
+  if (Rd.Tx != NULL) { Rd.Usb->FreeTransferBuffer (Rd.Tx); }
+  Rd.Usb->Stop ();
+  return Status;
+}
+
+#endif

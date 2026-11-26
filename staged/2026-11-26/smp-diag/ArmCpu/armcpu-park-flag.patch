@@ -1,0 +1,31 @@
+ArmCpu: a parked core sets its bit in xnu's ruan_cpu_parked (weak) so the kernel stops signalling it. On top of armcpu-smp-events.patch.
+
+--- a/ArmCpu.cpp	2026-11-26 18:38:01.149223376 +0530
++++ b/ArmCpu.cpp	2026-11-26 18:38:10.603612393 +0530
+@@ -310,8 +310,10 @@
+ // Parks a core that cannot join for good, in WFI with its virtual timer and Group 1 interrupts off, so that it waits blocked:
+ // Gunyah traps WFI and blocks the vCPU but runs WFE in the guest, and a vCPU left in WFE kept its physical core until the host's
+ // watchdog rebooted the phone.
+-static void __attribute__ ((noreturn)) parkCore (void)
++extern "C" volatile uint32_t ruan_cpu_parked __attribute__ ((weak_import));   // xnu: never un-disable this core's signals
++static void __attribute__ ((noreturn)) parkCore (uint32_t core = 32)
+ {
++  if (core < 32 && &ruan_cpu_parked != nullptr) { __atomic_fetch_or (&ruan_cpu_parked, 1U << core, __ATOMIC_RELEASE); }
+   __asm__ volatile ("msr daifset, #0xf\n msr cntv_ctl_el0, xzr\n isb" ::: "memory");
+   uint64_t pfr0;
+   __asm__ volatile ("mrs %0, id_aa64pfr0_el1" : "=r" (pfr0));
+@@ -769,12 +771,12 @@
+     armcpu_smp_seen_mpidr[logicalId] = static_cast<uint32_t> (mpidr);
+     // A failure is recorded and the core parked (rather than a panic that hides the other cores' state).
+     armEvent ("armcpu: cpu%u initCPU on the new core, mpidr %#llx (want %#llx)", logicalId, mpidr, affinity);
+-    if ((mpidr & 0xffff) != (affinity & 0xffff)) { armcpu_smp_fail[logicalId] = 1; armEvent ("armcpu: cpu%u PARKED: MPIDR mismatch", logicalId); parkCore (); }
++    if ((mpidr & 0xffff) != (affinity & 0xffff)) { armcpu_smp_fail[logicalId] = 1; armEvent ("armcpu: cpu%u PARKED: MPIDR mismatch", logicalId); parkCore (logicalId); }
+     if (!gRemoteGic && !wakeRedistributor (true)) {
+       armcpu_smp_fail[logicalId] = 2;
+       armEvent ("armcpu: cpu%u PARKED: redistributor (frame va %#lx, last typer probe %#x/%#x)", logicalId, redist,
+                 armcpu_gic_typer_probe[0], armcpu_gic_typer_probe[1]);
+-      parkCore ();
++      parkCore (logicalId);
+     }
+     armcpu_smp_step[logicalId] = 6;
+     armEvent ("armcpu: cpu%u GICR frame %#lx awake (WAKER %#x)%s", logicalId, redist - redistBase, read32 (redist, 0x14),

@@ -1,0 +1,25 @@
+--- a/package/RuanGpuPower.c	2026-11-26 16:06:57.367196592 +0530
++++ b/package/RuanGpuPower.c	2026-11-26 16:07:29.090826164 +0530
+@@ -949,7 +949,10 @@
+ 				}
+ 			}
+ 
+-			if (res[0].found && res[1].found) (void)ruan_arc_vote(&res[0], &res[1], 64, &gpu_vote);
++			/* ruan-gpu-corner=<RPMh level>: GX corner for the active level (DT gpu-pwrlevels: 0x100 NOM = 734 MHz); iPadOS default since rbu124u */
++			uint32_t corner = 256;   /* NOM: 734 MHz; was 64 LOW_SVS 295 MHz */
++			PE_parse_boot_argn("ruan-gpu-corner", &corner, sizeof(corner));
++			if (res[0].found && res[1].found) (void)ruan_arc_vote(&res[0], &res[1], corner, &gpu_vote);
+ 			if (res[2].found && res[1].found) (void)ruan_arc_vote(&res[2], &res[1], 48, &gmu_vote);
+ 			if (res[6].found) cn0_addr = res[6].address;
+ 			if (res[3].found) sh0_addr = res[3].address;
+@@ -976,7 +979,9 @@
+ 	perf[4] = 0;              /* Level 0: 0 kHz */
+ 	perf[5] = gpu_vote;       /* Level 1: active vote */
+ 	perf[6] = 0xffffffffu;    /* Level 1: cx_vote disabled */
+-	perf[7] = 295000;         /* Level 1: 295 MHz (lowest active on A710) */
++	perf[7] = 734000;         /* Level 1: 734 MHz at NOM (ruan-gpu-khz overrides); was 295 MHz */
++	/* ruan-gpu-khz=<kHz>: the active level's clock; must match ruan-gpu-corner's DT pwrlevel (734000 with 0x100) */
++	{ uint32_t khz = 0; if (PE_parse_boot_argn("ruan-gpu-khz", &khz, sizeof(khz)) && khz >= 295000 && khz <= 940000) perf[7] = khz; }
+ 	perf[50] = 0;             /* GMU Level 0: vote off */
+ 	perf[51] = 0;             /* GMU Level 0: 0 kHz */
+ 	perf[52] = gmu_vote;      /* GMU Level 1: active vote */

@@ -1,0 +1,63 @@
+--- a/package/RuanButtons.c	2026-11-26 11:32:40.143010519 +0530
++++ b/package/RuanButtons.c	2026-11-26 11:33:53.471533115 +0530
+@@ -676,21 +676,17 @@
+ void
+ hakios_buttons_init(void)
+ {
+-	uint32_t enabled = 0, steps = 5;
++	uint32_t enabled = 1, steps = 5;
+ 	thread_t thread;
+ 
+ 	press_power_init();
+ 
+ 	/*
+-	 * On with the touch screen (the phone, somebody at it) unless buttons=0 says otherwise: a hand
+-	 * has pressed all three keys and each press and release was read as it was made.
++	 * ruan: on by default (the macOS command line has no room for a boot-arg) unless buttons=0 or
++	 * garnet_buttons=0 says otherwise: a hand has pressed all three keys and each was read as it was made.
+ 	 */
+-	if (!PE_parse_boot_argn("buttons", &enabled, sizeof(enabled)) &&
+-	    !PE_parse_boot_argn("garnet_buttons", &enabled, sizeof(enabled))) {
+-		uint32_t touch_screen = 0;
+-
+-		enabled = (PE_parse_boot_argn("touchscreen", &touch_screen, sizeof(touch_screen)) && touch_screen != 0) ||
+-		          (PE_parse_boot_argn("garnet_touch", &touch_screen, sizeof(touch_screen)) && touch_screen != 0);
++	if (!PE_parse_boot_argn("buttons", &enabled, sizeof(enabled))) {
++		PE_parse_boot_argn("garnet_buttons", &enabled, sizeof(enabled));
+ 	}
+ 	if (!enabled) {
+ 		return;
+--- a/package/NativeHidInput.cpp	2026-11-26 11:32:40.406058570 +0530
++++ b/package/NativeHidInput.cpp	2026-11-26 11:33:09.141634608 +0530
+@@ -39,7 +39,7 @@
+     0x75,0x01,0x95,0x04,0x81,0x02,
+     0x75,0x04,0x95,0x01,0x81,0x03,0xc0
+ };
+-// buttons-consumer=1 (macOS): report 2 moves out of the keyboard collection into its own Consumer Control collection, as
++// buttons-consumer=1 (always on macOS): report 2 moves out of the keyboard collection into its own Consumer Control collection, as
+ // UniXNU-xiaomipad8pro PianoInput/HidReports.h kButtonsDescriptor does (Power 0x30, Volume Increment 0xE9, Volume Decrement 0xEA).
+ // Bit 0 (Menu/Home) becomes padding so buttonsAction's mask (bits 1..3) is sent unchanged.
+ enum {kKeyboardBytes=44};   // descriptor[] up to its report 2 part (0x85,0x02)
+@@ -348,7 +348,8 @@
+         if(!setProperty("HIDDefaultBehavior",true))return false;
+         // touch-pointer=1: touch goes only to the separate pointer device, never into the combined one.
+         pointer=touchOnly && bootArgOne("touch-pointer");
+-        consumerButtons=!touchOnly && bootArgOne("buttons-consumer");
++        // macOS: always (no Menu/Home usage there, and no boot-arg room); iPadOS keeps the opt-in.
++        consumerButtons=!touchOnly && (NATIVE_HID_MACOS || bootArgOne("buttons-consumer"));
+         touchEnabled=!touchOnly && !bootArgOne("touch-pointer") && bootArgOne("sheng-touch-hid");
+         // DigitizerCollectionDispatch: IOHIDEventDriver (setDigitizerProperties) reads it up the service plane and then sends each
+         // report's fingers as one digitizer collection with a child per finger. Without it a touch screen gets one event per finger,
+--- a/package/RuanMacBootProgress.c	2026-11-26 11:32:40.578947530 +0530
++++ b/package/RuanMacBootProgress.c	2026-11-26 11:33:09.141690438 +0530
+@@ -221,8 +221,8 @@
+ 	 * nothing without ruan-gpu (or ruan-gpu-survey / fb-gpu-stream) */
+ 	extern void ruan_gpu_survey(void);
+ 	ruan_gpu_survey();
+-	/* Touch, buttons and battery (package/RuanInput.c, as iPadOS BootProgress.c): each starts only with its boot-arg
+-	 * (ruan_touch=1, garnet_buttons=1); they feed NativeHidInput (offline-hid-input=1, touch-pointer=1, buttons-consumer=1). */
++	/* Touch, buttons and battery (package/RuanInput.c, as iPadOS BootProgress.c): touch with ruan_touch=1, buttons and battery
++	 * always (buttons=0 turns buttons off); they feed NativeHidInput (offline-hid-input=1, touch-pointer=1; consumer report on macOS). */
+ 	extern void ruan_input_start(void);
+ 	ruan_input_start();
+ 	if (ramoops) {

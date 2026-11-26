@@ -20,6 +20,7 @@
 #include <libkern/c++/OSSerialize.h>
 #include <libkern/c++/OSData.h>
 #include <kern/task.h>
+#include <kern/thread.h>
 #include <kern/thread_call.h>
 #include <sys/proc.h>
 #include <sys/proc_internal.h>
@@ -789,8 +790,18 @@ void native_legacy_display_late_probe(void) {
 		ruan_handoff_start(nub);
 		// Touch and buttons: the HID publisher (package/NativeHidInput.cpp + HidInputProbe.cpp, from UniXNU-j716f), started the
 		// way j716f does it, once the display is up (offline-hid-input=1 offline-hid-home=1 sheng-touch-hid=1).
-		extern void native_hid_input_probe(void);
-		native_hid_input_probe();
+		/* On its own thread: it waits for IOHIDResource, and the inline 5 s wait lost the race on slow cpus=1 boots (no touch
+		 * pointer device at all, 2026-11-26 k4c), while a long inline wait would hold up the display start. */
+		{
+			extern void native_hid_input_probe(void);
+			thread_t hid_thread = THREAD_NULL;
+			if (kernel_thread_start([](void *, wait_result_t) { native_hid_input_probe(); },
+			    nullptr, &hid_thread) == KERN_SUCCESS) {
+				thread_deallocate(hid_thread);
+			} else {
+				native_hid_input_probe();
+			}
+		}
 		// Live USB terminal, screen capture and (opt-in) reboot to fastboot: package/UsbDebugCdc.cpp, off unless ruan-usbdbg=1.
 		extern void native_usb_debug_probe(void);
 		native_usb_debug_probe();

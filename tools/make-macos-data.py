@@ -255,13 +255,25 @@ def main():
                      # CPU, 2026-11-26) and slows the whole user session; no audio driver yet anyway
                      'com.apple.audio.coreaudiod': True,
                      # then audiomxd took over the spinning (90k log lines in 17 min)
-                     'com.apple.audiomxd': True})
+                     'com.apple.audiomxd': True,
+                     # waits 300 s for Wi-Fi firmware that this port never loads
+                     'com.apple.wifiFirmwareLoader': True})
     tree.write(LAUNCHD_DISABLED, plistlib.dumps(disabled, fmt=plistlib.FMT_XML), 0o644)
     # The user's heavy agents, which only fill the RAM Data volume and memory here (DroidVM stage-gpu-plugin.py:44,300; pixel8a).
     tree.write('private/var/db/com.apple.xpc.launchd/disabled.501.plist', plistlib.dumps(
         {k: True for k in ('com.apple.duetexpertd', 'com.apple.routined', 'com.apple.intelligenceplatformd', 'com.apple.imagent')},
         fmt=plistlib.FMT_XML), 0o644)
     tree.write('private/var/db/com.apple.xpc.launchd/disabled.migrated', b'', 0o644)
+    # configd's InterfaceNamer waits for IOKit to go quiet (two entries never do here) before it names a new interface, and
+    # clocksyncd, so WindowServer, waits for en0: 240.0 s on every boot (boot-time agent 2026-11-26, *START*/*TIMEOUT* in the log).
+    # An interface already in this database is named at once. RuanDummyEth's fixed MAC 02:72:75:61:00:01.
+    tree.write('Library/Preferences/SystemConfiguration/NetworkInterfaces.plist', plistlib.dumps({
+        'Interfaces': [{
+            'BSD Name': 'en0', 'IOBuiltin': True, 'IOInterfaceNamePrefix': 'en', 'IOInterfaceType': 6, 'IOInterfaceUnit': 0,
+            'IOMACAddress': bytes.fromhex('027275610001'),
+            'IOPathMatch': 'IOService:/ArmDTPlatform/RuanDummyEth/IOEthernetInterface',
+            'SCNetworkInterfaceType': 'Ethernet', 'SCNetworkInterfaceInfo': {'UserDefinedName': 'Ethernet'}}]},
+        fmt=plistlib.FMT_XML), 0o644)
 
     # OSLOG_DAEMON=<adrenoprobed>: UniXNU's probe daemon (drivers/AdrenoMetal, built by build-adreno-metal-plugin-ruanmac.py) as a
     # RunAtLoad job; it writes the unified log (every process's os_log lines, WindowServer's included) as gzip text to

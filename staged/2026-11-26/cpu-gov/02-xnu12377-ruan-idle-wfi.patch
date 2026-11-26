@@ -1,0 +1,73 @@
+ruan: timer-bounded WFI idle for xnu-12377 (ruan-idle-wfi-us=N, default 0 = today's spin). Port of UniXNU-ruan
+patches/xnu/ruan-idle-wfi.patch; needs ruan-smp-sigp.patch first (add after it in ufs.series). The macOS build has no ruan-sleep, so
+ruan_idle_wfi_sleep_us is left out.
+
+--- a/osfmk/arm64/cpu.c
++++ b/osfmk/arm64/cpu.c
+@@ -115,6 +115,20 @@
+ //  1 : normal
+ //  2 : overhead simulation (delay & flags)
+ TUNABLE(unsigned int, wfi, "wfi", 1);
++
++/* ruan (port of UniXNU-ruan patches/xnu/ruan-idle-wfi.patch to xnu-12377): timer-bounded WFI idle. Under Gunyah a secondary's
++ * SIGPdisabled is never cleared (no SGI is ever taken: USB `cpu` sgi=0), so cpu_idle refuses WFI and every idle core spins at its
++ * domain's clock. ruan-idle-wfi-us=N (default 0 = that spin) lets a core whose interrupt handler is installed WFI anyway with its
++ * idle timer at most N us ahead; SIGPdisabled stays set, so senders still skip the IPI exactly as today and a thread made runnable
++ * for this core waits at most N us (processor_idle re-checks the run queue after each wake). ruan_idle_wfi_count: WFIs per CPU. */
++TUNABLE(uint32_t, ruan_idle_wfi_us, "ruan-idle-wfi-us", 0);
++uint64_t ruan_idle_wfi_count[MAX_CPUS];
++
++static void
++ruan_idle_timer_nop(__unused void *refcon, uint64_t *new_timeout_ticks)
++{
++	*new_timeout_ticks = 0;
++}
+ #if DEVELOPMENT || DEBUG
+ 
+ // wfi_flags
+@@ -487,6 +501,8 @@
+ 	processor_t     processor = current_processor();
+ 	uint64_t        new_idle_timeout_ticks = 0x0ULL, lastPop;
+ 	bool idle_disallowed = false;
++	/* ruan: without an installed handler the core's timer may not be routed yet, and a WFI could then never end. */
++	const bool ruan_wfi = ruan_idle_wfi_us != 0 && wfi != 0 && cpu_data_ptr->interrupt_handler != NULL;
+ 
+ 	if (__improbable((!idle_enable))) {
+ 		idle_disallowed = true;
+@@ -495,7 +511,7 @@
+ 		 * core that missed its start-up self-IPI would spin in the idle thread forever. A started core takes interrupts: clear it. */
+ 		if (sheng_sigp_recover(cpu_data_ptr)) {
+ 			sheng_idle_sigp_cleared++;
+-		} else {
++		} else if (!ruan_wfi) {
+ 			sheng_idle_sigp_refused++;
+ 			idle_disallowed = true;
+ 		}
+@@ -577,6 +593,17 @@
+ 		cpu_data_ptr->cpu_idle_notify(cpu_data_ptr->cpu_id, TRUE, &new_idle_timeout_ticks);
+ 	}
+ 
++	if (ruan_wfi) {
++		uint64_t bound = 0;
++		nanoseconds_to_absolutetime((uint64_t)ruan_idle_wfi_us * NSEC_PER_USEC, &bound);
++		if (cpu_data_ptr->idle_timer_notify == NULL) {
++			cpu_data_ptr->idle_timer_notify = ruan_idle_timer_nop;   /* timer_intr calls it unchecked once the deadline passes */
++		}
++		if (new_idle_timeout_ticks == 0x0ULL || new_idle_timeout_ticks > bound) {
++			new_idle_timeout_ticks = bound;
++		}
++	}
++
+ 	if (cpu_data_ptr->idle_timer_notify != NULL) {
+ 		if (new_idle_timeout_ticks == 0x0ULL) {
+ 			/* turn off the idle timer */
+@@ -623,6 +650,9 @@
+ #else
+ 		__builtin_arm_wfi();
+ #endif
++		if (ruan_wfi) {
++			ruan_idle_wfi_count[cpu_data_ptr->cpu_number]++;
++		}
+ 
+ #if defined(APPLETYPHOON)
+ 		// <rdar://problem/15827409> CPU1 Stuck in WFIWT Because of MMU Prefetch

@@ -1,0 +1,266 @@
+ruan SMP diagnostics (xnu-12377). Every secondary-CPU step becomes an [ev] line in the ramoops ring (package/RuanMacBootProgress.c
+ruan_smp_event), which is written uncached and survives a hard reset; steps before the MMU is on leave a per-core breadcrumb
+(ruan_smp_crumb, one 64-byte line per MPIDR Aff1) that the 1 s heartbeat prints as " c<n>=<step>@<ms>/a<ArmCpu step>":
+1 reset_vector, 2 cpu data found, 3 handler ok, 4 start_cpu, 5 common_start (MMU still off), 6 arm_init_cpu (MMU on),
+e no cpu data / bad handler, f0+n exception in LowExceptionVectorBase slot n (ESR/ELR/FAR printed). The panic reset path writes
+"reset: ..." markers before PSCI SYSTEM_RESET, so a ring that ends without one was reset from outside (watchdog / hypervisor / PMIC).
+kprintf lines (cpu_start(), arm_cpu_init() ... online) never reach ramoops; these events replace them. No effect with cpus=1
+beyond cpu0's own cpu_machine_init / first-IPI lines. Needs package/RuanMacBootProgress.c from the same set.
+
+--- a/osfmk/arm/arm_init.c	2026-11-26 18:31:43.488081842 +0530
++++ b/osfmk/arm/arm_init.c	2026-11-26 18:32:35.034922369 +0530
+@@ -710,6 +710,8 @@
+  *    Runs on S2R resume (all CPUs) and SMP boot (non-boot CPUs only).
+  */
+ 
++extern void ruan_smp_event(const char *fmt, ...) __printflike(1, 2);   /* ruan: package/RuanMacBootProgress.c, an [ev] line in ramoops */
++
+ void
+ arm_init_cpu(
+ 	cpu_data_t      *cpu_data_ptr,
+@@ -733,6 +735,12 @@
+ 
+ 
+ 	machine_set_current_thread(cpu_data_ptr->cpu_active_thread);
++	/* ruan SMP diagnostics: first C code on a secondary core (crumb 6 = MMU on, in arm_init_cpu) */
++	if (cpu_data_ptr != &BootCpuData) {
++		extern uint64_t ruan_smp_crumb[8][8];
++		ruan_smp_crumb[(cpu_data_ptr->cpu_phys_id >> 8) & 7][0] = 6;
++		ruan_smp_event("smp: cpu%d arm_init_cpu (phys %#x, MMU on)", cpu_data_ptr->cpu_number, cpu_data_ptr->cpu_phys_id);
++	}
+ 
+ #if APPLE_ARM64_ARCH_FAMILY
+ 	configure_late_apple_regs(false);
+@@ -781,6 +789,7 @@
+ 	 * drivers use mach_absolute_time() to implement rate control
+ 	 */
+ 	cpu_timebase_init(FALSE);
++	ruan_smp_event("smp: cpu%d cpu_init + timebase done", cpu_data_ptr->cpu_number);
+ 
+ #if KPERF
+ 	/* kptimer_curcpu_up() must be called after cpu_timebase_init */
+@@ -848,6 +857,7 @@
+ 	}
+ #endif
+ 
++	ruan_smp_event("smp: cpu%d secondary_cpu_main", cpu_data_ptr->cpu_number);
+ 	secondary_cpu_main(NULL);
+ }
+ 
+--- a/osfmk/arm/cpu_common.c	2026-11-26 18:31:43.888080817 +0530
++++ b/osfmk/arm/cpu_common.c	2026-11-26 18:32:35.035048738 +0530
+@@ -655,6 +655,7 @@
+ 		assert3u(os_atomic_load(&cpu_data_ptr->cpu_flags, relaxed) & (InitState | StartedState),
+ 		    ==, InitState | StartedState);
+ 		cpu_signal = os_atomic_andnot(&cpu_data_ptr->cpu_signal, SIGPdisabled, acq_rel);
++		ruan_smp_event("smp: cpu%d first IPI taken: SIGPdisabled cleared (online for cross-calls)", cpu_data_ptr->cpu_number);
+ 	}
+ 
+ 	while (cpu_signal & ~SIGPdisabled) {
+@@ -765,6 +766,8 @@
+ 	}
+ }
+ 
++extern void ruan_smp_event(const char *fmt, ...) __printflike(1, 2);   /* ruan: package/RuanMacBootProgress.c, an [ev] line in ramoops */
++
+ void
+ cpu_machine_init(void)
+ {
+@@ -776,8 +779,14 @@
+ 
+ 	bool started = os_atomic_or_orig(&cpu_data_ptr->cpu_flags, StartedState, relaxed) & StartedState;
+ 
++	if (!started) {
++		ruan_smp_event("smp: cpu%d cpu_machine_init -> PE_cpu_machine_init (GIC, timer: ArmCpu)", cpu_data_ptr->cpu_number);
++	}
+ 	/* Note: this calls IOCPURunPlatformActiveActions when resuming on boot cpu */
+ 	PE_cpu_machine_init(cpu_data_ptr->cpu_id, !started);
++	if (!started) {
++		ruan_smp_event("smp: cpu%d PE_cpu_machine_init returned, signal %#x", cpu_data_ptr->cpu_number, cpu_data_ptr->cpu_signal);
++	}
+ 
+ 	ml_init_interrupt();
+ }
+--- a/osfmk/arm64/cpu.c	2026-11-26 18:31:43.084082878 +0530
++++ b/osfmk/arm64/cpu.c	2026-11-26 18:32:35.033744931 +0530
+@@ -990,7 +990,13 @@
+ #endif
+ #endif /* CONFIG_SPTM */
+ 
+-		PE_cpu_start_internal(cpu_data_ptr->cpu_id, (vm_offset_t)NULL, (vm_offset_t)NULL);
++		{
++			extern void ruan_smp_event(const char *fmt, ...) __printflike(1, 2);   /* ruan: package/RuanMacBootProgress.c, an [ev] line in ramoops */
++			ruan_smp_event("smp: cpu%d cpu_start phys %#x reset handler %#lx: CPU_ON", cpu, cpu_data_ptr->cpu_phys_id,
++			    (unsigned long)cpu_data_ptr->cpu_reset_handler);
++			PE_cpu_start_internal(cpu_data_ptr->cpu_id, (vm_offset_t)NULL, (vm_offset_t)NULL);
++			ruan_smp_event("smp: cpu%d PE_cpu_start returned", cpu);
++		}
+ 
+ 	}
+ }
+--- a/osfmk/arm64/start.s	2026-11-26 18:31:42.388304389 +0530
++++ b/osfmk/arm64/start.s	2026-11-26 18:32:00.740516011 +0530
+@@ -100,6 +100,39 @@
+  *	x20 - Boot args pointer
+  *	x21 - CPU data pointer
+  */
++
++/*
++ * ruan SMP diagnostics: a breadcrumb per core (index MPIDR Aff1 & 7), written with plain stores so it also works with the MMU
++ * off. ruan_smp_crumb (package/RuanMacBootProgress.c) gives each core its own 64-byte line: [0] step, [1] CNTVCT, [2] ESR,
++ * [3] ELR, [4] FAR. The heartbeat cleans+invalidates the lines and prints them into ramoops once a second.
++ * Steps: 1 reset_vector, 2 cpu data found, 3 handler validated, 4 start_cpu, 5 common_start before MMU on, 0xe no cpu data /
++ * bad handler, 0xf0+n exception at LowExceptionVectorBase slot n (MMU off). Clobbers x16, x17 only.
++ */
++.macro RUAN_CRUMB step
++	mrs		x16, MPIDR_EL1
++	ubfx	x16, x16, #8, #3
++	adrp	x17, EXT(ruan_smp_crumb)@page
++	add		x17, x17, EXT(ruan_smp_crumb)@pageoff
++	add		x17, x17, x16, lsl #6
++	mov		x16, #(\step)
++	str		x16, [x17]
++	mrs		x16, CNTVCT_EL0
++	str		x16, [x17, #8]
++	dsb		sy
++.endmacro
++
++.macro RUAN_CRUMB_EXC slot
++	RUAN_CRUMB (0xf0 + \slot)
++	mrs		x16, ESR_EL1
++	str		x16, [x17, #16]
++	mrs		x16, ELR_EL1
++	str		x16, [x17, #24]
++	mrs		x16, FAR_EL1
++	str		x16, [x17, #32]
++	dsb		sy
++	b		.
++.endmacro
++
+ 	.text
+ 	.align 12
+ 	.globl EXT(LowResetVectorBase)
+@@ -131,6 +164,7 @@
+ 	// Unlock the core for debugging
+ 	msr		OSLAR_EL1, xzr
+ 	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
++	RUAN_CRUMB 1
+ 
+ #if !(defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR))
+ 	// Set low reset vector before attempting any loads
+@@ -166,6 +200,7 @@
+ 	b.eq	Lskip_cpu_reset_handler				// Not found
+ 	b		Lcheck_cpu_data_entry	// loop
+ Lfound_cpu_data_entry:
++	RUAN_CRUMB 2
+ 
+ #ifdef APPLEEVEREST
+ 	/*
+@@ -190,6 +225,7 @@
+ 	cmp		x0, x2
+ 	bne		Lskip_cpu_reset_handler
+ 1:
++	RUAN_CRUMB 3
+ 
+ #if HAS_BP_RET
+ 	bl		EXT(set_bp_ret)
+@@ -206,6 +242,7 @@
+ 
+ 	blr		x0
+ Lskip_cpu_reset_handler:
++	RUAN_CRUMB 0xe
+ 	b		.									// Hang if the handler is NULL or returns
+ 
+ 	.align 3
+@@ -247,40 +284,40 @@
+ 	.global	EXT(LowExceptionVectorBase)
+ LEXT(LowExceptionVectorBase)
+ 	/* EL1 SP 0 */
+-	b		.
++	RUAN_CRUMB_EXC 0
+ 	.align	7
+-	b		.
++	RUAN_CRUMB_EXC 1
+ 	.align	7
+-	b		.
++	RUAN_CRUMB_EXC 2
+ 	.align	7
+-	b		.
++	RUAN_CRUMB_EXC 3
+ 	/* EL1 SP1 */
+ 	.align	7
+-	b		.
++	RUAN_CRUMB_EXC 4
+ 	.align	7
+-	b		.
++	RUAN_CRUMB_EXC 5
+ 	.align	7
+-	b		.
++	RUAN_CRUMB_EXC 6
+ 	.align	7
+-	b		.
++	RUAN_CRUMB_EXC 7
+ 	/* EL0 64 */
+ 	.align	7
+-	b		.
++	RUAN_CRUMB_EXC 8
+ 	.align	7
+-	b		.
++	RUAN_CRUMB_EXC 9
+ 	.align	7
+-	b		.
++	RUAN_CRUMB_EXC 10
+ 	.align	7
+-	b		.
++	RUAN_CRUMB_EXC 11
+ 	/* EL0 32 */
+ 	.align	7
+-	b		.
++	RUAN_CRUMB_EXC 12
+ 	.align	7
+-	b		.
++	RUAN_CRUMB_EXC 13
+ 	.align	7
+-	b		.
++	RUAN_CRUMB_EXC 14
+ 	.align	7
+-	b		.
++	RUAN_CRUMB_EXC 15
+ 	.align 12, 0
+ 
+ #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR)
+@@ -309,6 +346,7 @@
+ 
+ 	.align 2
+ start_cpu:
++	RUAN_CRUMB 4
+ #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR)
+ 	// This is done right away in reset vector for pre-KTRR devices
+ 	// Set low reset vector now that we are in the KTRR-free zone
+@@ -734,6 +772,7 @@
+ 	 */
+ 
+ 	cbz		x21, 1f
++	RUAN_CRUMB 5
+ 	adrp	x0, EXT(cpu_ttep)@page
+ 	add		x0, x0, EXT(cpu_ttep)@pageoff
+ 	ldr		x0, [x0]
+--- a/osfmk/kern/debug.c	2026-11-26 18:31:44.237830787 +0530
++++ b/osfmk/kern/debug.c	2026-11-26 18:32:35.035227218 +0530
+@@ -1391,6 +1391,8 @@
+ 		freq = 24000000;
+ 	}
+ 	uint64_t start;
++	extern void boot_progress_stage(const char *);
++	boot_progress_stage("reset: panic path, PSCI SYSTEM_RESET after the wait");   /* ruan: ramoops marker */
+ 	__asm__ volatile ("isb; mrs %0, cntpct_el0" : "=r"(start));
+ 	for (;;) {
+ 		uint64_t now;
+@@ -1399,6 +1401,7 @@
+ 			break;
+ 		}
+ 	}
++	boot_progress_stage("reset: PSCI SYSTEM_RESET now (panic)");
+ 	register uint64_t x0 __asm__("x0") = 0x84000009ULL;   /* PSCI SYSTEM_RESET */
+ 	__asm__ volatile ("smc #0" : "+r"(x0) : : "x1", "x2", "x3", "memory");
+ }

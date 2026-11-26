@@ -23,3 +23,9 @@ ruan-uexc-log.patch
 ruan-vm-4k.patch
 ruan-sha3-emulate.patch
 ruan-wc-dram-unmanaged-default.patch
+# SMP: sheng sigp recovery + verify-as-log; two-cluster Edge matrix
+ruan-smp-sigp.patch
+ruan-edge-matrix.patch
+# iPadOS parity: built-in default boot-args (command line wins); >4 s wait logger
+ruan-default-bootargs.patch
+ruan-slow-wait-log.patch

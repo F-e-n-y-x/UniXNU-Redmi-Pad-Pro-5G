@@ -27,7 +27,7 @@ def mark_arm64e(path):
     magic, cputype = struct.unpack_from('<II', data, 0)
     if magic != 0xfeedfacf or cputype != 0x100000c:
         return False
-    counts = fit_cpu(data)
+    counts = fit_cpu(data, smp=os.environ.get('CPUS', '1') != '1')
     print(f'{path.name}: {counts}')
     assert not counts['eor3'], f'{path.name}: EOR3 (SHA3) left: build with -mcpu=cortex-a78'
     struct.pack_into('<I', data, 8, ARM64E)
@@ -55,16 +55,19 @@ def text_ranges(data):
     return out
 
 
-def fit_cpu(data):
+def fit_cpu(data, smp=False):
     """ruan's Cortex-A78/A55 (ARMv8.2) lacks LRCPC2 and PAC. On the single-CPU boot (cpus=1) an acquire load or release store
     is a plain one, so LDAPUR*/STLUR* become the LDUR*/STUR* of the same size and opcode (bits 29:24 011001 -> 111000); no
     pointer is signed in this build, so XPACI Xd (RustPacBoundary.c's thunks) is a NOP. EOR3 (SHA3) has no such rewrite: the
-    build must not contain it (-mcpu=cortex-a78). shortcut: valid only while the kernel runs one CPU; with SMP, rebuild instead."""
+    build must not contain it (-mcpu=cortex-a78). shortcut: the LRCPC2 rewrite is valid only while the kernel runs one CPU;
+    with smp (CPUS other than 1 in the environment, as build-macos-ramroot.sh) any LRCPC2 left is refused: build the bridge's
+    std from source for cortex-a78 (build-adreno-metal-bridge-ruanmac.py --target macos27) instead."""
     counts = {'lrcpc2': 0, 'xpaci': 0, 'eor3': 0}
     for offset, size in text_ranges(data):
         for at in range(offset, offset + size - 3, 4):
             insn = struct.unpack_from('<I', data, at)[0]
             if insn & 0x3F200C00 == 0x19000000:
+                assert not smp, f'LRCPC2 {insn:08x} at file offset {at:#x}: with SMP an acquire/release cannot become a plain access'
                 struct.pack_into('<I', data, at, (insn & ~0x3F000000) | 0x38000000)
                 counts['lrcpc2'] += 1
             elif insn & 0xFFFFFFE0 == 0xDAC143E0:

@@ -1,0 +1,527 @@
+[usb] === ruan ramoops replay begin ===
+
+[ev]   176.522 kernel entry (macOS 27.3, xnu-12377 arm64)
+
+[ev]   176.522 tunables
+
+[ev]   176.524 timeouts
+
+[ev]   176.524 locks
+
+[ev]   176.524 arm_vm_init enter
+
+[ev]   176.527 arm_vm_init returned
+
+[ev]   176.527 kprintf
+Darwin Kernel Version 25.5.0: Mon Nov 23 21:16:15 IST 2026; root:ios-obj/DEVELOPMENT_ARM64_BCM2837
+
+[ev]   176.527 vm_mem_bootstrap
+
+[ev]   176.527 pmap_steal
+pmap_startup() init/release time: 86996 microsec
+pmap_startup() 299207 page entries, 0 of them excluded memory, 1 unused
+vm_page_bootstrap: 299207 free pages, 421689 wired pages
+VM bootstrap: 30 maps, 128 entries and 16 nodes available
+Enable all vm_debug options with boot-arg vm_debug=1
+
+[ev]   176.632 kmem
+Maximum number of VM swap files: 5
+bsd_pageable            : 0xfffffff1301ea000 - 0xfffffff13232c000 (33M)
+zones                   : 0xfffffff13232c000 - 0xfffffff53232c000 (16G)
+gIOKitPageableFixed     : 0xfffffff53232c000 - 0xfffffff59232c000 (1536M)
+ipc_kernel_map          : 0xfffffff59232c000 - 0xfffffff59432c000 (32M)
+kmem_data_private_range : 0xfffffff59432c000 - 0xfffffff6fa680000 (5G)
+bufferhdr               : 0xfffffff6fa680000 - 0xfffffff6fa9c4000 (3344K)
+kmem_ptr_range_0        : 0xfffffff6fa9c4000 - 0xfffffff860d18000 (5G)
+mb                      : 0xfffffff860d18000 - 0xfffffff864d18000 (64M)
+kmem_io                 : 0xfffffff864d18000 - 0xfffffff8a4d18000 (1024M)
+compressor              : 0xfffffff8a4d18000 - 0xfffffffa94e04000 (7G)
+ipc_kernel_copy_map     : 0xfffffffa94e04000 - 0xfffffffa95604000 (8M)
+zone_meta               : 0xfffffffa95604000 - 0xfffffffa999a8000 (67M)
+kmem_data_shared_range  : 0xfffffffa999a8000 - 0xfffffffbffcfc000 (5G)
+vm: "vm_compressor_mode" is 2
+
+[ev]   176.633 zalloc
+Unable to find vm tag  for btlog
+zone_init: map VM    0xfffffff13232c000:0xfffffff1cbcc4000 (2457M, 2457M usable)
+zone_init: map RO    0xfffffff1cbcc4000:0xfffffff1ff001000 (819M, 819M usable)
+zone_init: map GEN0  0xfffffff1ff001000:0xfffffff29899a000 (2457M, 2457M usable)
+zone_init: map GEN1  0xfffffff29899a000:0xfffffff332333000 (2457M, 2457M usable)
+zone_init: map GEN2  0xfffffff332333000:0xfffffff3cbccc000 (2457M, 2457M usable)
+zone_init: map GEN3  0xfffffff3cbccc000:0xfffffff465665000 (2457M, 2457M usable)
+zone_init: map DATA  0xfffffff465665000:0xfffffff53232c000 (3276M, 3276M usable)
+zone_init: metadata  0xfffffffa95614000:0xfffffffa99614000 (64M)
+zone_init: metabits  0xfffffffa99614000:0xfffffffa99998000 (3600K)
+zone_init: extra     0:0 (0B)
+VM bootstrap done: 28 maps, 104 entries and 12 nodes left
+
+[ev]   176.700 atm_init
+
+[ev]   176.700 ktrace
+
+[ev]   176.701 percpu
+
+[ev]   176.701 sched
+standard timeslicing quantum is 10000 us
+standard background quantum is 2500 us
+
+[ev]   176.701 event
+
+[ev]   176.701 codesigning
+
+[ev]   176.701 oslog
+Log queues configured: slot count: 9, per-slot size: 32768, total size: 294912
+OSLog stream configured: stream: 8192 bytes, cache: 2112 bytes
+OSLog stream verification: 0
+Long logs support configured: size: 16384
+Firehose configured: 16 chunks, 8 io pages
+
+[ev]   176.702 UBSan minimal runtime init
+
+[ev]   176.702 trap_telemetry_init
+[trap_telemetry] trap_telemetry_init
+
+[ev]   176.702 console_init
+
+[ev]   176.702 stackshot_init
+
+[ev]   176.702 mac_policy_init
+
+[ev]   176.702 mach_ipc
+mig_table_max_displ = 90 mach_kobj_count = 381
+
+[ev]   176.703 PMAP_ACTIVATE_KERNEL
+
+[ev]   176.703 mapping_free_prime
+
+[ev]   176.703 machine_init
+debug_log_init: Error!! gPanicBase is still not initialized
+
+[ev]   176.703 thread_machine_init_template
+
+[ev]   176.703 clock_init
+
+[ev]   176.703 thread_group_init
+
+[ev]   176.704 coalitions_init
+
+[ev]   176.705 code_signing_init
+
+[ev]   176.705 task_init
+
+[ev]   176.706 thread_init
+
+[ev]   176.706 restartable_init
+
+[ev]   176.706 workq_init
+
+[ev]   176.706 turnstiles_init
+
+[ev]   176.706 page_worker_init
+
+[ev]   176.706 mach_init_activity_id
+
+[ev]   176.706 exception_init
+
+[ev]   176.706 sfi_init
+
+[ev]   176.706 kernel_thread_create
+
+[ev]   176.708 load_context - done
+
+[ev]   176.708 idle_thread_create
+
+[ev]   176.708 sched_startup
+
+[ev]   176.708 thread_daemon_init
+
+[ev]   176.708 thread_call
+
+[ev]   176.708 thread_bind
+
+[ev]   176.708 mapping_adjust
+
+[ev]   176.708 clock_service_create
+
+[ev]   176.708 boot_progress_start
+
+[ev]   176.708 kdp_init
+debug_log_init: Error!! gPanicBase is still not initialized
+kdp_core zlib memory 0x7000
+Serial requested, consistent debug disabled or debug boot arg not present, configuring debugging over serial
+
+[ev]   176.709 sysctl
+
+[ev]   176.775 PE_init_iokit
+iBoot version: 
+iBoot Stage 2 version: 
+IONVRAM.cpp:start:1447 - ...
+IONVRAM.cpp:initImageFormat:1586 - NVRAM size is 8192 bytes
+IONVRAM.cpp:getNVRAMProperties:1340 - _bankSize=0x2000, _bankCount=0x1, _currentBank=0
+IONVRAMCHRPHandler.cpp:unserializeImage:487 - NVRAM : commonPartitionOffset - 0x30, commonPartitionSize - 0x800, systemPartitionOffset - 0xffffffff, systemPartitionSize - 0
+IONVRAMCHRPHandler.cpp:unserializeVariables:584 - _commonSize 0x800, _systemSize 0
+IONVRAM.cpp:handleEphDM:1373 - ephemeral-data-mode not supported
+
+[ev]   176.931 early_boot
+memory outside the span: 698624 pages adopted, 0 refused
+vm: creating swapout thread
+vm: creating swapfile creation thread
+vm: creating swapfile GC thread
+lockdown_mode: lockdown mode in nvram is off
+
+[ev]   178.465 usb debug probe (after PE_init_iokit)
+
+[ev]   178.465 mac_policy_initmach
+Darwin Image4 Extension Version 7.0.0: Fri Oct 30 01:13:25 PDT 2026; root:AppleImage4-374~17088/AppleImage4/RELEASE_ARM64E
+calling mpo_policy_init for AppleImage4
+Security policy loaded: AppleImage4 hooks (AppleImage4)
+AppleImage4: no legacy blob present
+AppleImage4: magazine[pdmg]: failed to read nonce slot data: 2
+AppleImage4: magazine[cptx]: failed to read nonce slot data: 2
+AppleImage4: magazine[dvdi]: failed to read nonce slot data: 2
+AppleImage4: magazine[c1bt]: failed to read nonce slot data: 2
+AppleImage4: magazine[c1ab]: failed to read nonce slot data: 2
+AppleImage4: magazine[c1gn]: failed to read nonce slot data: 2
+AppleImage4: magazine[c1sm]: failed to read nonce slot data: 2
+AppleImage4: magazine[d1ma]: failed to read nonce slot data: 2
+AppleImage4: magazine[c1ge]: failed to read nonce slot data: 2
+AppleImage4: magazine[c1er]: failed to read nonce slot data: 2
+AppleImage4: magazine[c1ai]: failed to read nonce slot data: 2
+AppleImage4: magazine[c1al]: failed to read nonce slot data: 2
+AppleImage4: root power domain not yet available: 19
+AMFI: UDID support enabled: 2
+AMFI: queried model name from device tree: Mac17,11
+calling mpo_policy_init for AMFI
+Security policy loaded: Apple Mobile File Integrity (AMFI)
+calling mpo_policy_init for Sandbox
+Security policy loaded: Seatbelt sandbox policy (Sandbox)
+calling mpo_policy_init for Quarantine
+Security policy loaded: Quarantine policy (Quarantine)
+ASP: initializing bastion sandbox callback
+calling mpo_policy_init for EndpointSecurity
+Security policy loaded: Endpoint Security Kernel Extension (EndpointSecurity)
+
+[ev]   178.491 vnguard_policy_init
+calling mpo_policy_init for vnguard
+Security policy loaded: Guarded vnode policy (vnguard)
+
+[ev]   178.492 dtrace_early_init
+
+[ev]   178.492 trust_cache_init
+attempting to load 8 external trust cache modules
+loaded external trust cache module: 0
+loaded external trust cache module: 1
+loaded external trust cache module: 2
+loaded external trust cache module: 3
+loaded external trust cache module: 4
+loaded external trust cache module: 5
+loaded external trust cache module: 6
+loaded external trust cache module: 7
+completed loading external trust cache modules
+
+[ev]   178.497 OSKextRemoveKextBootstrap
+
+[ev]   178.512 machine_lockdown
+No POST boot-arg set.
+
+[ev]   178.516 kernel_do_post - done
+
+[ev]   178.516 PE_lockdown_iokit
+focaltech: thread running, mapping tlmm
+focaltech: tlmm mapped successfully
+focaltech: power_on start
+ruan-cpufreq: d0 state 1804 MHz, top row 8 = 1958 MHz, dcvs 0xb30
+battery: background monitor thread starting
+battery: channel 510 mapped to PM7250B VADC@3100 (id 0x831)
+battery: channel 392 mapped to PM7250B USB@1300 (id 0x813)
+battery: channel 389 mapped to PM7250B CHGR@1000 (id 0x810)
+battery: channel 401 mapped to PM7250B QG@4800 (id 0x848)
+battery: channel 409 mapped to PMK8350 VADC@3100 (id 0x031)
+battery: channel 470 mapped to PM6150L VADC@3100 (id 0x431)
+battery: vbat 3853 mV from qg (gauge last ADC), ibat 11 mA
+
+[hb] 178.529 free=993667 act=13 inact=12 wire=425806 spec=0 cmp=0 gpu=0M irq=0 exec=0 exit=0 idle=0s usb: starting | PE_lockdown_iokit
+Couldn't alloc class "NativeUfs"
+IOServicePH::kIOMessageSystemCapabilityChange: will 0xf->0xf
+IOServicePH::systemPowerChange to 0x30
+IOServicePH::kIOMessageSystemCapabilityChange: did 0xf->0xf
+IOG flags 0x3 (0x51)
+Couldn't alloc class "NativeUfs"
+
+[ev]   178.556 bsd_init enter
+Copyright (c) 1982, 1986, 1989, 1991, 1993
+	The Regents of the University of California. All rights reserved.
+
+
+[ev]   178.569 bsd_init: calling kauth_init
+
+
+[ev]   178.569 bsd_init: calling process_name
+
+
+[ev]   178.569 bsd_init: calling get_bsdthread_info
+
+MAC Framework successfully initialized
+IOCPUInterruptController: not registry member at registerService()
+
+[ev]   178.583 bsd_init: calling chgproccnt
+
+
+[ev]   178.583 bsd_init: calling kmem_suballoc
+
+
+[ev]   178.583 bsd_init: calling bsd_bufferinit
+
+using 6142 buffer headers and 5119 cluster IO buffer headers
+
+[ev]   178.593 bsd_init: calling IOKitInitializeTime
+
+AMFI: developer mode is force enabled on this platform
+Couldn't alloc class "NativeUfs"
+Couldn't alloc class "NativeUfs"
+Couldn't alloc class "NativeUfs"
+AppleARMBootPerf: Error: profile handoff region not found (1)
+AppleARMBootPerf: Error: failed to publish profile data (1)
+Couldn't alloc class "NativeUfs"
+focaltech: geni proto=01
+focaltech: cannot use serial engine: the serial engine's FIFO interface is disabled
+focaltech: falling back to bitbang
+
+[ev]   179.815 usb: debug thread started
+
+[ev]   179.819 usb: controller init starting
+
+[ev]   179.819 usb: iobmd null prep=0xe00002bd seg=0x0; arena 0x80d00000
+
+[ev]   179.819 usb: dma arena pa=0x80d00000
+
+[ev]   179.820 usb: DWC3 CSFTRST enter
+
+[hb] 179.820 free=991107 act=13 inact=12 wire=428265 spec=0 cmp=0 gpu=0M irq=1127 exec=0 exit=0 idle=0s usb: DWC3 CSFTRST enter | usb: DWC3 CSFTRST enter
+
+[ev]   179.820 usb: DWC3 CSFTRST done
+focaltech: bitbang_init in=0a out=0b cfg=0080 io=00
+Couldn't alloc class "NativeUfs"
+novatek: trim id 32040020 00000365
+novatek: firmware partitions, cascade header 00000010 00000001
+Couldn't alloc class "NativeUfs"
+ruan-cpufreq: d0 voted row 8, state now 1958 MHz
+
+[ev]   179.857 usb: DWC3 CDC-ACM running gsnpsid=0x5533330a dsts=0x00820001 qss=0x01000000
+
+[ev]   179.857 usb: controller init success
+Couldn't alloc class "NativeUfs"
+Couldn't alloc class "NativeUfs"
+Couldn't alloc class "NativeUfs"
+Couldn't alloc class "NativeUfs"
+Couldn't alloc class "NativeUfs"
+Couldn't alloc class "NativeUfs"
+AppleARMSFRManifest: Starting
+Couldn't alloc class "NativeUfs"
+AppleARMSFRManifest: Error: Failed to open reg-entry /chosen/secure-boot-hashes
+Couldn't alloc class "NativeUfs"
+AppleARMSFRManifest: Found HASH property
+Couldn't alloc class "NativeUfs"
+AppleARMSFRManifest: Error: Failed to find entry /chosen/secure-boot-hashes
+AppleARMSFRManifest: Error: Failed to find matching hash entries
+
+[ev]   180.070 usb: first host USB_RESET received
+AppleARMSFRManifest: Error: Failed to locate manifest information
+AppleARMSFRManifest: Error: Failed to find entry /chosen/iBoot
+AppleARMSFRManifest: Error: Failed to publish sfr manifest
+virtual bool CoreAnalyticsHub::start(IOService *)::150:CoreAnalyticsHub start
+Registered CoreAnalyticsHub functions with xnu.
+virtual bool CoreAnalyticsHub::start(IOService *)::229:CoreAnalyticsHub start completed
+
+[ev]   180.113 bsd_init: calling vfsinit
+
+ktriage_register_subsystem_strings: set subsystem 8 strings
+apfs_module_start:3369: load: com.apple.filesystems.apfs, v3288.60.7, apfs-3288.60.7, 2026/10/30
+ktriage_register_subsystem_strings: set subsystem 7 strings
+
+[ev]   180.136 ufs: driver start
+
+[ev]   180.136 ufs: root start
+
+[ev]   180.136 ufs: root step 1: entered
+
+[ev]   180.136 ufs: controller map
+
+[ev]   180.136 ufs: DMA allocation
+NativeUfs: host DMA 0x92b2bd000 + 0x20a000 (limit 0x0)
+
+[ev]   180.145 ufs: host DMA 0x92b2bd000
+
+[ev]   180.145 ufs: host slot geometry
+
+[ev]   180.145 ufs: host slot pool
+
+[ev]   180.145 ufs: host DMA clear 0x20a000 bytes
+
+[ev]   180.145 ufs: host DMA cache flush
+
+[ev]   180.145 ufs: SMMU and request list
+
+[ev]   180.148 ufs: NOP OUT
+
+[ev]   180.148 ufs: power mode query
+
+[ev]   180.148 ufs: device wake
+
+[ev]   180.201 ufs: LUN ready
+
+[ev]   180.201 ufs: root step 2: host up
+
+[ev]   180.202 ufs: root step 3: layout found
+
+[ev]   180.202 ufs: root window allocation/configuration
+
+[ev]   180.202 ufs: root window attachment
+
+[ev]   180.202 ufs: root window allocation/configuration
+
+[ev]   180.202 ufs: root window attachment
+
+[ev]   180.202 ufs: signed window identities
+
+[ev]   180.202 ufs: root publisher thread
+RuanMacUfs: NativeUfs started on the platform expert device (source IOBlockStorageDevice, macOS ABI)
+RuanMacUfs: NativeRamBlock started: the RAM disk is an IOMedia
+RuanMacUfs: mark: cell 00 -> 04 rc=0
+
+[ev]   182.536 bsd_init: calling proc_uuid_policy_init()
+
+
+[ev]   182.536 bsd_init: calling mbinit
+
+mbinit: done [64 MB total pool size, (42/21) split]
+
+[ev]   182.542 bsd_init: calling audit_init
+
+
+[ev]   182.543 bsd_init: calling knote_init
+
+
+[ev]   182.543 bsd_init: calling eventhandler_init
+
+
+[ev]   182.543 bsd_init: calling aio_init
+
+New aio workqueue implementation selected
+
+[ev]   182.549 bsd_init: calling pshm_cache_init
+
+
+[ev]   182.549 bsd_init: calling psem_cache_init
+
+
+[ev]   182.549 bsd_init: calling nwk_wq_init
+
+
+[ev]   182.549 bsd_init: calling dlil_init
+
+dlil_init: Waiting for all the create dlil kernel threads to get scheduled at least once.
+
+[ev]   182.680 ufs: root window service start
+NativeUfs: published SystemOS
+
+[ev]   182.686 ufs: media publication
+
+[hb] 182.686 free=989041 act=13 inact=12 wire=430396 spec=0 cmp=0 gpu=0M irq=1696 exec=0 exit=0 idle=0s usbA e11 r2 c0 d26e40 | ufs: media publication
+dlil_init: All the created dlil kernel threads have been scheduled at least once. Proceeding.
+
+[ev]   182.692 bsd_init: calling socketinit
+
+
+[ev]   182.692 bsd_init: calling domaininit
+
+
+[ev]   182.693 bsd_init: calling skywalk_init
+
+
+[ev]   182.696 bsd_init: calling memorystatus_freeze_init
+
+
+[ev]   182.696 bsd_init: calling memorystatus_init
+
+
+[ev]   182.697 bsd_init: calling sysctl_mib_init
+
+
+[ev]   182.697 bsd_init: calling bsd_autoconf
+
+com.apple.AppleFSCompressionTypeDataless kmod start
+com.apple.AppleFSCompressionTypeZlib kmod start
+com.apple.AppleFSCompressionTypeDataless load succeeded
+com.apple.AppleFSCompressionTypeZlib load succeeded
+Setting up notifier for CoreAnalyticsHub
+calling mpo_policy_init for ASP
+calling mpo_policy_initbsd for ASP
+
+[ev]   182.752 usb: host SET_CONFIGURATION=1 complete
+cryptoAlloc:629: Using 64 buffers with size 16384, 512 buffers size 65536
+ASP: NVRAM pointer initialized
+ASP: No recovery key set
+Security policy loaded: Apple System Policy (ASP)
+swcrypto_threadpool_init:1130: Starting ThreadPool
+swcrypto_threadpool_init:1152: 4 threads would be used for the ThreadPool
+specread_work_queue_init:155: number of threads used for specread work queue 3
+dev_init:296: disk0 device accelerated crypto: 0 (compiled @ Oct 30 2026 01:13:02)
+dev_init:299: disk0 device_handle block size 4096 block count 378655 features 0 internal 
+nx_mount:1181: disk0 initializing cache w/hash_size 1024 and cache size 4096
+nx_mount:1506: disk0 checkpoint search: largest xid 1, best xid 1 @ 1
+nx_mount:1533: disk0 stable checkpoint indices: desc 0 data 0
+apfs_sysctl_register:1328: done registering sysctls.
+is_arv_enabled:3538: ================ ARV enabled ================
+import_iboot_forwarded_roothash:3701: importing root hash (basesystem ? 0)...
+apfs_extract_root_hash_arm:13743: could not retrieve system-volume-auth-blob from device tree
+
+[ev]   183.029 bsd_init: calling loopattach
+
+
+[ev]   183.029 bsd_init: calling ether_family_init
+
+
+[ev]   183.029 bsd_init: calling net_init_run
+
+
+[ev]   183.029 bsd_init: calling inittodr
+
+
+[ev]   183.029 bsd_init: calling setconf
+
+virtual bool IOMobileFramebufferLegacy::start(IOService *)
+IOMFB: driver commit: 
+
+[ev]   183.048 ufs: root window service start
+
+[ev]   183.048 ufs: media publication
+virtual bool IOMobileFramebufferLegacy::start(IOService *): provider was not AppleARMIODevice.
+sheng-fb: default surface 0xfffffff298adb810 status 0x0 valid 1 1600x2560 stride 6400 bytes 16384000
+ruan-backlight: SY7758 ok: id 63, bootloader level 500, cap 1600, start rc 0, dev_ctl 83->85
+ruan-backlight: RuanBacklight registered under platform
+ifnet_attach: All kernel threads created for interface lo0 have been scheduled at least once. Proceeding.
+skip attaching fsw to lo0 using legacy TX model
+NativeLegacyDisplay: display object not attached (kext 0)
+NativeUfs: SystemOS volume  ready
+NativeUfs: published OS
+cryptoAlloc:629: Using 64 buffers with size 16384, 512 buffers size 65536
+import_iboot_forwarded_roothash:3706: apfs_extract_root_hash_and_manifest failed with error: No such file or directory (2)
+dev_init:296: disk1s1 device accelerated crypto: 0 (compiled @ Oct 30 2026 01:13:02)
+dev_init:299: disk1s1 device_handle block size 4096 block count 1024 features 0 internal 
+Added memory device md0/rmd0 (03000000/15000000) at FFFFFFF00F805000 for 000000005C71F000
+Waiting on <dict ID="0"><key>IOProviderClass</key><string ID="1">IOMedia</string><key>IOPropertyMatch</key><dict ID="2"><key>UUID</key><string ID="3">4C15B884-6D41-FA68-15FA-10423D08C1A0</string></dict></dict>
+nx_mount:1181: disk1s1 initializing cache w/hash_size 1024 and cache size 4096
+cryptoAlloc:629: Using 64 buffers with size 16384, 512 buffers size 65536
+dev_init:296: disk3s1 device accelerated crypto: 0 (compiled @ Oct 30 2026 01:13:02)
+dev_init:299: disk3s1 device_handle block size 4096 block count 3908239 features 0 internal 
+NativeUfs: OS volume  ready
+nx_mount:1181: disk3s1 initializing cache w/hash_size 8192 and cache size 25600
+nx_corruption_detected_int:36: disk1s1 Container corruption detected by spaceman_sanity_check:287!
+nx_checkpoint_load_data:434: disk1s1 failed to load checkpoint data of type 0x80000005:0x0 @ 10
+nx_checkpoint_find_valid_checkpoint:576: disk1s1 xid 1 data for checkpoint at index 0 couldn't be loaded: 92
+nx_mount:1502: disk1s1 failed to find valid checkpoint: 2
+
+[hb] 183.689 free=962164 act=12 inact=13 wire=457254 spec=0 cmp=0 gpu=0M irq=2129 exec=0 exit=0 idle=0s usbA e56 r2 c1 d832de0 | ufs: media publication
+
+[usb] === ruan ramoops replay end ===

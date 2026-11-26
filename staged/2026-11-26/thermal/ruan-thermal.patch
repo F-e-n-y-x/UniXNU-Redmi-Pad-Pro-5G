@@ -1,0 +1,714 @@
+diff --git a/package/LegacyDisplayProbe.cpp b/package/LegacyDisplayProbe.cpp
+index b937c19..4945b8a 100755
+--- a/package/LegacyDisplayProbe.cpp
++++ b/package/LegacyDisplayProbe.cpp
+@@ -808,6 +808,9 @@ void native_legacy_display_late_probe(void) {
+ 		// Display Backlight (AppleARMBacklight & IODisplayParameters): package/RuanBacklight.cpp
+ 		extern bool ruan_backlight_start(void);
+ 		ruan_backlight_start();
++		// macOS thermal pressure level for thermalmonitord (package/RuanThermalLevel.cpp, thermal-level=1; off by default)
++		extern void ruan_thermal_level_probe(void);
++		ruan_thermal_level_probe();
+ 		// Qualcomm WCN6750 Wi-Fi: package/RuanWifiProbe.c
+ 		extern void ruan_wifi_init(void);
+ 		ruan_wifi_init();
+diff --git a/package/RuanBattery.c b/package/RuanBattery.c
+index 0e79ec5..f60ff70 100755
+--- a/package/RuanBattery.c
++++ b/package/RuanBattery.c
+@@ -73,10 +73,19 @@ static struct spmi_periph pmic_chg8  = { .name = "PM7250B CHGR@1000",  .id = 0x8
+ static struct spmi_periph pmic_qg8   = { .name = "PM7250B QG@4800",    .id = 0x848 };
+ static struct spmi_periph pmic_vadc0 = { .name = "PMK8350 VADC@3100",  .id = 0x031 };
+ static struct spmi_periph pmic_vadc4 = { .name = "PM6150L VADC@3100",  .id = 0x431 };
++/* Die temperature alarms (DT qcom,spmi-temp-alarm, read only): PM7250B 0x2400 of slave 8, PM6150L 0x2400 of slave 4 */
++static struct spmi_periph pmic_tm8   = { .name = "PM7250B TEMP_ALARM@2400", .id = 0x824 };
++static struct spmi_periph pmic_tm4   = { .name = "PM6150L TEMP_ALARM@2400", .id = 0x424 };
++
++/* RuanThermal.c / USB `thermal`: temp-alarm stage (0 = under the first threshold, 1..3; -1 no reading) and the charger's raw
++ * BATTERY_CHARGER_STATUS_7 (CHGR + 0x0D, its JEITA soft/hard hot/cold bits; 0xffffffff no reading). */
++volatile int32_t ruan_battery_alarm_stage[2] = {-1, -1};
++volatile uint32_t ruan_battery_jeita = 0xffffffffu;
+ 
+ static vm_offset_t arb_core = 0, arb_cnfg = 0, arb_observer = 0;
+ static bool is_v7 = false;
+ 
++static bool vadc8_writable;   /* the arbiter gives PM7250B VADC's channel to us (EE 0): ruan-batt-therm=1 may convert */
+ static inline uint32_t rd(vm_offset_t addr) { return *(volatile uint32_t *)addr; }
+ static inline void wr(vm_offset_t addr, uint32_t val) { *(volatile uint32_t *)addr = val; }
+ 
+@@ -112,6 +121,90 @@ spmi_read(const struct spmi_periph *p, uint8_t reg, uint8_t *bytes, uint32_t cou
+ 	return NULL;
+ }
+ 
++/* qcom-spmi-temp-alarm.c: STATUS 0x08; subtype (0x05) 0x08 gen1: stage = bits 1:0; 0x09 gen2: state bits 6:4 -> stage
++ * {0,1,1,2,2,3,3,3}. The thresholds of a stage are set by the bootloader / Linux (gen2: 90..105 C first stage). */
++static int32_t
++alarm_stage(const struct spmi_periph *p)
++{
++	static const uint8_t gen2[8] = {0, 1, 1, 2, 2, 3, 3, 3};
++	uint8_t sub = 0, st = 0;
++	if (spmi_read(p, 0x05, &sub, 1) || spmi_read(p, 0x08, &st, 1)) return -1;
++	return sub == 0x08 ? (int32_t)(st & 3) : sub == 0x09 ? gen2[(st >> 4) & 7] : -1;
++}
++
++/* ruan-batt-therm=1: one conversion of PM7250B VADC channel 0x4a (DT bat_therm@4a: 100k NTC, ratiometric, 200 us settle), as
++ * qcom-spmi-adc5.c adc5_configure/adc5_do_conversion: DIG_PARAM 0x42 (ratiometric cal, decimation 2), FAST_AVG 0x43 (on, 1
++ * sample), CH_SEL 0x44, DELAY 0x45 (settle index 2 = 200 us), EN_CTL1 0x46 bit 7, CONV_REQ 0x47 bit 7, then STATUS1 0x08 = EOC
++ * (bits 1:0 == 1) and DATA0/1 0x50. mV = code x 1875 / 0x70e4. Writes go only to these six registers of this one peripheral,
++ * only through its channel when the arbiter's owner table gives it to EE 0, and never while TZ runs (hakios_spmi_lock).
++ * shortcut: if the ADSP converts on the same ADC at the same moment one of the two results is wrong; the 5..95 C window and the
++ * 2-in-a-row check below drop most of those. Returns hundredths of C, 0 = no reading. */
++#define ARB_CHNLS_PHYS 0x0c500000UL     /* "chnls": per-channel read/write window (RuanButtons.c) */
++static const char *
++spmi_write(const struct spmi_periph *p, uint8_t reg, uint8_t value)
++{
++	static vm_offset_t page;
++	uint64_t start = mach_absolute_time(), interval;
++	uint32_t status;
++	if (!vadc8_writable || p != &pmic_vadc8 || reg < 0x42 || reg > 0x47) return "refused";   /* the allowlist */
++	if (!page && !(page = ml_io_map(ARB_CHNLS_PHYS + (is_v7 ? 0x1000UL : 0x10000UL) * p->channel, 0x1000))) return "map failed";
++	nanoseconds_to_absolutetime(2000 * (uint64_t)NSEC_PER_USEC, &interval);
++	hakios_spmi_lock();
++	wr(page + 0x10, value);                   /* WDATA0 */
++	wr(page + 0x00, (uint32_t)reg << 4);      /* extended write, 1 byte */
++	do {
++		status = rd(page + 0x08);
++	} while (!(status & STATUS_DONE) && mach_absolute_time() - start < interval);
++	hakios_spmi_unlock();
++	return !(status & STATUS_DONE) ? "timeout" : (status & 0xe) ? "failure" : NULL;   /* denied 4, failure 2, dropped 8 */
++}
++
++/* 100k NTC (B 4250 K) with 100k pull-up to 1875 mV, every 5 C from -40: mV -> deci-C, from R = 100k exp(B (1/T - 1/298.15)). */
++static const int16_t ntc_mv[][2] = {
++	{1840, -400}, {1825, -350}, {1803, -300}, {1775, -250}, {1737, -200}, {1689, -150}, {1630, -100}, {1559, -50}, {1475, 0},
++	{1380, 50}, {1276, 100}, {1165, 150}, {1051, 200}, {938, 250}, {828, 300}, {724, 350}, {629, 400}, {543, 450}, {467, 500},
++	{401, 550}, {343, 600}, {293, 650}, {251, 700}, {214, 750}, {184, 800}, {158, 850}, {136, 900}, {117, 950}, {101, 1000},
++	{88, 1050}, {76, 1100}, {66, 1150}, {58, 1200}, {51, 1250}};
++
++int32_t
++ruan_ntc_dc(int32_t mv)
++{
++	const unsigned n = sizeof(ntc_mv) / sizeof(ntc_mv[0]);
++	if (mv >= ntc_mv[0][0]) return ntc_mv[0][1];
++	for (unsigned i = 1; i < n; i++) {
++		if (mv >= ntc_mv[i][0]) {   /* linear between rows i-1 and i */
++			return ntc_mv[i - 1][1] + (ntc_mv[i - 1][0] - mv) * (ntc_mv[i][1] - ntc_mv[i - 1][1]) / (ntc_mv[i - 1][0] - ntc_mv[i][0]);
++		}
++	}
++	return ntc_mv[n - 1][1];
++}
++
++static int32_t
++bat_therm_hundredths(void)
++{
++	static int32_t last_dc = INT32_MIN;
++	uint8_t cfg[6], st = 0, data[2];
++	const char *e = spmi_read(&pmic_vadc8, 0x42, cfg, 6);
++	if (e) return 0;
++	cfg[0] = (uint8_t)((cfg[0] & ~0x7cu) | 0x10 | 0x08);
++	cfg[1] = (uint8_t)((cfg[1] & ~0x07u) | 0x80);
++	cfg[2] = 0x4a;
++	cfg[3] = (uint8_t)((cfg[3] & ~0x0fu) | 0x02);
++	cfg[4] |= 0x80;
++	cfg[5] |= 0x80;
++	for (unsigned i = 0; i < 6 && !e; i++) e = spmi_write(&pmic_vadc8, (uint8_t)(0x42 + i), cfg[i]);   /* CONV_REQ last */
++	for (unsigned t = 0; !e && t < 20; t++) {   /* up to ~20 ms: settle 200 us + 840 decimation */
++		delay_for_interval(1, NSEC_PER_MSEC);
++		if ((e = spmi_read(&pmic_vadc8, 0x08, &st, 1)) == NULL && (st & 3) == 1) break;
++	}
++	if (e || (st & 3) != 1 || spmi_read(&pmic_vadc8, 0x50, data, 2)) return 0;
++	const int32_t code = (int16_t)(uint16_t)(data[0] | data[1] << 8), dc = ruan_ntc_dc(code < 0 ? 0 : code * 1875 / 0x70e4);
++	const int32_t prev = last_dc;
++	last_dc = dc;
++	if (dc < 50 || dc > 950 || prev == INT32_MIN || (dc > prev ? dc - prev : prev - dc) > 50) return 0;   /* sane and steady */
++	return dc * 10;
++}
++
+ static void
+ find_channel(struct spmi_periph *p, uint32_t total_channels)
+ {
+@@ -239,7 +332,14 @@ ruan_battery_poll(void)
+ 	g_ruan_battery.voltage_uv = (int32_t)(vbat_mv * 1000);
+ 	/* Not measured (the charger and thermistor belong to the ADSP): 0 means unknown, HakiosBattery leaves those keys out. */
+ 	g_ruan_battery.current_ua = ibat_ua;
+-	g_ruan_battery.temperature_hundredths = 0;
++	/* Battery thermistor: only with ruan-batt-therm=1 (a write to the VADC, see bat_therm_hundredths); 0 = unknown. */
++	uint32_t therm = 0;
++	PE_parse_boot_argn("ruan-batt-therm", &therm, sizeof(therm));
++	g_ruan_battery.temperature_hundredths = therm == 1 ? bat_therm_hundredths() : 0;
++	ruan_battery_alarm_stage[0] = pmic_tm8.found ? alarm_stage(&pmic_tm8) : -1;
++	ruan_battery_alarm_stage[1] = pmic_tm4.found ? alarm_stage(&pmic_tm4) : -1;
++	uint8_t s7 = 0;
++	ruan_battery_jeita = pmic_chg8.found && spmi_read(&pmic_chg8, 0x0d, &s7, 1) == NULL ? s7 : 0xffffffffu;
+ 	g_ruan_battery.design_uah = 10000000;         /* 10,000 mAh: the tablet's spec, not a measurement */
+ 	g_ruan_battery.full_uah = 10000000;
+ 	g_ruan_battery.charge_uah = (int32_t)(((int64_t)g_ruan_battery.full_uah * percent) / 100);
+@@ -276,6 +376,12 @@ ruan_battery_thread(void *parameter, __unused wait_result_t result)
+ 		find_channel(&pmic_qg8, channels);
+ 		find_channel(&pmic_vadc0, channels);
+ 		find_channel(&pmic_vadc4, channels);
++		find_channel(&pmic_tm8, channels);
++		find_channel(&pmic_tm4, channels);
++		if (pmic_vadc8.found) {
++			vadc8_writable = (rd(arb_cnfg + (is_v7 ? ARB_OWNER_V7(pmic_vadc8.channel) : ARB_OWNER_V5(pmic_vadc8.channel))) & 7) == ARB_SYSTEM;
++			bprintf("battery: PM7250B VADC channel %u owner %s\n", pmic_vadc8.channel, vadc8_writable ? "EE 0 (us)" : "another EE (no conversions)");
++		}
+ 	}
+ 
+ 	/* Initial report on launch */
+diff --git a/package/RuanCpuFreq.c b/package/RuanCpuFreq.c
+index 99687b5..34f3eaa 100755
+--- a/package/RuanCpuFreq.c
++++ b/package/RuanCpuFreq.c
+@@ -6,7 +6,8 @@
+ //   1  report each domain's current level and LUT top (printf, so it reaches the boot page)
+ //   2  also vote the highest non-turbo level in both domains, once each domain's state reads non-zero (cluster up)
+ // RUAN_CPUFREQ_DEFAULT (macOS build: 2) is the mode without the boot-arg; ruan-cpufreq=0 turns it off.
+-// No governor: a fixed vote. shortcut: no thermal handling beyond the firmware's own limits; port Dizi-Ruan's mode 4 for that.
++// No governor: a fixed vote. RuanThermal.c lowers it with ruan_cpufreq_cap() when the cores run hot (the firmware's LMh limit
++// still applies on top); ruan_cpufreq_domain() gives it the live clock, the vote and the level count.
+ #include <stdint.h>
+ #ifndef RUAN_CPUFREQ_HOST
+ #include <kern/thread.h>
+@@ -40,12 +41,39 @@ int ruan_cpufreq_pick(const uint32_t *lut, unsigned rows, unsigned *mhz)
+ 	return best;
+ }
+ 
++// A LUT's non-turbo levels in ascending clock (row index, MHz), same end rule as ruan_cpufreq_pick (iPadOS RuanCpuFreq.c).
++unsigned ruan_cpufreq_levels(const uint32_t *lut, unsigned rows, uint8_t *row, uint16_t *mhz)
++{
++	unsigned n = 0, prev = 0;
++	for (unsigned i = 0; i < rows; i++) {
++		uint32_t d = lut[i];
++		unsigned f = (d >> 30) ? (d & 0xff) * 192 / 10 : 300;
++		if (!(d & 0xff) || (i && f == prev)) {
++			break;
++		}
++		prev = f;
++		if (i && ((d >> 16) & 7) == 1) {
++			continue;
++		}
++		unsigned at = n++;
++		while (at && mhz[at - 1] > f) {
++			mhz[at] = mhz[at - 1], row[at] = row[at - 1], at--;
++		}
++		mhz[at] = (uint16_t)f, row[at] = (uint8_t)i;
++	}
++	return n;
++}
++
+ #ifndef RUAN_CPUFREQ_HOST
+ #ifndef RUAN_CPUFREQ_DEFAULT
+ #define RUAN_CPUFREQ_DEFAULT 0
+ #endif
+ static unsigned mode = RUAN_CPUFREQ_DEFAULT;
+ static volatile uint32_t *dom[2];   // USB `cpufreq`
++static uint8_t lv_row[2][kRows];
++static uint16_t lv_mhz[2][kRows];
++static unsigned lv_n[2], lv_cur[2], lv_cores[2];
++static volatile uint32_t lv_ready[2];   // set once the boot vote is in: ruan_cpufreq_cap may vote from then on
+ 
+ static void
+ domain(unsigned d, uint64_t phys)
+@@ -65,6 +93,7 @@ domain(unsigned d, uint64_t phys)
+ 		lut[i] = r[(kLut + 4 * i) / 4];
+ 	}
+ 	int top = ruan_cpufreq_pick(lut, kRows, &mhz);
++	lv_n[d] = ruan_cpufreq_levels(lut, kRows, lv_row[d], lv_mhz[d]);
+ 	printf("ruan-cpufreq: d%u state %u MHz, top row %d = %u MHz, dcvs 0x%x\n", d, (r[kState / 4] & 0xff) * 192 / 10, top, mhz,
+ 	    r[kDcvs / 4]);
+ 	dom[d] = r;
+@@ -78,6 +107,39 @@ domain(unsigned d, uint64_t phys)
+ 	assert_wait_timeout((event_t)&mode, THREAD_UNINT, 200, NSEC_PER_MSEC);
+ 	thread_block(THREAD_CONTINUE_NULL);
+ 	printf("ruan-cpufreq: d%u voted row %d, state now %u MHz\n", d, top, (r[kState / 4] & 0xff) * 192 / 10);
++	if (lv_n[d] && lv_row[d][lv_n[d] - 1] == (uint8_t)top) {   // the boot vote is the top level: caps count down from it
++		lv_cur[d] = lv_n[d] - 1, lv_cores[d] = cores;
++		__atomic_store_n(&lv_ready[d], 1, __ATOMIC_RELEASE);
++	}
++}
++
++// RuanThermal.c: vote domain d at most `below` levels under its top (0 = the boot vote, >= levels = the lowest). Votes only on a
++// change. Returns the level's MHz, 0 when the domain was never voted (mode < 2, cluster down) and nothing was written.
++unsigned
++ruan_cpufreq_cap(unsigned d, unsigned below)
++{
++	if (d > 1 || !__atomic_load_n(&lv_ready[d], __ATOMIC_ACQUIRE)) {
++		return 0;
++	}
++	unsigned l = below >= lv_n[d] ? 0 : lv_n[d] - 1 - below;
++	if (l != lv_cur[d]) {
++		for (unsigned i = 0; i < lv_cores[d]; i++) {
++			dom[d][(kPerf + 4 * i) / 4] = lv_row[d][l];
++		}
++		lv_cur[d] = l;
++	}
++	return lv_mhz[d][l];
++}
++
++// RuanThermal.c / USB `thermal`: domain d's delivered clock (EPSS domain_state, after the LMh limit; what upstream
++// qcom_lmh_get_throttle_freq reads on EPSS), its vote and its level count. 0 = not read yet.
++void
++ruan_cpufreq_domain(unsigned d, unsigned *state_mhz, unsigned *vote_mhz, unsigned *levels)
++{
++	int ok = d < 2 && dom[d];
++	*state_mhz = ok ? (dom[d][kState / 4] & 0xff) * 192 / 10 : 0;
++	*vote_mhz = ok && lv_ready[d] ? lv_mhz[d][lv_cur[d]] : 0;
++	*levels = ok ? lv_n[d] : 0;
+ }
+ 
+ static void
+diff --git a/package/RuanMacBootProgress.c b/package/RuanMacBootProgress.c
+index df109f3..1b7326e 100755
+--- a/package/RuanMacBootProgress.c
++++ b/package/RuanMacBootProgress.c
+@@ -220,6 +220,9 @@ boot_progress_start(void)
+ 	/* package/RuanCpuFreq.c: EPSS vote, both domains to their top non-turbo level (built with RUAN_CPUFREQ_DEFAULT=2) */
+ 	extern void ruan_cpufreq_start(void);
+ 	ruan_cpufreq_start();
++	/* package/RuanThermal.c: tsens + LMh + battery temperatures once a second, CPU caps, the level for macOS (ruan-thermal=0 off) */
++	extern void ruan_thermal_start(void);
++	ruan_thermal_start();
+ 	/* package/RuanGpuPower.c, as iPadOS BootProgress.c: ruan-gpu=<1-3> runs now, 17/18 start the Adreno glue once init exists;
+ 	 * nothing without ruan-gpu (or ruan-gpu-survey / fb-gpu-stream) */
+ 	extern void ruan_gpu_survey(void);
+diff --git a/package/RuanThermal.c b/package/RuanThermal.c
+new file mode 100644
+index 0000000..a567356
+--- /dev/null
++++ b/package/RuanThermal.c
+@@ -0,0 +1,239 @@
++// SPDX-License-Identifier: BSD-2-Clause-Patent
++// ruan-thermal=<n>: temperatures, CPU caps and macOS's thermal pressure level for ruan (SM7435). Default 2; 1 reads and reports
++// only (no vote), 0 is off. A kernel thread, once a second:
++//   - TSENS (live DT qcom,tsens-v2): tsens0 TM 0x0c263000, tsens1 TM 0x0c265000 (reg[0] of thermal-sensor@c263000/@c265000).
++//     TM_Sn_STATUS 0xa0 + 4n: bits 11:0 signed deci-C, bit 21 valid, up to three reads (tsens-v2.c; iPadOS RuanCpuFreq.c mode 3).
++//     Sensor numbers are the DT thermal-zones cells (table below).
++//   - LMh: per EPSS domain the delivered clock (domain_state 0x20) against our vote (RuanCpuFreq.c ruan_cpufreq_domain). Below the
++//     vote = the firmware limiter (LMh / dcvsh) is holding the domain down; counted in seconds.
++//   - battery: RuanBattery.c's g_ruan_battery.temperature_hundredths (0 = no reading) and its PMIC temp-alarm stage.
++// Policy (deci-C, each step lifts 5 C under its threshold): a group's step is the number of its thresholds crossed.
++//   A78 (cpu-1-0..7)  80 / 90 / 100 C: cap 1 level / the middle level / the lowest level of domain 1
++//   A55 (cpu-0-0..3)  90 / 90 / 100 C: the middle level / the lowest level of domain 0
++//   GPU (gpuss-0/1)   85 / 95 / 105 C: no GPU cap on macOS (one 734 MHz level, RuanGpuPower.c), feeds the level only
++//   battery           45 / 50 / 60 C: report only (the charger belongs to the ADSP: no writes), feeds the level
++// Step 3 anywhere = emergency: both CPU domains at their lowest level and a console line every 10 s while it lasts.
++// No valid reading = step 0 for that group (it can neither raise nor hold a cap), counted in `invalid`.
++// The level for macOS (RuanThermalLevel.cpp, thermal-level=1) is the highest step: 0 nominal, 1 moderate, 2 heavy, 3 trapping.
++#include <stdint.h>
++#ifndef RUAN_THERMAL_HOST
++#include <kern/thread.h>
++#include <kern/misc_protos.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++#include "RuanBattery.h"
++extern wait_result_t assert_wait_timeout(event_t, wait_interrupt_t, uint32_t, uint32_t);
++extern unsigned ruan_cpufreq_cap(unsigned d, unsigned below);
++extern void ruan_cpufreq_domain(unsigned d, unsigned *state_mhz, unsigned *vote_mhz, unsigned *levels);
++extern volatile int32_t ruan_battery_alarm_stage[2];   // RuanBattery.c: PM7250B, PM6150L temp-alarm stage, -1 = no reading
++extern volatile uint32_t ruan_battery_jeita;           // RuanBattery.c: CHGR BATTERY_CHARGER_STATUS_7, 0xffffffff = no reading
++#endif
++
++#define NONE INT32_MIN
++enum {G_A55, G_A78, G_GPU, G_BATT, GROUPS};
++static const char *const group_name[GROUPS] = {"a55", "a78", "gpu", "batt"};
++static const int16_t thr[GROUPS][3] = {{900, 900, 1000}, {800, 900, 1000}, {850, 950, 1050}, {450, 500, 600}};
++
++// tsens-v2 TM_Sn_STATUS in deci-C, NONE when the valid bit (21) is clear (= iPadOS ruan_tsens_dc).
++static int32_t
++tsens_dc(uint32_t v)
++{
++	return (v & (1u << 21)) ? (int32_t)(v << 20) >> 20 : NONE;
++}
++
++// Thresholds crossed by dc, given `cur` crossed before: a crossed one holds until dc is 5 C under it.
++static unsigned
++step(unsigned cur, int32_t dc, const int16_t *t)
++{
++	unsigned s = 0;
++	if (dc == NONE) {
++		return 0;
++	}
++	while (s < 3 && dc > (cur > s ? t[s] - 50 : t[s])) {
++		s++;
++	}
++	return s;
++}
++
++// Levels under the top for a CPU step: 0, 1, the middle level ((n-1)/2 from the bottom), the lowest.
++static unsigned
++below(unsigned s, unsigned n)
++{
++	return s == 0 ? 0 : s == 1 ? 1 : s == 2 ? (n ? (n - 1) - (n - 1) / 2 : 0) : ~0u;
++}
++
++#if defined(RUAN_THERMAL_HOST) && defined(RUAN_THERMAL_SELFTEST)
++// cc -DRUAN_THERMAL_HOST -DRUAN_THERMAL_SELFTEST RuanThermal.c && ./a.out
++#include <assert.h>
++int main(void)
++{
++	assert(tsens_dc((1u << 21) | 0x384) == 900 && tsens_dc((1u << 21) | 0xff6) == -10 && tsens_dc(0x384) == NONE);
++	assert(step(0, 800, thr[G_A78]) == 0 && step(0, 801, thr[G_A78]) == 1 && step(0, 901, thr[G_A78]) == 2);
++	assert(step(2, 860, thr[G_A78]) == 2 && step(2, 850, thr[G_A78]) == 1 && step(1, 751, thr[G_A78]) == 1);
++	assert(step(1, 750, thr[G_A78]) == 0 && step(0, 1001, thr[G_A78]) == 3 && step(3, 951, thr[G_A78]) == 3);
++	assert(step(3, NONE, thr[G_A78]) == 0);
++	assert(step(0, 901, thr[G_A55]) == 2 && step(2, 851, thr[G_A55]) == 2 && step(2, 850, thr[G_A55]) == 0);
++	assert(below(0, 9) == 0 && below(1, 9) == 1 && below(2, 9) == 4 && below(2, 8) == 4 && below(3, 9) >= 9);
++	return 0;
++}
++#endif
++
++#ifndef RUAN_THERMAL_HOST
++#ifndef RUAN_THERMAL_DEFAULT
++#define RUAN_THERMAL_DEFAULT 2
++#endif
++struct sensor {const char *name; uint8_t tsens, n, group;};
++// Live DT thermal-zones (docs/hardware/private/ruan-live.dts 9904-10847): tsens0 = phandle 0x168, tsens1 = 0x175.
++static const struct sensor sensors[] = {
++	{"aoss0", 0, 0, GROUPS}, {"cpuss0", 0, 1, GROUPS}, {"cpuss1", 0, 2, GROUPS},
++	{"cpu1-0", 0, 3, G_A78}, {"cpu1-1", 0, 4, G_A78}, {"cpu1-2", 0, 5, G_A78}, {"cpu1-3", 0, 6, G_A78},
++	{"cpu1-4", 0, 7, G_A78}, {"cpu1-5", 0, 8, G_A78}, {"cpu1-6", 0, 9, G_A78}, {"cpu1-7", 0, 10, G_A78},
++	{"gpu0", 0, 11, G_GPU}, {"gpu1", 0, 12, G_GPU}, {"cam0", 0, 13, GROUPS},
++	{"aoss1", 1, 0, GROUPS}, {"cpu0-0", 1, 1, G_A55}, {"cpu0-1", 1, 2, G_A55}, {"cpu0-2", 1, 3, G_A55}, {"cpu0-3", 1, 4, G_A55},
++	{"nsp0", 1, 5, GROUPS}, {"nsp1", 1, 6, GROUPS}, {"nsp2", 1, 7, GROUPS}, {"video", 1, 8, GROUPS}, {"ddr", 1, 9, GROUPS},
++	{"mdm0", 1, 10, GROUPS}, {"mdm1", 1, 11, GROUPS}, {"mdm2", 1, 12, GROUPS}, {"mdm3", 1, 13, GROUPS},
++};
++enum {SENSORS = sizeof(sensors) / sizeof(sensors[0])};
++
++static unsigned mode = RUAN_THERMAL_DEFAULT;
++static volatile uint32_t *tm[2];
++static int32_t now_dc[SENSORS], group_dc[GROUPS], hottest_dc = NONE;
++static unsigned group_step[GROUPS], capped_below[2];
++static uint32_t rounds, invalid, emergencies, lmh_s[2], lmh_min[2], cap_changes;
++volatile uint32_t ruan_thermal_level;   // RuanThermalLevel.cpp: the pressure level, 0..3
++
++static int32_t
++read_sensor(const struct sensor *s)
++{
++	int32_t v = NONE;
++	for (unsigned i = 0; i < 3 && v == NONE && tm[s->tsens]; i++) {   // tsens.c: up to three reads for the valid bit
++		v = tsens_dc(tm[s->tsens][(0xa0 + 4 * s->n) / 4]);
++	}
++	return v;
++}
++
++static void
++round_once(void)
++{
++	unsigned level = 0, emergency = 0;
++	for (unsigned g = 0; g < GROUPS; g++) {
++		group_dc[g] = NONE;
++	}
++	hottest_dc = NONE;
++	for (unsigned i = 0; i < SENSORS; i++) {
++		int32_t v = now_dc[i] = read_sensor(&sensors[i]);
++		if (v == NONE) {
++			continue;
++		}
++		hottest_dc = v > hottest_dc ? v : hottest_dc;
++		if (sensors[i].group < GROUPS && v > group_dc[sensors[i].group]) {
++			group_dc[sensors[i].group] = v;
++		}
++	}
++	if (g_ruan_battery.temperature_hundredths) {
++		group_dc[G_BATT] = g_ruan_battery.temperature_hundredths / 10;
++	}
++	for (unsigned g = 0; g < GROUPS; g++) {
++		invalid += group_dc[g] == NONE && g != G_BATT;
++		group_step[g] = step(group_step[g], group_dc[g], thr[g]);
++		level = group_step[g] > level ? group_step[g] : level;
++		emergency |= group_step[g] == 3 && g != G_BATT;   // a hot battery cannot be cooled by the CPU clock alone: report it
++	}
++	for (unsigned d = 0; d < 2; d++) {
++		unsigned st, vote, n;
++		ruan_cpufreq_domain(d, &st, &vote, &n);
++		if (vote && st && st < vote) {
++			lmh_s[d]++;
++			lmh_min[d] = !lmh_min[d] || st < lmh_min[d] ? st : lmh_min[d];
++		}
++		unsigned b = emergency ? ~0u : below(group_step[d == 0 ? G_A55 : G_A78], n);
++		if (mode >= 2 && b != capped_below[d] && ruan_cpufreq_cap(d, b)) {
++			printf("ruan-thermal: d%u cap %u -> %u levels under top (a55 %d a78 %d gpu %d dC)\n", d, capped_below[d], b,
++			    group_dc[G_A55], group_dc[G_A78], group_dc[G_GPU]);
++			capped_below[d] = b;
++			cap_changes++;
++		}
++	}
++	if (emergency && emergencies++ % 10 == 0) {
++		printf("ruan-thermal: EMERGENCY hottest %d dC (a55 %d a78 %d gpu %d): CPUs at their lowest level\n", hottest_dc,
++		    group_dc[G_A55], group_dc[G_A78], group_dc[G_GPU]);
++	}
++	if (group_step[G_BATT] && g_ruan_battery.status == 1 && rounds % 60 == 0) {
++		printf("ruan-thermal: battery %d dC while charging (report only: the ADSP owns the charger)\n", group_dc[G_BATT]);
++	}
++	if (level != ruan_thermal_level) {
++		printf("ruan-thermal: level %u -> %u\n", ruan_thermal_level, level);
++	}
++	ruan_thermal_level = level;
++	rounds++;
++}
++
++static void
++run(void *arg __unused, wait_result_t wr __unused)
++{
++	tm[0] = (volatile uint32_t *)ml_io_map(0x0c263000, 0x1000);
++	tm[1] = (volatile uint32_t *)ml_io_map(0x0c265000, 0x1000);
++	printf("ruan-thermal: mode %u, tsens0 %s, tsens1 %s\n", mode, tm[0] ? "mapped" : "MAP FAILED", tm[1] ? "mapped" : "MAP FAILED");
++	for (;;) {
++		round_once();
++		assert_wait_timeout((event_t)&mode, THREAD_UNINT, 1000, NSEC_PER_MSEC);
++		thread_block(THREAD_CONTINUE_NULL);
++	}
++}
++
++static void
++put_dc(char *out, unsigned len, unsigned *at, const char *name, int32_t dc)
++{
++	int32_t a = dc < 0 ? -dc : dc;
++	int n = dc == NONE ? snprintf(out + *at, len - *at, " %s -", name)
++	                   : snprintf(out + *at, len - *at, " %s %s%d.%d", name, dc < 0 ? "-" : "", a / 10, a % 10);
++	*at += n > 0 && (unsigned)n < len - *at ? (unsigned)n : 0;
++}
++
++// USB `thermal` (UsbDebugCdc.cpp): row i of the report, 0 when there is no row i.
++unsigned
++ruan_thermal_report(unsigned i, char *out, unsigned len)
++{
++	static const char *const level_name[4] = {"nominal", "moderate", "heavy", "trapping"};
++	unsigned at = 0;
++	if (i == 0) {
++		at = (unsigned)snprintf(out, len, "mode %u level %u %s rounds %u invalid %u emergencies %u caps %u |", mode,
++		    ruan_thermal_level, level_name[ruan_thermal_level & 3], rounds, invalid, emergencies, cap_changes);
++		for (unsigned g = 0; g < GROUPS && at < len; g++) {
++			put_dc(out, len, &at, group_name[g], group_dc[g]);
++			at += (unsigned)snprintf(out + at, len - at, " s%u", group_step[g]);
++		}
++	} else if (i == 1) {
++		for (unsigned d = 0; d < 2; d++) {
++			unsigned st, vote, n;
++			ruan_cpufreq_domain(d, &st, &vote, &n);
++			at += (unsigned)snprintf(out + at, len - at, "d%u vote %u MHz state %u MHz levels %u capped %u%s lmh %us min %u MHz; ",
++			    d, vote, st, n, capped_below[d] > 99 ? 99 : capped_below[d], vote && st < vote ? " THROTTLED" : "", lmh_s[d],
++			    lmh_min[d]);
++		}
++	} else if (i == 2 || i == 3) {
++		at = (unsigned)snprintf(out, len, "tsens%u:", i - 2);
++		for (unsigned s = 0; s < SENSORS; s++) {
++			if (sensors[s].tsens == i - 2) {
++				put_dc(out, len, &at, sensors[s].name, now_dc[s]);
++			}
++		}
++	} else if (i == 4) {
++		at = (unsigned)snprintf(out, len, "pmic: pm7250b alarm stage %d pm6150l %d, jeita 0x%x, battery %d.%02d C%s",
++		    ruan_battery_alarm_stage[0], ruan_battery_alarm_stage[1], ruan_battery_jeita, g_ruan_battery.temperature_hundredths / 100,
++		    g_ruan_battery.temperature_hundredths % 100, g_ruan_battery.temperature_hundredths ? "" : " (no reading: ruan-batt-therm=1)");
++	}
++	return at;
++}
++
++// RuanMacBootProgress.c boot_progress_start, after ruan_cpufreq_start.
++void
++ruan_thermal_start(void)
++{
++	thread_t thread;
++	PE_parse_boot_argn("ruan-thermal", &mode, sizeof(mode));
++	if (mode && kernel_thread_start(run, NULL, &thread) == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	}
++}
++#endif
+diff --git a/package/RuanThermalLevel.cpp b/package/RuanThermalLevel.cpp
+new file mode 100644
+index 0000000..1eb7f11
+--- /dev/null
++++ b/package/RuanThermalLevel.cpp
+@@ -0,0 +1,125 @@
++// SPDX-License-Identifier: BSD-2-Clause-Patent
++// thermal-level=1: macOS's thermal pressure level from RuanThermal.c (ruan_thermal_level, 0..3). Off by default.
++// Taken from UniXNU-sheng package/ThermalLevel.{h,cpp} (same macOS 27.3 26C5035r; not run on hardware there either), trimmed to
++// ruan's one input. What it rests on (sheng ThermalLevel.h has the addresses):
++//   thermalmonitord does not compute a level: once a second it opens IOServiceMatching("AppleSMCSensorDispatcher") with type 0,
++//   asks selector 0 (key count), 1 (fifteen 32-bit key codes, 60 bytes) and 2 (their values, 60 bytes), and posts the value of key
++//   'mTPL' as notify_set_state + notify_post of com.apple.system.thermalpressurelevel (kOSThermalNotificationPressureLevelName).
++//   Foundation maps 1/2 to NSProcessInfoThermalStateFair, 3 Serious, 4 Critical. No SMC is needed: AppleSMC is not in the image,
++//   so this service carries Apple's class names and the user client checks the original's entitlement
++//   com.apple.private.smcsensor.user-access (thermalmonitord has it).
++// ruan_thermal_level 0..3 goes out as OSThermalPressureLevel 0 nominal, 1 moderate, 2 heavy, 3 trapping (never 4 sleeping).
++// Built as a "late" object (build-gop-legacy-display-27.py: __mod_init_func removed, initializer globalized) and registered by
++// ruan_thermal_level_probe() from LegacyDisplayProbe.cpp, as NativeHidInput / KeyStoreProbe are.
++#include <IOKit/IOService.h>
++#include <IOKit/IOUserClient.h>
++#include <IOKit/IOLib.h>
++#include <IOKit/IOPlatformExpert.h>
++#include <libkern/c++/OSSymbol.h>
++#include <mach/kmod.h>
++#include <pexpert/pexpert.h>
++
++extern kmod_info_t g_kernel_kmod_info;
++extern "C" {
++extern volatile uint32_t ruan_thermal_level __attribute__((weak_import));   // RuanThermal.c
++void ruan_thermal_level_static_init(void) __asm__("__GLOBAL__sub_I_RuanThermalLevel.cpp");
++int proc_selfpid(void);
++volatile int32_t ruan_thermal_level_state;   // 0 off, 1 published, -2 no memory, -3 attach/start, -10/-11 classes, -12 name taken
++volatile uint32_t ruan_thermal_level_use[4];  // opens, refused (no entitlement), value reads, last reader pid
++}
++
++namespace {
++constexpr uint32_t kKeyMTPL = 0x6d54504cu;   // 'mTPL'
++constexpr unsigned kSlots = 15;
++}
++
++class AppleSMCSensorDispatcher : public IOService {
++    OSDeclareDefaultStructors(AppleSMCSensorDispatcher)
++};
++OSDefineMetaClassAndStructors(AppleSMCSensorDispatcher, IOService)
++
++class AppleSMCSensorDispatcherUserClient : public IOUserClient {
++    OSDeclareDefaultStructors(AppleSMCSensorDispatcherUserClient)
++    int32_t pid = 0;
++
++    static IOReturn sCount(OSObject *, void *, IOExternalMethodArguments *a) {
++        a->scalarOutput[0] = 1;
++        return kIOReturnSuccess;
++    }
++    static IOReturn sKeys(OSObject *, void *, IOExternalMethodArguments *a) {
++        uint32_t k[kSlots] = {kKeyMTPL};
++        if (!a->structureOutput) return kIOReturnBadArgument;
++        memcpy(a->structureOutput, k, sizeof k);
++        return kIOReturnSuccess;
++    }
++    static IOReturn sValues(OSObject *t, void *, IOExternalMethodArguments *a) {
++        uint32_t v[kSlots] = {&ruan_thermal_level ? ruan_thermal_level : 0};
++        if (!a->structureOutput) return kIOReturnBadArgument;
++        memcpy(a->structureOutput, v, sizeof v);
++        ruan_thermal_level_use[2]++;
++        ruan_thermal_level_use[3] = (uint32_t)static_cast<AppleSMCSensorDispatcherUserClient *>(t)->pid;
++        return kIOReturnSuccess;
++    }
++    static IOReturn sWrite(OSObject *, void *, IOExternalMethodArguments *a) {   // the original writes SMC keys: dropped
++        return a->structureInput ? kIOReturnSuccess : kIOReturnBadArgument;
++    }
++
++public:
++    bool initWithTask(task_t task, void *security, UInt32 type) override {
++        OSObject *e = copyClientEntitlement(task, "com.apple.private.smcsensor.user-access");
++        const bool ok = e == kOSBooleanTrue;
++        OSSafeReleaseNULL(e);
++        if (!ok) {ruan_thermal_level_use[1]++; return false;}
++        if (!IOUserClient::initWithTask(task, security, type)) return false;
++        pid = proc_selfpid();
++        return true;
++    }
++    bool start(IOService *provider) override {
++        if (!OSDynamicCast(AppleSMCSensorDispatcher, provider) || !IOUserClient::start(provider)) return false;
++        setProperty(kIOUserClientDefaultLockingKey, kOSBooleanTrue);
++        ruan_thermal_level_use[0]++;
++        return true;
++    }
++    IOReturn clientClose() override {
++        terminate();
++        return kIOReturnSuccess;
++    }
++    // Apple's table for selectors 0..3 (scalar counts and structure sizes checked by IOUserClient::externalMethod).
++    IOReturn externalMethod(uint32_t selector, IOExternalMethodArguments *args, IOExternalMethodDispatch *, OSObject *, void *) override {
++        static const IOExternalMethodDispatch methods[4] = {
++            {&AppleSMCSensorDispatcherUserClient::sCount, 0, 0, 1, 0},
++            {&AppleSMCSensorDispatcherUserClient::sKeys, 0, 0, 0, 4 * kSlots},
++            {&AppleSMCSensorDispatcherUserClient::sValues, 0, 0, 0, 4 * kSlots},
++            {&AppleSMCSensorDispatcherUserClient::sWrite, 0, 88, 0, 0},
++        };
++        if (selector >= 4) return kIOReturnUnsupported;
++        return IOUserClient::externalMethod(selector, args, const_cast<IOExternalMethodDispatch *>(&methods[selector]), this, nullptr);
++    }
++};
++OSDefineMetaClassAndStructors(AppleSMCSensorDispatcherUserClient, IOUserClient)
++
++extern "C" void ruan_thermal_level_probe(void) {
++    unsigned on = 0;
++    PE_parse_boot_argn("thermal-level", &on, sizeof on);
++    if (on != 1 || ruan_thermal_level_state) return;
++    static const char *const kNames[2] = {"AppleSMCSensorDispatcher", "AppleSMCSensorDispatcherUserClient"};
++    for (const char *name : kNames) {   // must be free: AppleSMC is not in the image
++        const OSSymbol *sym = OSSymbol::withCString(name);
++        const bool taken = sym && OSMetaClass::getMetaClassWithName(sym);
++        OSSafeReleaseNULL(sym);
++        if (taken) {ruan_thermal_level_state = -12; return;}
++    }
++    void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
++    if (!handle) {ruan_thermal_level_state = -10; return;}
++    ruan_thermal_level_static_init();
++    if (OSMetaClass::postModLoad(handle)) {ruan_thermal_level_state = -11; return;}
++    AppleSMCSensorDispatcher *service = OSTypeAlloc(AppleSMCSensorDispatcher);
++    IOService *platform = IOService::getPlatform();
++    if (!service || !service->init()) {OSSafeReleaseNULL(service); ruan_thermal_level_state = -2; return;}
++    service->setProperty("IOUserClientClass", "AppleSMCSensorDispatcherUserClient");
++    if (!service->attach(platform)) {service->release(); ruan_thermal_level_state = -3; return;}
++    if (!service->start(platform)) {service->detach(platform); service->release(); ruan_thermal_level_state = -3; return;}
++    service->registerService();
++    service->release();   // the platform's attachment keeps it
++    ruan_thermal_level_state = 1;
++}
+diff --git a/package/UsbDebugCdc.cpp b/package/UsbDebugCdc.cpp
+index 764c76b..f3de468 100755
+--- a/package/UsbDebugCdc.cpp
++++ b/package/UsbDebugCdc.cpp
+@@ -13,6 +13,9 @@ extern "C" volatile uint32_t native_ufs_dpu_state __attribute__((weak_import));
+ extern "C" volatile uint32_t native_ufs_dpu_smmu[24] __attribute__((weak_import));
+ extern "C" volatile uint32_t native_ufs_dpu_check[8] __attribute__((weak_import));
+ extern "C" void ruan_cpufreq_report(char *, unsigned) __attribute__((weak_import));
++extern "C" unsigned ruan_thermal_report(unsigned, char *, unsigned) __attribute__((weak_import));   // RuanThermal.c, USB `thermal`
++extern "C" volatile int32_t ruan_thermal_level_state __attribute__((weak_import));                // RuanThermalLevel.cpp
++extern "C" volatile uint32_t ruan_thermal_level_use[4] __attribute__((weak_import));
+ // ArmCpu.cpp secondary bring-up evidence (smp=1), per logical core; USB `cpu` prints it before the stats rows. Steps: 1 nub,
+ // 2 registered, 3 start thread, 4 PSCI CPU_ON issued, 5 initCPU on the new core, 6 GIC redistributor ready, 7 running.
+ // fail: 1 MPIDR mismatch, 2 redistributor, 3 remote redistributor (smp-gic=1), 4 ml_processor_register.
+@@ -572,7 +575,7 @@ static void handleCommand(TerminalSession &s, const char *raw) {
+     if (strEq(raw, "ping")) {
+         s.reply.writeStr("[usb] PONG ruan\r\n");
+     } else if (strEq(raw, "features") || strEq(raw, "help")) {
+-        s.reply.writeStr("FEATURES: ping status bootargs display usb touch battery wifi wifi.log bt bt.log video video.log audio replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg fb fb.scan gpu\r\n");
++        s.reply.writeStr("FEATURES: ping status bootargs display usb touch battery wifi wifi.log bt bt.log video video.log audio replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg fb fb.scan gpu cpufreq thermal\r\n");
+     } else if (strEq(raw, "wifi") || strEq(raw, "wlan")) {
+         if (&ruan_wifi_status_str && ruan_wifi_status_str) {
+             snprintf(buf, sizeof(buf), "[usb] WIFI: %s\r\n", ruan_wifi_status_str());
+@@ -916,6 +919,21 @@ static void handleCommand(TerminalSession &s, const char *raw) {
+                      (unsigned)p[24], (unsigned)p[25], (int)p[26], (unsigned)p[27], (int)p[28], (unsigned)p[29], (unsigned)p[30], (unsigned)p[31]);
+         } else snprintf(buf, sizeof(buf), "[usb] PANEL120: not linked\r\n");
+         s.reply.writeStr(buf);
++    } else if (strEq(raw, "thermal")) {
++        // RuanThermal.c rows: level/groups, CPU caps + LMh, tsens0, tsens1, PMIC; then the macOS service (thermal-level=1)
++        char row[400];
++        unsigned i = 0;
++        for (; &ruan_thermal_report && ruan_thermal_report(i, row, sizeof(row)); ++i) {
++            snprintf(buf, sizeof(buf), "[usb] THERMAL: %s\r\n", row);
++            s.reply.writeStr(buf);
++        }
++        if (!i) s.reply.writeStr("[usb] THERMAL: not linked (or ruan-thermal=0)\r\n");
++        if (&ruan_thermal_level_state) {
++            snprintf(buf, sizeof(buf), "[usb] THERMAL: macOS service st=%d opens %u refused %u reads %u last pid %u\r\n",
++                     (int)ruan_thermal_level_state, ruan_thermal_level_use[0], ruan_thermal_level_use[1], ruan_thermal_level_use[2],
++                     ruan_thermal_level_use[3]);
++            s.reply.writeStr(buf);
++        }
+     } else if (strEq(raw, "cpufreq")) {
+         char row[160] = "not linked";
+         if (&ruan_cpufreq_report) ruan_cpufreq_report(row, sizeof(row));
+diff --git a/scripts/build-gop-legacy-display-27.py b/scripts/build-gop-legacy-display-27.py
+index 9a2fde3..34aeaa3 100755
+--- a/scripts/build-gop-legacy-display-27.py
++++ b/scripts/build-gop-legacy-display-27.py
+@@ -558,6 +558,14 @@ board_objects += [OUT / 'UsbDebugCdc.o', OUT / 'RuanMacBootProgress.o', OUT / 'B
+ # EPSS CPU clock vote (package/RuanCpuFreq.c), on by default here: ruan-cpufreq=2 would cost 15 bytes of the 1000-byte line
+ compile_c(ROOT / 'kits/ruan/RuanCpuFreq.c', OUT / 'RuanCpuFreq.o', extra=('-DRUAN_CPUFREQ_DEFAULT=2',))
+ board_objects.append(OUT / 'RuanCpuFreq.o')
++# Temperatures, CPU thermal caps and the macOS pressure level (package/RuanThermal.c, ruan-thermal, default 2). RuanThermal.c reads
++# g_ruan_battery, so it takes the battery header from kits/ruan. RuanThermalLevel.cpp (thermal-level=1) is a late object like
++# NativeHidInput: its initializer leaves __mod_init_func and ruan_thermal_level_probe (LegacyDisplayProbe.cpp) runs it.
++compile_c(ROOT / 'kits/ruan/RuanThermal.c', OUT / 'RuanThermal.o')
++compile_cpp(ROOT / 'kits/ruan/RuanThermalLevel.cpp', OUT / 'RuanThermalLevel.o')
++run([llvm_objcopy, '--remove-section=__DATA,__mod_init_func', '--globalize-symbol=__GLOBAL__sub_I_RuanThermalLevel.cpp',
++     OUT / 'RuanThermalLevel.o', OUT / 'RuanThermalLevel.late.o'])
++board_objects += [OUT / 'RuanThermal.o', OUT / 'RuanThermalLevel.late.o']
+ # Adreno 710 (ruan-gpu=17/18, as iPadOS): GMU boot, GPU pool, SMMU, zap (package/RuanGpuPower.c + AdrenoHfi.c, built by
+ # build-ram-root-probe.py on iPadOS); the driver itself is libRuanAdreno.a (build-ruan-adreno.py, force-loaded by the defconfig).
+ # The GPU pool is Device memory on this kernel: no unaligned accesses (package/RuanDeviceMem.h, full-OS boot 13).

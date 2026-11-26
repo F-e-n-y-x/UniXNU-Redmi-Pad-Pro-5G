@@ -1,0 +1,22 @@
+--- a/drivers/GopFramebuffer/NativeLegacyDisplay.cpp
++++ b/drivers/GopFramebuffer/NativeLegacyDisplay.cpp
+@@ -1003,7 +1003,9 @@
+         if(!pitch)return kIOReturnBadArgument;
+         *pitch=0;IOService *provider=getProvider();if(!provider)return kIOReturnNotReady;
+         OSObject *property=provider->getProperty("dot-pitch");
+-        if(!property)return kIOReturnNotFound;
++        // ruan: GOP gives no size, and without one WindowServer offers no HiDPI mode (1x, tiny UI/cursor). Redmi Pad Pro 12.1" 1600x2560
++        // = 249 dpi (pad8pro NativeGopDisplay.cpp publishes its panel's mm the same way). fb-dpi=0: none, as before.
++        if(!property){unsigned dpi=249;PE_parse_boot_argn("fb-dpi",&dpi,sizeof(dpi));if(!dpi)return kIOReturnNotFound;*pitch=dpi;return kIOReturnSuccess;}
+         OSData *data=OSDynamicCast(OSData,property);
+         if(!data || data->getLength()!=sizeof(*pitch))return kIOReturnBadArgument;
+         memcpy(pitch,data->getBytesNoCopy(),sizeof(*pitch));return kIOReturnSuccess;
+@@ -1105,7 +1107,7 @@
+             ident(color,kDisplayColorID);ident(timing,kDisplayTimingID);
+             if(!colors->setObject(color) || !timingColors->setObject(color) || !timings->setObject(timing))break;
+             native_legacy_ioav_timing_colors(timing,timingColors);
+-            if(!putString(product,"ManufacturerID","UNX") || !putNumber(product,"ProductID",0) || !putNumber(product,"SerialNumber",0) ||
++            if(!putString(product,"ManufacturerID","UNX") || !putNumber(product,"ProductID",0x5250) || !putNumber(product,"SerialNumber",width<<16|height) ||
+                !putString(product,"ProductName","UniXNU Display"))break;
+             if(!putPoint(chromaticity,"Red",41943,21627) || !putPoint(chromaticity,"Green",19661,39322) ||
+                !putPoint(chromaticity,"Blue",9830,3932) || !putNumber(white,"Gamma",144179))break;

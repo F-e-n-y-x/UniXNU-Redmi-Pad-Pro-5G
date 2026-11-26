@@ -1,0 +1,125 @@
+--- a/drivers/GopFramebuffer/NativeLegacyDisplay.cpp
++++ b/drivers/GopFramebuffer/NativeLegacyDisplay.cpp
+@@ -189,6 +189,9 @@
+ #endif
+ class NativeLegacyDisplay;
+ static NativeLegacyDisplay *gDirectDisplay=nullptr;
++// The current fb-rotate (0, 1, 3) for the touch mapping (RuanTouch.c reads it per report); USB `rotate` changes it live.
++extern "C" volatile uint32_t native_legacy_rotate=0;
++static NativeLegacyDisplay *gRotateDisplay=nullptr;
+ extern "C" void native_legacy_direct_snapshot(void);
+ class NativeLegacyDisplay : public IOMobileFramebufferLegacy {
+     OSDeclareDefaultStructors(NativeLegacyDisplay)
+@@ -503,9 +506,42 @@
+         };
+         if(loop)loop->runAction(action,this,&args);else finishGpuSwap(status);
+     }
++    // USB `rotate` (on the work loop, so no copy runs meanwhile). 1<->3 turns the panel picture in place; macOS sees no change.
++    // 0<->1/3 changes the size macOS sees: only with live, as unplug, new size and timing element, plug (unverified that WindowServer
++    // re-reads them). 0 done, 1 unchanged, -1 bad value, -3 orientation change refused (use fb-rotate at boot), -4 failed or busy.
++    int setRotate(uint32_t r,uint32_t live) {
++        if(r==2 || r>3)return -1;
++        if(r==rotate)return 1;
++        PE_Video video={};
++        if(!bootMapping || PE_current_console(&video) || video.v_baseAddr!=bootMapping->getPhysicalAddress())return -4;
++        volatile void *panel=reinterpret_cast<volatile void *>(bootMapping->getVirtualAddress());
++        if(r && rotate) {
++            if(!native_legacy_turn180(panel,bootMapping->getLength(),video.v_rowBytes,video.v_width,video.v_height))return -4;
++            __asm__ volatile("dsb sy" ::: "memory");
++            rotate=r;native_legacy_rotate=r;return 0;
++        }
++#if defined(NATIVE_LEGACY_MACOS) && NATIVE_LEGACY_MACOS
++        if(!live)return -3;
++        if(gpuRequest || latchRequest)return -4;   // a GPU blit or DPU flip of the old size is still on its way
++        native_legacy_hotplug_notify(this,0);
++        directToBoot();
++        rotate=r;native_legacy_rotate=r;shadowValid=false;
++        const uint32_t w=r?(uint32_t)video.v_height:(uint32_t)video.v_width,h=r?(uint32_t)video.v_width:(uint32_t)video.v_height;
++        installBootDimensions(w,h);
++        publishDisplayAttributes(w,h);
++        setProperty("DisplayWidth",w,32);setProperty("DisplayHeight",h,32);
++        native_legacy_fill_pixels(panel,bootMapping->getLength(),video.v_rowBytes,video.v_width,video.v_height,0xff000000U);
++        __asm__ volatile("dsb sy" ::: "memory");
++        native_legacy_hotplug_notify(this,1);
++        return 0;
++#else
++        return -3;
++#endif
++    }
+     void free() override {stopVsync();if(logicalPM){PMstop();logicalPM=false;}primary=false;OSSafeReleaseNULL(bootMapping);IOMobileFramebufferLegacy::free();}
+     void stop(IOService *provider) override {
+         stopVsync();
++        if(gRotateDisplay==this)gRotateDisplay=nullptr;
+         transferred=false;for(auto &entry: validated)entry=nullptr;gpuRequest=nullptr;gpuRetired=false;
+         directToBoot();latchRequest=nullptr;pendingSlot=-1;
+         if(fenceTimer){fenceTimer->cancelTimeout();if(IOWorkLoop *loop=getWorkLoop())loop->removeEventSource(fenceTimer);OSSafeReleaseNULL(fenceTimer);}
+@@ -695,7 +731,7 @@
+             }
+         }
+         if(directOn && !half && !gpuBypass && latchRequest)stat(5);
+-        if(directOn && !half && !gpuBypass && !latchRequest) {
++        if(directOn && !half && !gpuBypass && !latchRequest && !rotate) {
+             if(!gpuWrote(request)) {transferred=true;return;}
+             const int slot=directSlot(surface,memory);
+             if(slot>=0) {
+@@ -1039,13 +1075,14 @@
+         bool valid=mapping->getVirtualAddress() && mapping->getPhysicalAddress()==video.v_baseAddr &&
+                    mapping->getLength()==video.v_rowBytes*video.v_height;
+         if(valid) {
+-            unsigned rot=0;PE_parse_boot_argn("fb-rotate",&rot,sizeof(rot));rotate=(rot==1 || rot==3)?rot:0;
++            unsigned rot=0;PE_parse_boot_argn("fb-rotate",&rot,sizeof(rot));rotate=(rot==1 || rot==3)?rot:0;native_legacy_rotate=rotate;
+             if(rotate)installBootDimensions((uint32_t)video.v_height,(uint32_t)video.v_width);
+             else installBootDimensions((uint32_t)video.v_width,(uint32_t)video.v_height);
+             uint32_t width=0,height=0;getDisplayDimensions(&width,&height);
+             valid=panelMatches(video,width,height);
+             if(valid) {
+                 OSSafeReleaseNULL(bootMapping);bootMapping=mapping;mapping=nullptr;primary=video.v_display==1;
++                if(primary)gRotateDisplay=this;
+                 valid=native_legacy_gop_mapping_observed(this,bootMapping,width,height);
+ #if defined(NATIVE_LEGACY_DEFAULT_SURFACE) && NATIVE_LEGACY_DEFAULT_SURFACE
+                 // The family calls its void slot 316 after startHardware. Our backend supplies the client's default surface.
+@@ -1282,5 +1319,16 @@
+ };
+ OSDefineMetaClassAndStructors(NativeLegacyDisplay,IOMobileFramebufferLegacy)
+ extern "C" void native_legacy_direct_snapshot(void) {if(gDirectDisplay)gDirectDisplay->snapshot();}
++// USB `rotate N [live]` (UsbDebugCdc.cpp): see setRotate for the answers; -2 when no primary display started.
++extern "C" int native_legacy_set_rotate(uint32_t r,uint32_t live) {
++    NativeLegacyDisplay *display=gRotateDisplay;
++    IOWorkLoop *loop=display?display->getWorkLoop():nullptr;
++    int rc=-2;
++    if(loop)loop->runAction([](OSObject *owner,void *r,void *live,void *rc,void *)->IOReturn {
++        *static_cast<int *>(rc)=static_cast<NativeLegacyDisplay *>(owner)->setRotate((uint32_t)(uintptr_t)r,(uint32_t)(uintptr_t)live);
++        return kIOReturnSuccess;
++    },display,(void *)(uintptr_t)r,(void *)(uintptr_t)live,&rc);
++    return rc;
++}
+ IOService *native_legacy_display_allocate(void) {return new NativeLegacyDisplay;}
+ extern "C" void native_legacy_gpu_complete(void *display,int status) {if(display)static_cast<NativeLegacyDisplay *>(display)->gpuComplete(status);}
+--- a/drivers/GopFramebuffer/NativeLegacyRequest.h
++++ b/drivers/GopFramebuffer/NativeLegacyRequest.h
+@@ -169,6 +169,25 @@
+     }
+     return 1;
+ }
++// Live rotate 1<->3 is a 180 degree turn of the panel picture: done in place on the scanout, so a still screen is right at once.
++// Pixel pairs move as 64-bit words with their halves swapped (width must be even).
++static inline int native_legacy_turn180(volatile void *destination, uint64_t destinationBytes, uint64_t destinationStride,
++    uint32_t width, uint32_t height) {
++    uintptr_t dst=(uintptr_t)destination;
++    if (!dst || (dst&7) || (destinationStride&7) || (width&1) ||
++        !native_legacy_surface_bounds(width,height,destinationStride,destinationBytes,destinationBytes)) return 0;
++    const uint32_t n=width/2;
++    for (uint32_t y=0;y<(height+1)/2;++y) {
++        volatile uint64_t *top=(volatile uint64_t *)(dst+(uint64_t)y*destinationStride);
++        volatile uint64_t *bottom=(volatile uint64_t *)(dst+(uint64_t)(height-1-y)*destinationStride);
++        const uint32_t m=top==bottom?(n+1)/2:n;   // the middle row of an odd height turns on itself
++        for (uint32_t i=0;i<m;++i) {
++            const uint64_t a=top[i],b=bottom[n-1-i];
++            top[i]=b<<32|b>>32;bottom[n-1-i]=a<<32|a>>32;
++        }
++    }
++    return 1;
++}
+ 
+ // Differential copy for the slow scanout memory: only 64-byte blocks that differ from the previous frame (kept in an ordinary
+ // cached shadow buffer, rows packed at width*4) are stored to the device mapping. The shadow must start from a full copy

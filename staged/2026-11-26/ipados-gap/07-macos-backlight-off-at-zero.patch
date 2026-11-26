@@ -1,0 +1,30 @@
+--- a/package/RuanBacklight.cpp	2026-11-26 16:06:57.670158920 +0530
++++ b/package/RuanBacklight.cpp	2026-11-26 16:09:53.566859304 +0530
+@@ -59,6 +59,8 @@
+     .updates_count = 0, .errors = 0, .status = "not started",
+ };
+ 
++extern "C" volatile uint32_t ruan_screen_off;   // RuanInput.c
++
+ namespace {
+ constexpr uint32_t kMaxLevel = 4095, kStepMs = 16;
+ #if RUAN_MACOS
+@@ -278,7 +280,9 @@
+     if (!g_ruan_backlight.ready) return -1;
+     if (level > g_ruan_backlight.max_level) level = g_ruan_backlight.max_level;
+     uint32_t hw = (uint32_t)(((uint64_t)level * s_hw_max) / g_ruan_backlight.max_level);   /* iPadOS units -> chip */
+-    if (hw < g_ruan_backlight.min_level) hw = g_ruan_backlight.min_level;   /* never fully dark: no way back */
++    /* 0 = display off (iPadOS RuanBacklightSvc rbu177): backlight off, and RuanCpuFreq/RuanGpuPower DCVS drop to their floor.
++     * Any other value keeps the floor, so the panel is never dark while it is meant to be on. */
++    if (level && hw < g_ruan_backlight.min_level) hw = g_ruan_backlight.min_level;
+     IOLockLock(s_lock);
+     uint32_t e = sy7758_write(SY7758_BRT_L, (uint8_t)(hw & 0xff));   /* low then high, as sy7758.c */
+     if (!e) e = sy7758_write(SY7758_BRT_H, (uint8_t)((hw >> 8) & 0x0f));
+@@ -292,6 +296,7 @@
+         return -6;
+     }
+     ruan_bl_mirror_level(hw);   /* the second SY7758: the other half of the LED strings (else that half stays at the boot level) */
++    ruan_screen_off = level == 0;
+     g_ruan_backlight.current_level = level;
+     g_ruan_backlight.updates_count++;
+     return 0;

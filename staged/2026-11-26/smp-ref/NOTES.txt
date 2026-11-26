@@ -1,0 +1,12 @@
+SMP reference sweep 2026-11-26 (read-only)
+- ArmCpu.cpp identical in UniXNU and UniXNU-macos (diff = 0 lines): CPU_ON (PSCI conduit from /psci method, board psci_method=smc),
+  GICR wake, smp-gic, spi/self-ipi, SPI routing to boot CPU (ArmCpu.cpp:327-330) are the same code in both ports.
+- iPadOS late UFS+SMP args (/root/unixnu-work/args-rbu138.txt, args-rbu152p.txt): cpus=8 smp=1 smp-gic=1 [armcpu-edge=1], NO armcpu-spi-ipi/self-ipi.
+- iPadOS ruan-idle-wfi.patch header: "IPIs do not reach ruan's cores (Gunyah; SIGPdisabled is never cleared), so cpu_idle refuses WFI and the idle thread spins".
+- macOS ruan-smp-sigp.patch (from sheng) clears SIGPdisabled (cpu_signal_internal + cpu_idle) -> IPIs sent + WFI idle: a mode iPadOS never ran on ruan.
+- sheng zzzz-sheng-ipados27-bringup.patch:1115-1119: WFI in idle stalled the boot after data disk start; stock WFE kept.
+- Crash replay: line 390 "RuanMacUfs: mark: cell 00 -> 04 rc=0" before the reset, yet normal boot; RAM survived (replay). Panic / Gunyah WDT bite would go to fastboot (BootProgress.c:821-824). => not a panic, not a WDT bite.
+- Replay ~line 515: "nx_corruption_detected ... disk1s1 Container corruption" (md0) just before reset: compare with a cpus=1 dmesg.
+- Watchdog: ruan-wdt-pet opt-in/off in both (BootProgress.c:882); IPADOS-BRINGUP.md:273 pet caused resets. sheng: uefi-watchdog=1 (its firmware hands over an armed 30 s WDT; BootReset.c:133-190).
+- Dizi-Ruan (same SoC, xnu-10063): cpus=8 smp=1 spi+self-ipi reached root mount (board.toml:89).
+- HakiOS: /root/hakios-garnet has only tools, no kernel source; darwin-lisa bootcpu=7 keeps the loader on core 0 (not Gunyah).

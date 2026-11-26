@@ -1,0 +1,41 @@
+ruan: built-in default boot-args for xnu-12377 (macOS 27.3), port of the iPadOS patches/xnu/ruan-default-bootargs.patch.
+Add to patches/xnu-12377/ufs.series. Command line wins; list holds only kernel-read args now on the 987/1000-byte line.
+
+--- a/pexpert/gen/bootargs.c	2026-11-26 16:09:23.996858211 +0530
++++ b/pexpert/gen/bootargs.c	2026-11-26 16:09:37.698094349 +0530
+@@ -188,13 +188,24 @@
+ 	return arg_found;
+ }
+ 
++/* ruan (port of UniXNU-ruan patches/xnu/ruan-default-bootargs.patch): built-in default boot-args, looked up when an argument is not
++ * on the 1000-byte kernel command line (the command line always wins). Only kernel-side arguments: userland reads the real line
++ * (kern.bootargs), and static_if_init parses the loader's line by itself (kperf-static-if-builtin-args.patch), so those stay there.
++ * Once this is in, the same arguments can be dropped from board.toml's kernel_args (~250 bytes). */
++static char ruan_default_boot_args[] =
++    "ruan-usbdbg=1 ruan-usbdbg-reboot=1 ruan-ramoops=1 ruan-gpu=18 ruan-adreno=1 fb-wc=1 touch-pointer=1 ruan_touch=1 "
++    "offline-hid-input=1 offline-hid-home=1 ruan-no-darwinbg=1 ruan-wc-dram=0x80000000 vsync=60 "
++    "offline-mobile-graphics-load=1 offline-legacy-register=1 offline-legacy-phase=4 offline-legacy-gop=1 offline-legacy-pm=1 "
++    "offline-legacy-validate=1 offline-legacy-transfer=1 offline-legacy-cpu-present=1";
++
+ boolean_t
+ PE_parse_boot_argn(
+ 	const char      *arg_string,
+ 	void            *arg_ptr,
+ 	int                     max_len)
+ {
+-	return PE_parse_boot_argn_internal(PE_boot_args(), arg_string, arg_ptr, max_len, FALSE);
++	return PE_parse_boot_argn_internal(PE_boot_args(), arg_string, arg_ptr, max_len, FALSE) ||
++	       PE_parse_boot_argn_internal(ruan_default_boot_args, arg_string, arg_ptr, max_len, FALSE);
+ }
+ 
+ boolean_t
+@@ -214,7 +225,8 @@
+ 	char            *arg_ptr,
+ 	int                     strlen)
+ {
+-	return PE_parse_boot_argn_internal(PE_boot_args(), arg_string, arg_ptr, strlen, TRUE);
++	return PE_parse_boot_argn_internal(PE_boot_args(), arg_string, arg_ptr, strlen, TRUE) ||
++	       PE_parse_boot_argn_internal(ruan_default_boot_args, arg_string, arg_ptr, strlen, TRUE);
+ }
+ 
+ #if defined(CONFIG_XNUPOST)

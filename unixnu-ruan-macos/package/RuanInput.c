@@ -140,7 +140,7 @@ void
 hakios_spmi_lock(void)
 {
 	while (__atomic_exchange_n(&spmi_busy, 1, __ATOMIC_ACQUIRE)) {
-		IOSleep(1);
+		IOSleep(16);   /* one button poll: the holder may be a zap SCM call (RuanAdrenoGlue.cpp scmCall); 1 ms wakeups would keep interrupting TZ */
 	}
 }
 

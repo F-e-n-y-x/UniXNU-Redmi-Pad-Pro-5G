@@ -1,0 +1,65 @@
+--- a/drivers/GopFramebuffer/NativeLegacyDisplay.cpp	2026-11-26 11:17:03.976091371 +0530
++++ b/drivers/GopFramebuffer/NativeLegacyDisplay.cpp	2026-11-26 11:19:45.103667249 +0530
+@@ -303,19 +303,23 @@
+     bool fenceCaptured=false,fenceSlow=false;
+     IOTimerEventSource *fenceTimer=nullptr;
+     bool directOn=false,directBoot=true;
+-    static constexpr uint32_t kVig[2]={0x4000,0x6000},kCtlFlush=0x15018,kBootIova=0xb8000000U,kBootStride=0x2fa0;
++    static constexpr uint32_t kVig[2]={0x4000,0x6000},kCtlFlush=0x15018,kBootIova=0xb8000000U,kBootStride=0x1900;   // ruan VIG0 stride0 (USB `dpu`); was sheng's 0x2fa0
+     void startDirect() {
++        IOWorkLoop *loop=getWorkLoop();
++        // ruan: the CPU copy waits for the GPU fence too (kickOnce, fb-fence), so the fence timer exists without direct scanout.
++        if(!fenceTimer && loop) {
++            fenceTimer=IOTimerEventSource::timerEventSource(this,&NativeLegacyDisplay::fenceFired);
++            if(fenceTimer && loop->addEventSource(fenceTimer)!=kIOReturnSuccess)OSSafeReleaseNULL(fenceTimer);
++        }
+         unsigned mode=0;PE_parse_boot_argn("dpu-scanout",&mode,sizeof(mode));
+         if(mode<2 || !&native_ufs_dpu_map || !&native_ufs_dpu_state || !(native_ufs_dpu_state>>31) || !primary)return;
+         IODeviceMemory *memory=IODeviceMemory::withRange(0xae01000,0x8f000);
+         mdpMap=memory?memory->map(kIOMapAnywhere|kIOMapInhibitCache):nullptr;
+         if(memory)memory->release();
+         directPages=static_cast<uint64_t *>(IOMallocData(8192*sizeof(uint64_t)));
+-        IOWorkLoop *loop=getWorkLoop();
+         latchTimer=loop?IOTimerEventSource::timerEventSource(this,&NativeLegacyDisplay::latchFired):nullptr;
+-        fenceTimer=loop?IOTimerEventSource::timerEventSource(this,&NativeLegacyDisplay::fenceFired):nullptr;
+-        if(!mdpMap || !directPages || !latchTimer || !fenceTimer || loop->addEventSource(fenceTimer)!=kIOReturnSuccess || loop->addEventSource(latchTimer)!=kIOReturnSuccess) {
+-            OSSafeReleaseNULL(mdpMap);OSSafeReleaseNULL(latchTimer);OSSafeReleaseNULL(fenceTimer);
++        if(!mdpMap || !directPages || !latchTimer || !fenceTimer || loop->addEventSource(latchTimer)!=kIOReturnSuccess) {
++            OSSafeReleaseNULL(mdpMap);OSSafeReleaseNULL(latchTimer);
+             if(directPages){IOFreeData(directPages,8192*sizeof(uint64_t));directPages=nullptr;}
+             return;
+         }
+@@ -375,7 +379,7 @@
+     // A provider's failed query is not completion. Poll without blocking the display work loop;
+     // a slow GPU leaves the previous frame on screen until completion or family cancellation.
+     bool traceGpuComplete=false;
+-    bool gpuWrote(const OriginalLegacySwapRequest *request) {
++    bool gpuWrote(const OriginalLegacySwapRequest *request,bool copy=false) {
+         traceGpuComplete=false;
+         if(fenceFor!=request) {
+             fenceFor=request;fenceTarget=0;fenceSince=0;fenceCaptured=false;fenceSlow=false;
+@@ -387,6 +391,9 @@
+         }
+         const bool known=&native_adreno_fences_detail?native_adreno_fences_detail(&submitted,&retired,detail):
+             (&native_adreno_fences && native_adreno_fences(&submitted,&retired));
++        // shortcut: the copy path skips the wait when no fence was ever readable for this swap (GPU not published, lock busy on the
++        // first poll), as before this change; a copy of a frame still being rendered can then still occur.
++        if(copy && !known && !fenceCaptured){fenceFor=nullptr;return true;}
+         if(known && !fenceCaptured) {
+             fenceTarget=submitted;fenceCaptured=true;
+         }
+@@ -711,6 +718,14 @@
+             }
+             return;
+         }
++        // ruan: WindowServer submits the swap when its command buffer is scheduled, not finished (NativeAdrenoPublish.cpp
++        // native_adreno_fences_detail); without this wait the copy reads a surface Turnip is still rendering (partial/old tiles on the
++        // panel until the next swap). fb-fence=0 restores the unsynchronized copy.
++        {
++            static int fence=-1;
++            if(fence<0){unsigned v=1;PE_parse_boot_argn("fb-fence",&v,sizeof v);fence=(v!=0);}
++            if(fence && fenceTimer && !gpuWrote(request,true)){transferred=true;return;}
++        }
+         // Surfaces may be write-combined (iPadOS 27 display surfaces are): reading them uncached costs seconds per frame. Read through
+         // a cacheable view, after cleaning and invalidating it so lines from the previous frame are not reused.
+         IOMemoryMap *source=memory->map(kIOMapAnywhere|kIOMapReadOnly|kIOMapCopybackCache);

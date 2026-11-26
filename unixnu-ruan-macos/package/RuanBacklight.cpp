@@ -218,6 +218,61 @@ void ruan_backlight_init(void) {
     IOLog("ruan-backlight: %s\n", g_ruan_backlight.status);
 }
 
+/* The second SY7758 (ruan has two, one per half of the LED strings, both at 0x2e): i2c@990000 = QUP0 SE4 (live DT line 15668,
+ * GIC SPI 605). Without it the strings it drives stay at the boot loader's level and that part of the panel cannot be dimmed or
+ * brightened (rbu170p). Polled writes after the same read-only checks as the first chip: wrap0 S4 halt 0x274dc (gcc-parrot.c),
+ * the wrap0 AHB and core clocks, then I2C firmware in the engine. ruan-bl-mirror=0 leaves it alone. */
+#define SE2_PHYS 0x00990000ULL
+static vm_offset_t s_se2 = 0;
+static int s_mirror = -1;   /* -1 not tried, 0 unusable, 1 ready */
+extern "C" char ruan_bl_mirror_status[96];
+char ruan_bl_mirror_status[96] = "mirror: not tried";
+static bool mirror_ready(void) {
+    if (s_mirror >= 0) return s_mirror == 1;
+    s_mirror = 0;
+    unsigned on = 1;
+    PE_parse_boot_argn("ruan-bl-mirror", &on, sizeof on);
+    if (!on) { strlcpy(ruan_bl_mirror_status, "mirror: off (ruan-bl-mirror=0)", sizeof ruan_bl_mirror_status); return false; }
+    if (!s_lock) s_lock = IOLockAlloc();
+    vm_offset_t gcc = ml_io_map((vm_offset_t)GCC_PHYS, (vm_size_t)GCC_SIZE);
+    if (!gcc || !s_lock) { strlcpy(ruan_bl_mirror_status, "mirror: map/lock failed", sizeof ruan_bl_mirror_status); return false; }
+    static const uint32_t cbcr[] = {0x274dc, 0x27004, 0x27008, 0x33000};
+    for (uint32_t off : cbcr) {
+        const uint32_t v = *(volatile uint32_t *)(gcc + off);
+        if (v & CLK_OFF) { snprintf(ruan_bl_mirror_status, sizeof ruan_bl_mirror_status, "mirror: clock off (GCC+%#x = %08x)", off, v); return false; }
+    }
+    s_se2 = ml_io_map((vm_offset_t)SE2_PHYS, (vm_size_t)SE_SIZE);
+    if (!s_se2) { strlcpy(ruan_bl_mirror_status, "mirror: SE4 map failed", sizeof ruan_bl_mirror_status); return false; }
+    const uint32_t proto = ((*(volatile uint32_t *)(s_se2 + GENI_FW_REVISION_RO)) >> 8) & 0xff;
+    if (proto != PROTO_I2C) { snprintf(ruan_bl_mirror_status, sizeof ruan_bl_mirror_status, "mirror: SE4 protocol %u, not I2C", proto); return false; }
+    IOLockLock(s_lock);
+    const vm_offset_t saved = s_se; s_se = s_se2;
+    se_wr(GENI_DMA_MODE_EN, se_rd(GENI_DMA_MODE_EN) & ~1u);
+    se_wr(GENI_TX_PACKING_CFG0, 0x0007f8fe); se_wr(GENI_TX_PACKING_CFG1, 0x000ffefe);
+    se_wr(GENI_RX_PACKING_CFG0, 0x0007f8fe); se_wr(GENI_RX_PACKING_CFG1, 0x000ffefe);
+    uint8_t id = 0, ctl = 0;
+    uint32_t e = sy7758_read(SY7758_DEV_ID, &id);
+    if (!e) e = sy7758_read(SY7758_DEV_CTL, &ctl);
+    if (!e) e = sy7758_write(SY7758_DEV_CTL, 0x80 | 0x01 | (2u << 1));   /* register mode, as the first chip (svc kDevCtlRegisterMode) */
+    s_se = saved;
+    IOLockUnlock(s_lock);
+    if (e) { snprintf(ruan_bl_mirror_status, sizeof ruan_bl_mirror_status, "mirror: SY7758 #2 not answering (%08x)", e); return false; }
+    snprintf(ruan_bl_mirror_status, sizeof ruan_bl_mirror_status, "mirror: SY7758 #2 id %02x, dev_ctl %02x -> 85", id, ctl);
+    s_mirror = 1;
+    return true;
+}
+/* The same chip level as the first SY7758 (called by RuanBacklightSvc.cpp as it writes its own). */
+extern "C" void ruan_bl_mirror_level(uint32_t hw) {
+    if (!mirror_ready()) return;
+    IOLockLock(s_lock);
+    const vm_offset_t saved = s_se; s_se = s_se2;
+    uint32_t e = sy7758_write(SY7758_BRT_L, (uint8_t)(hw & 0xff));
+    if (!e) e = sy7758_write(SY7758_BRT_H, (uint8_t)((hw >> 8) & 0x0f));
+    s_se = saved;
+    IOLockUnlock(s_lock);
+    if (e) snprintf(ruan_bl_mirror_status, sizeof ruan_bl_mirror_status, "mirror: level %u write failed (%08x)", hw, e);
+}
+
 int ruan_backlight_set_level(uint32_t level) {
     if (s_svc) return ruan_bl_svc_set_level(level);
     if (!g_ruan_backlight.ready) return -1;
@@ -236,6 +291,7 @@ int ruan_backlight_set_level(uint32_t level) {
         g_ruan_backlight.errors++;
         return -6;
     }
+    ruan_bl_mirror_level(hw);   /* the second SY7758: the other half of the LED strings (else that half stays at the boot level) */
     g_ruan_backlight.current_level = level;
     g_ruan_backlight.updates_count++;
     return 0;

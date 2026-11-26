@@ -1,0 +1,66 @@
+--- UsbRamdisk.h.orig	2026-11-26 18:56:36.144396713 +0530
++++ UsbRamdisk.h	2026-11-26 18:57:13.291110466 +0530
+@@ -184,10 +184,11 @@
+   return EFI_ERROR (Status) ? Status : UsbRdWait (Rd, USBRD_EP_IN, USBRD_DATA_WAIT_US, &Bytes);
+ }
+ 
+-// The image, Size bytes, from "download:" into Destination. TRUE when every byte came and the CRC32 matches.
++// The image, DownloadSize bytes (<= Size) from "download:" into Destination. The remainder up to Size is zero-filled.
++// TRUE when every byte came and the CRC32 of Size bytes matches.
+ STATIC
+ BOOLEAN
+-UsbRdDownload (USBRD *Rd, UINT8 *Destination, UINT64 Size, UINT32 Crc)
++UsbRdDownload (USBRD *Rd, UINT8 *Destination, UINT64 Size, UINT64 DownloadSize, UINT32 Crc)
+ {
+   CHAR8       Reply[16];
+   CHAR16      Line[96];
+@@ -197,24 +198,27 @@
+   UINT32      Actual;
+   EFI_STATUS  Status;
+ 
+-  AsciiSPrint (Reply, sizeof (Reply), "%08x", (UINT32)Size);
++  AsciiSPrint (Reply, sizeof (Reply), "%08x", (UINT32)DownloadSize);
+   if (EFI_ERROR (UsbRdSend (Rd, "DATA", Reply))) { return FALSE; }
+-  for (Got = 0; Got < Size; Got += Bytes) {
+-    Want = MIN (Size - Got, USBRD_CHUNK);
++  for (Got = 0; Got < DownloadSize; Got += Bytes) {
++    Want = MIN (DownloadSize - Got, USBRD_CHUNK);
+     Status = Rd->Usb->Send (USBRD_EP_OUT, (UINTN)Want, Rd->Rx);
+     if (!EFI_ERROR (Status)) { Status = UsbRdWait (Rd, USBRD_EP_OUT, USBRD_DATA_WAIT_US, &Bytes); }
+     if (EFI_ERROR (Status) || (Bytes == 0)) { break; }
+     Bytes = MIN (Bytes, Want);  // a controller that reports more than was asked for must not carry the copy past the end
+     CopyMem (Destination + Got, Rd->Rx, (UINTN)Bytes);
+     if (((Got + Bytes) >> 26) != (Got >> 26)) {
+-      UnicodeSPrint (Line, sizeof (Line), L"USB RAMDISK %lu / %lu MiB", (Got + Bytes) >> 20, Size >> 20);
++      UnicodeSPrint (Line, sizeof (Line), L"USB RAMDISK %lu / %lu MiB", (Got + Bytes) >> 20, DownloadSize >> 20);
+       DiagDraw (Line, 1);
+     }
+   }
+-  if (Got != Size) {
++  if (Got != DownloadSize) {
+     UsbRdSend (Rd, "FAIL", "short download");
+     return FALSE;
+   }
++  if (DownloadSize < Size) {
++    ZeroMem (Destination + DownloadSize, (UINTN)(Size - DownloadSize));
++  }
+   Actual = 0;
+   gBS->CalculateCrc32 (Destination, (UINTN)Size, &Actual);
+   if (Actual != Crc) {
+@@ -284,10 +288,13 @@
+       AsciiSPrint (Value, sizeof (Value), "0x%08x", (UINT32)Size);
+       UsbRdSend (Rd, "OKAY", Value);
+     } else if (AsciiStrnCmp (Command, "download:", 9) == 0) {
+-      if ((AsciiStrLen (Command) != 17) || (AsciiStrHexToUint64 (Command + 9) != Size)) {
+-        UsbRdSend (Rd, "FAIL", "size differs from the descriptor");
++      UINT64  DownloadSize;
++
++      DownloadSize = (AsciiStrLen (Command) == 17) ? AsciiStrHexToUint64 (Command + 9) : 0;
++      if ((DownloadSize == 0) || (DownloadSize > Size)) {
++        UsbRdSend (Rd, "FAIL", "size exceeds descriptor");
+       } else {
+-        Received = UsbRdDownload (Rd, Destination, Size, Crc);
++        Received = UsbRdDownload (Rd, Destination, Size, DownloadSize, Crc);
+       }
+     } else if (AsciiStrCmp (Command, "upload") == 0) {
+       UsbRdUpload (Rd);
