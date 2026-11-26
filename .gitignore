@@ -8,3 +8,4 @@ build/
 out*/
 __pycache__/
 *.pyc
+unixnu-ruan-macos/package/pacstrip/vectors.txt
