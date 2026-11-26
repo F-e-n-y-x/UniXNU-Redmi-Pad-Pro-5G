@@ -206,6 +206,40 @@ test_ldra(void)
 }
 
 static void
+test_pac_branch_and_auth(void)
+{
+	struct pac_emulate_ctx ctx;
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.load64 = mem_load64;
+
+	/* BRAA x16, x17: 0xd71f0a11 */
+	ctx.pc = 0x1000;
+	ctx.x[16] = 0x192258800ULL;
+	ctx.x[17] = 0x1234ULL;
+	CHECK(pac_emulate(0xd71f0a11, &ctx) == PAC_EMULATE_OK, "braa x16, x17 not handled");
+	CHECK(ctx.pc == 0x192258800ULL, "braa target pc incorrect");
+
+	/* RETAA: 0xd65f0bff */
+	ctx.pc = 0x2000;
+	ctx.x[30] = 0x180004000ULL;
+	CHECK(pac_emulate(0xd65f0bff, &ctx) == PAC_EMULATE_OK, "retaa not handled");
+	CHECK(ctx.pc == 0x180004000ULL, "retaa target pc incorrect");
+
+	/* BLRAA x17, x16: 0xd73f0a30 */
+	ctx.pc = 0x3000;
+	ctx.x[17] = 0x180005000ULL;
+	ctx.x[16] = 0x5678ULL;
+	CHECK(pac_emulate(0xd73f0a30, &ctx) == PAC_EMULATE_OK, "blraa not handled");
+	CHECK(ctx.pc == 0x180005000ULL, "blraa target pc incorrect");
+	CHECK(ctx.x[30] == 0x3004, "blraa lr incorrect");
+
+	/* PACIA x17, x16: 0xdac10211 (identity: NOP) */
+	ctx.pc = 0x4000;
+	CHECK(pac_emulate(0xdac10211, &ctx) == PAC_EMULATE_OK, "pacia not handled");
+	CHECK(ctx.pc == 0x4004, "pacia did not advance pc");
+}
+
+static void
 test_unhandled(void)
 {
 	struct pac_emulate_ctx ctx;
@@ -220,6 +254,7 @@ main(void)
 {
 	test_ldra();
 	test_fjcvtzs();
+	test_pac_branch_and_auth();
 	test_unhandled();
 	if (failures == 0) {
 		printf("pac_emulate: all tests passed\n");

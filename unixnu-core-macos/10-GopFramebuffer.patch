@@ -238,9 +238,9 @@ index c5a1e1b..ca79b38 100644
  }
  
 +// Rotated copy (fb-rotate): the source is width x height (landscape), the destination height x width (the portrait panel).
-+// rotate 1: panel (px,py) = source (py, height-1-px); rotate 3: source (width-1-py, px). The panel is written row by row
-+// with 64-bit stores (device memory); the source reads walk a column, and the ~16 panel rows that share its cache lines
-+// stay in L2 (height*64 bytes).
++// rotate 1: panel (px,py) = source (py, height-1-px); rotate 3: source (width-1-py, px).
++// Uses 16x16 cache-blocked tiling so source rows are read in contiguous 64-byte L1 cache-line bursts and destination is
++// written in contiguous 64-bit device stores, eliminating cache thrashing.
 +static inline int native_legacy_copy_rotated(volatile void *destination,
 +    uint64_t destinationBytes, uint64_t destinationStride, const void *source,
 +    uint64_t sourceBytes, uint64_t sourceStride, uint32_t width, uint32_t height, uint32_t rotate) {
@@ -248,6 +248,53 @@ index c5a1e1b..ca79b38 100644
 +    if ((rotate!=1 && rotate!=3) || !dst || !src || (dst&7) || (destinationStride&7) || (height&1) ||
 +        !native_legacy_surface_bounds(height,width,destinationStride,destinationBytes,destinationBytes) ||
 +        !native_legacy_surface_bounds(width,height,sourceStride,sourceBytes,sourceBytes)) return 0;
++    const uint32_t kTile = 16;
++    if ((width % kTile) == 0 && (height % kTile) == 0) {
++        if (rotate == 1) {
++            for (uint32_t by = 0; by < height; by += kTile) {
++                for (uint32_t bx = 0; bx < width; bx += kTile) {
++                    uint32_t tile[16][16];
++                    for (uint32_t r = 0; r < 16; ++r) {
++                        const uint32_t sy = height - 1 - (by + r);
++                        const uint32_t *src_row = (const uint32_t *)(src + (uint64_t)sy * sourceStride + (uint64_t)bx * 4);
++                        for (uint32_t c = 0; c < 16; ++c) {
++                            tile[r][c] = src_row[c];
++                        }
++                    }
++                    for (uint32_t c = 0; c < 16; ++c) {
++                        const uint32_t py = bx + c;
++                        volatile uint64_t *out = (volatile uint64_t *)(dst + (uint64_t)py * destinationStride + (uint64_t)by * 4);
++                        for (uint32_t r = 0; r < 16; r += 2) {
++                            out[r / 2] = (uint64_t)tile[r][c] | ((uint64_t)tile[r + 1][c] << 32);
++                        }
++                    }
++                }
++            }
++            return 1;
++        } else if (rotate == 3) {
++            for (uint32_t by = 0; by < height; by += kTile) {
++                for (uint32_t bx = 0; bx < width; bx += kTile) {
++                    uint32_t tile[16][16];
++                    for (uint32_t r = 0; r < 16; ++r) {
++                        const uint32_t sy = by + r;
++                        const uint32_t sx_base = width - 1 - (bx + 15);
++                        const uint32_t *src_row = (const uint32_t *)(src + (uint64_t)sy * sourceStride + (uint64_t)sx_base * 4);
++                        for (uint32_t c = 0; c < 16; ++c) {
++                            tile[r][c] = src_row[15 - c];
++                        }
++                    }
++                    for (uint32_t c = 0; c < 16; ++c) {
++                        const uint32_t py = bx + c;
++                        volatile uint64_t *out = (volatile uint64_t *)(dst + (uint64_t)py * destinationStride + (uint64_t)by * 4);
++                        for (uint32_t r = 0; r < 16; r += 2) {
++                            out[r / 2] = (uint64_t)tile[r][c] | ((uint64_t)tile[r + 1][c] << 32);
++                        }
++                    }
++                }
++            }
++            return 1;
++        }
++    }
 +    for (uint32_t py=0;py<width;++py) {
 +        volatile uint64_t *out=(volatile uint64_t *)(dst+(uint64_t)py*destinationStride);
 +        const uint32_t sx=rotate==1?py:width-1-py;

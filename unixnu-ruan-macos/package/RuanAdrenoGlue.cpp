@@ -95,8 +95,10 @@ NativeAdrenoTimer timer;
 // A710 facts for the Vulkan driver (GPU-METAL-PORT.md): chip 0x07010000, GMEM 512 KiB, the a7xx GMEM window and trap base,
 // highest bank bit 15, UBWC 4.0 (Turnip starts with TU_DEBUG=noubwc), macrotile 0. va_size is set from the context's ias.
 // gmem_base 0: KGSL gen7_3_0 (adreno-gpulist.h .gmem_base = 0); UCHE_GMEM_RANGE reads 0/0 on the device (rbu52b).
+// ruan-macos: highest bank bit 16, the value RuanGpuPower.c programs (RB/TPL1/SP/GRAS/UCHE NC_MODE hbb_lo 3 = 16 - 13); Turnip uses it only for its
+// CPU tiled copies (VK_EXT_host_image_copy: Metal replaceRegion), which scrambled every CPU-uploaded texture at 15.
 NativeAdrenoAbiDeviceInfo deviceInfo = {0x07010000u, 512u << 10, 0x0ull, 0x1fffffffff000ull, GpuClientVaStart,
-                                        0, 15, 6, 0, 4, NativeAdrenoDeviceClientIova, 0};
+                                        0, 16, 6, 0, 4, NativeAdrenoDeviceClientIova, 0};
 
 void line(const char *s) {if (gio.line) gio.line(s);}
 

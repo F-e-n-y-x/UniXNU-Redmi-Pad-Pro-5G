@@ -122,5 +122,53 @@ pac_emulate(uint32_t insn, struct pac_emulate_ctx *ctx)
 	if ((insn & 0xFFFFFC00u) == 0x1E7E0000u) {
 		return emulate_fjcvtzs(insn, ctx);
 	}
+	/* RETAA, RETAB */
+	if ((insn & 0xFFFFFBFFu) == 0xD65F0BFFu || (insn & 0xFFFFFBFFu) == 0xD69F0BFFu) {
+		ctx->pc = ctx->x[30];
+		return PAC_EMULATE_OK;
+	}
+	/* BRAA, BRAB */
+	if ((insn & 0xFFFFF800u) == 0xD71F0800u) {
+		unsigned rn = (insn >> 5) & 0x1F;
+		ctx->pc = (rn == 31) ? ctx->sp : ctx->x[rn];
+		return PAC_EMULATE_OK;
+	}
+	/* BRAAZ, BRABZ */
+	if ((insn & 0xFFFFF81Fu) == 0xD61F081Fu) {
+		unsigned rn = (insn >> 5) & 0x1F;
+		ctx->pc = (rn == 31) ? ctx->sp : ctx->x[rn];
+		return PAC_EMULATE_OK;
+	}
+	/* BLRAA, BLRAB */
+	if ((insn & 0xFFFFF800u) == 0xD73F0800u) {
+		unsigned rn = (insn >> 5) & 0x1F;
+		ctx->x[30] = ctx->pc + 4;
+		ctx->pc = (rn == 31) ? ctx->sp : ctx->x[rn];
+		return PAC_EMULATE_OK;
+	}
+	/* BLRAAZ, BLRABZ */
+	if ((insn & 0xFFFFF81Fu) == 0xD63F081Fu) {
+		unsigned rn = (insn >> 5) & 0x1F;
+		ctx->x[30] = ctx->pc + 4;
+		ctx->pc = (rn == 31) ? ctx->sp : ctx->x[rn];
+		return PAC_EMULATE_OK;
+	}
+	/* PAC*, AUT*, XPAC* (identity: NOP) */
+	if ((insn & 0xFFFF0000u) == 0xDAC10000u) {
+		ctx->pc += 4;
+		return PAC_EMULATE_OK;
+	}
+	/* PACGA -> deterministic EOR */
+	if ((insn & 0xFFE0FC00u) == 0x9AC03000u) {
+		unsigned rd = insn & 0x1F;
+		unsigned rn = (insn >> 5) & 0x1F;
+		unsigned rm = (insn >> 16) & 0x1F;
+		uint64_t vn = (rn == 31) ? ctx->sp : ctx->x[rn];
+		uint64_t vm = (rm == 31) ? 0 : ctx->x[rm];
+		uint64_t r = vn ^ (vm >> 13 | vm << 51);
+		if (rd != 31) ctx->x[rd] = r;
+		ctx->pc += 4;
+		return PAC_EMULATE_OK;
+	}
 	return PAC_EMULATE_UNHANDLED;
 }
