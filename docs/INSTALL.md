@@ -33,7 +33,7 @@ ships only the port's own code and the scripts that turn your files into what th
 
 | You need | Where it comes from | How |
 |---|---|---|
-| This repo | here, branch `main` | `git clone` (step 2a) |
+| This repo | here, branch `ipados` | `git clone` (step 2a) |
 | UniXNU at `8542980` + submodules | [UniXNU/UniXNU](https://github.com/UniXNU/UniXNU), public | step 2b, then `unixnu-ruan/patches/unixnu-core/apply.sh` |
 | Mu-Silicium at `e51cd877` | [Project-Silicium/Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium), public | `uefi/setup-uefi-ruan.sh` (step 2d) |
 | HakiOS APFS tools | this repo, `third_party/hakios-tools/` | `third_party/hakios-tools/build.sh` once |

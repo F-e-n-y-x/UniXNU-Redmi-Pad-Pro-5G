@@ -18,8 +18,9 @@
 </p>
 <p align="center"><sub>Native screenshots from the tablet (rbu172p, 2026-11-21): home screen, Control Center, app switcher, Safari, Settings → About.</sub></p>
 
-> **Two targets, one tree:** this folder is the **iPadOS build** (boots to the home screen). The **macOS port** lives on the [`macos` branch](https://github.com/F-e-n-y-x/UniXNU-Redmi-Pad-Pro-5G/tree/macos):
+> **Two targets, one tree:** this branch (`ipados`, formerly `main`) is the **iPadOS build** (boots to the home screen). The **macOS port** lives on the [`macos` branch](https://github.com/F-e-n-y-x/UniXNU-Redmi-Pad-Pro-5G/tree/macos):
 > macOS 27.3 boots from internal storage and launchd spawns system daemons (2026-11-24); the full system volume is next.
+> Cloned before the rename? Run once: `git branch -m main ipados && git fetch origin && git branch -u origin/ipados ipados && git remote set-head origin -a`
 > Experimental research software: it boots a real Apple OS on non-Apple hardware. Back up your device first.
 >
 > **Want to try it?** Read the [install guide](docs/INSTALL.md) first: it wipes Android user data, and you need your own iPadOS IPSW.
