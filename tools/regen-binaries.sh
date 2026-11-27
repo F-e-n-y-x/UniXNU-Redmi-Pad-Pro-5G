@@ -1,14 +1,14 @@
 #!/bin/bash
-# Regenerate macOS/uefi/Binaries/ruan from the tablet's stock uefi_a.img:
+# Regenerate uefi/Binaries/ruan from the tablet's stock uefi_a.img:
 #   extract the FV, fetch garnet's reference INFs and patched drivers (Project-Silicium/Device-Binaries),
 #   rebuild the tree with make-binaries.py, then port the garnet driver patches with port-patches.py.
-# Work files live in macOS/build/binaries-work (gitignored). Needs: gh, curl, uv.
+# Work files live in build/binaries-work (gitignored). Needs: gh, curl, uv.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
-stock=${STOCK_UEFI:-$here/../stock/backup/uefi_a.img}
+stock=${1:-${STOCK_UEFI:?usage: tools/regen-binaries.sh <your uefi_a.img>}}
 w=$here/build/binaries-work
 dest=$here/uefi/Binaries/ruan
-R=Project-Silicium/Device-Binaries
+R=Project-Silicium/Device-Binaries; REV=ec93042707d230705d9f40fc73910170eb707312   # pinned: the garnet tree the port was made from
 mkdir -p "$w"
 
 [ -x "$w/venv/bin/python" ] || { uv venv -q "$w/venv"; uv pip install -q -p "$w/venv/bin/python" uefi_firmware; }
@@ -27,13 +27,13 @@ rm -rf "$w/uefi.fv_output"
 
 # 2. garnet reference: INFs + RawFiles names (empty placeholders) + the drivers garnet patched
 if [ ! -d "$w/ref" ]; then
-	gh api "repos/$R/git/trees/HEAD?recursive=1" --jq '.tree[] | select(.type=="blob") | .path' | grep '^garnet/' > "$w/ref.list"
+	gh api "repos/$R/git/trees/$REV?recursive=1" --jq '.tree[] | select(.type=="blob") | .path' | grep '^garnet/' > "$w/ref.list"
 	while read -r p; do
 		rel=${p#garnet/}
 		case "$rel" in
-		*.inf) mkdir -p "$w/ref/$(dirname "$rel")"; curl -fsSL "https://raw.githubusercontent.com/$R/HEAD/$p" -o "$w/ref/$rel" ;;
+		*.inf) mkdir -p "$w/ref/$(dirname "$rel")"; curl -fsSL "https://raw.githubusercontent.com/$R/$REV/$p" -o "$w/ref/$rel" ;;
 		RawFiles/*) mkdir -p "$w/ref/RawFiles"; : > "$w/ref/$rel" ;;
-		*.efi) mkdir -p "$w/garnet-efi/$(dirname "$rel")"; curl -fsSL "https://raw.githubusercontent.com/$R/HEAD/$p" -o "$w/garnet-efi/$rel" ;;
+		*.efi) mkdir -p "$w/garnet-efi/$(dirname "$rel")"; curl -fsSL "https://raw.githubusercontent.com/$R/$REV/$p" -o "$w/garnet-efi/$rel" ;;
 		esac
 	done < "$w/ref.list"
 fi

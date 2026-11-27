@@ -8,3 +8,8 @@ build/
 out*/
 __pycache__/
 *.pyc
+# from your own tablet, never in git
+unixnu-ruan/.cache/
+uefi/Binaries/
+uefi/Resources/DTBs/
+*.dtb

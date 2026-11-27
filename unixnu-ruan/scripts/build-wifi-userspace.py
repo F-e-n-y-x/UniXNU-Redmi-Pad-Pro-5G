@@ -34,7 +34,7 @@ import subprocess
 import sys
 
 DEVICE = Path(__file__).resolve().parents[1]
-U = Path(os.environ.get('UNIXNU', '/root/unixnu-work/UniXNU'))
+U = Path(os.environ.get('UNIXNU', os.environ.get('UNIXNU_WORK', '/root/unixnu-work') + '/UniXNU'))
 SDK = os.environ.get('UNIXNU_SDKROOT', '/root/theos/sdks/iPhoneOS16.5.sdk')
 LDID = os.environ.get('LDID', '/root/theos/toolchain/linux/iphone/bin/ldid')
 TC = U / '.cache/ios-tc'   # build-turnip-smoke.py's clang wrappers that link with lld
@@ -66,8 +66,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('out', type=Path)
     ap.add_argument('--into', type=Path)
-    ap.add_argument('--chain', type=Path, default=Path('/root/unixnu-work/oslogx/IOMFB_FDR_Loader'))
-    ap.add_argument('--join', type=Path, default=Path('/root/unixnu-work/wifi-join.txt'))
+    ap.add_argument('--chain', type=Path, default=Path(os.environ.get('UNIXNU_WORK', '/root/unixnu-work')) / 'oslogx/IOMFB_FDR_Loader')
+    ap.add_argument('--join', type=Path, default=Path(os.environ.get('UNIXNU_WORK', '/root/unixnu-work')) / 'wifi-join.txt')
     args = ap.parse_args()
     original = args.chain
     if not original.is_file() or original.read_bytes()[:4] not in (bytes.fromhex('cffaedfe'), bytes.fromhex('cafebabe')):

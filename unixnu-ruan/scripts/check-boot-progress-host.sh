@@ -5,7 +5,7 @@
 set -euo pipefail
 D=$(cd "$(dirname "$0")/.." && pwd)
 OUT=${1:-$(mktemp -d)}; mkdir -p "$OUT"
-XNU=${XNU:-/root/unixnu-work/UniXNU/out/ruan/ipados-17.7.11-21H461/ruan/tree/.cache/xnu-work}
+XNU=${XNU:-${UNIXNU_WORK:-/root/unixnu-work}/UniXNU/out/ruan/ipados-17.7.11-21H461/ruan/tree/.cache/xnu-work}
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/kern" "$T/pexpert"
 sed -n '/^void boot_progress_init/,/^void boot_progress_exit/p' "$XNU/osfmk/kern/boot_progress.h" > "$T/kern/boot_progress.h"

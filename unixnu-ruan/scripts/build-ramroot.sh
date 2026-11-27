@@ -40,12 +40,14 @@ NAME=$MODE${TAG:+-$TAG}
 extra=(); for arg in ${KERNEL_ARGS:-}; do extra+=("--kernel-arg=$arg"); done
 case $MODE in mini|usb) ;; *) echo "build-ramroot.sh: mode is mini or usb" >&2; exit 2 ;; esac
 [ -z "${PERSIST:-}" ] || [ -n "${UFS:-}" ] || { echo "build-ramroot.sh: PERSIST=1 needs UFS=1" >&2; exit 2; }
-W=/root/unixnu-work; U=$W/UniXNU; D=$W/UniXNU-ruan; O=$U/out/ruan/ipados-17.7.11-21H461/ruan
+W=${UNIXNU_WORK:-/root/unixnu-work}; U=$W/UniXNU; D=$W/UniXNU-ruan; O=$U/out/ruan/ipados-17.7.11-21H461/ruan
 I=$U/out/ipsw/21H461; R=${RAMROOT:-$W/ramroot}; OUT=${OUT:-$R/out}
-MKXNUIMG=${MKXNUIMG:-"/DATA/tower/Projects/Redmi Pad Pro 5G/macOS/uefi/mkxnuimg-ruan.py"}
+MKXNUIMG=${MKXNUIMG:-"$(cd "$(dirname "$(realpath "$0")")/../.." && pwd)/uefi/mkxnuimg-ruan.py"}   # the repo's uefi/
 # The default firmware is the one with the receiver's upload/getvar (md1log, 2026-11-14): the plain uefi-ruan build has an older receiver
 # that refuses current roots ("size differs from the descriptor", rb6 2026-11-14).
 FD=${FD:-$R/SILICIUM_UEFI-log.fd}; WORK=${WORK:-$R/work-full}
+[ -f "$FD" ] || { echo "build-ramroot.sh: UEFI FD $FD missing: build it (docs/INSTALL.md step 2a) and copy it there" >&2; exit 2; }
+[ -f "$MKXNUIMG" ] || { echo "build-ramroot.sh: $MKXNUIMG missing: make $W/UniXNU-ruan a symlink to the repo's unixnu-ruan/, or set MKXNUIMG" >&2; exit 2; }
 data=--data; [ -n "${DATA_CONTAINER:-}" ] && data=--data-container
 export PATH=/opt/unixnu-linux/bin:$PATH
 mkdir -p "$OUT"
@@ -151,7 +153,7 @@ trust_arg=--trust-cache; [ -f $OUT/root-usb.cdhash ] && trust_arg=--owner-trust-
 	--data-ramdisk "$initrd" $trust_arg $OUT/trust.bundle ${rd[@]+"${rd[@]}"} ${extra[@]+"${extra[@]}"} > $OUT/payload-$NAME.log 2>&1 \
 	|| { tail -20 $OUT/payload-$NAME.log; exit 1; }
 
-# The payload as a 56 MiB FAT in an "XNUP" container (see macOS/uefi/build-ipados-ruan.sh): ABL took a ~62 MB kernel
+# The payload as a 56 MiB FAT in an "XNUP" container (uefi/mkxnuimg-ruan.py): ABL took a ~62 MB kernel
 # blob, so the FAT stays at 56 MiB and the mini root has to fit next to the kernel inside it.
 X=$OUT/xnup-$NAME; rm -rf $X; mkdir -p $X/src
 (cd $X/src && 7z x -y $O/payload/payload.img >/dev/null)

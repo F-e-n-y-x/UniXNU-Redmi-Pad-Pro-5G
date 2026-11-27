@@ -10,7 +10,7 @@
 #   [userdata] (partition "unixnu"; LBAs are a 32 GiB placeholder for `unixnu build userdata`'s size check only: ShengUfs
 #   finds the partition by its GPT name at boot). Defconfig: configs/ruan_ufs_defconfig (CONFIG_XNU_NATIVE_UFS=y).
 set -euo pipefail
-W=/root/unixnu-work; U=$W/UniXNU; D=$W/UniXNU-ruan; V=$W/ufs-variant; B=$V/device
+W=${UNIXNU_WORK:-/root/unixnu-work}; U=$W/UniXNU; D=$W/UniXNU-ruan; V=$W/ufs-variant; B=$V/device
 rm -rf "$B"; mkdir -p "$B/drivers" "$V/out"
 for f in configs dts package patches scripts feeds.toml proprietary-files.txt README.md .cache; do ln -s "$D/$f" "$B/$f"; done
 cp "$D/unixnu.lock" "$B/"
