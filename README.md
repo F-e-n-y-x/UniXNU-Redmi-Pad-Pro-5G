@@ -1,7 +1,7 @@
 # macOS on Redmi Pad Pro 5G (ruan)
 
 A native macOS port for the tablet, on a CPU without pointer authentication (PAC). It reuses the iPadOS port's drivers
-([iPadOS port, `main` branch](https://github.com/F-e-n-y-x/UniXNU-Redmi-Pad-Pro-5G/tree/main)). This branch holds only the macOS port.
+([iPadOS port, `ipados` branch](https://github.com/F-e-n-y-x/UniXNU-Redmi-Pad-Pro-5G/tree/ipados)). This branch holds only the macOS port.
 
 **Status (2026-11-26): first macOS desktop.** macOS 27.3 (`26C5035r`) reaches the Finder desktop with the Dock, menu bar and
 wallpaper (captured over USB from the framebuffer, below). Login works (usermanagerd, SecurityAgent, auto-login), WindowServer
@@ -12,6 +12,12 @@ Details: [docs/status-2026-11-26.md](docs/status-2026-11-26.md).
 <p align="center">
   <img src="docs/img/first-desktop-usb.jpg" alt="macOS 27.3 Finder desktop with Dock and menu bar on the Redmi Pad Pro 5G, captured over USB" width="45%"><br>
   <sub>First desktop, 2026-11-26: full-resolution framebuffer dump over the USB debug link (<code>tools/ruan-usbdbg.py fullshot</code>).</sub>
+</p>
+
+<p align="center">
+  <img src="docs/img/about-this-mac-usb-2026-11-27.jpg" alt="macOS 27.3 System Settings About page and About This Mac window on the Redmi Pad Pro 5G, captured over USB" width="45%"><br>
+  <sub>2026-11-27: System Settings → About and About This Mac (macOS 27.3, 5.42 GB, 1600x2560 panel), with the pointer on screen.
+  Dock icons are still scrambled tiles (open GPU texture issue). USB framebuffer dump.</sub>
 </p>
 
 <p align="center">
