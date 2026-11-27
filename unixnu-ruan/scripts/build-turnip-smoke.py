@@ -22,7 +22,7 @@ import subprocess
 import sys
 
 DEVICE = Path(__file__).resolve().parents[1]
-U = Path(os.environ.get('UNIXNU', '/root/unixnu-work/UniXNU'))
+U = Path(os.environ.get('UNIXNU', os.environ.get('UNIXNU_WORK', '/root/unixnu-work') + '/UniXNU'))
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else U / 'build/ruan-turnip-smoke'
 SDK = os.environ.get('UNIXNU_SDKROOT', '/root/theos/sdks/iPhoneOS16.5.sdk')
 LDID = os.environ.get('LDID', '/root/theos/toolchain/linux/iphone/bin/ldid')

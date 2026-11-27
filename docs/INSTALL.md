@@ -17,33 +17,33 @@ Android's boot partitions are never written and Android still boots normally.
 
 ### 0. Requirements
 
-- **Tablet:** unlocked bootloader; root (Magisk) for the partitioning step; a good USB cable (bad cables drop data).
-- **Linux build host, x86-64**, with: `git`, `python3`, `7z` (p7zip), `mkfs.vfat` (dosfstools), `mcopy` (mtools),
-  `sgdisk` (gdisk), `losetup`, `sha256sum`, `fastboot` and `adb` (android-tools). The GPU stack also needs `clang`, `lld`,
-  `llvm-strip`, `rustup` with the `aarch64-apple-ios` target, and theos `ldid`.
-- **[UniXNU](https://github.com/UniXNU)** checked out with its Linux toolchain (the scripts put `/opt/unixnu-linux/bin` on `PATH`)
-  and its own prerequisites (see UniXNU's `docs/building.md`). UniXNU's `fetch` step fetches the iPadOS 17.7.11 (**21H461**)
-  IPSW into `out/ipsw/21H461/`.
+Everything Apple, Qualcomm or Xiaomi comes from **you**: your IPSW, your SDK and **your own tablet's** firmware. The repo
+ships only the port's own code and the scripts that turn your files into what the build needs.
+
+- **Tablet:** unlocked bootloader; root (Magisk) for the partitioning step and for pulling firmware; a good USB cable.
+- **Linux build host, x86-64**, with: `git`, `python3` (3.11+), `cc`, `rsync`, `7z` (p7zip), `mkfs.vfat` (dosfstools),
+  `mcopy` (mtools), `sgdisk` (gdisk), `losetup`, `sha256sum`, `fdtput` (device-tree-compiler), `gh` and `curl`, `uv`,
+  `fastboot` and `adb` (android-tools). The GPU stack also needs `clang`, `lld`, `llvm-strip`, `rustup` with the
+  `aarch64-apple-ios` target, and theos `ldid` (`LDID=` if it is not at `/root/theos/toolchain/linux/iphone/bin/ldid`).
 - **An iOS 17.5 SDK** for the Metal plugin (`UNIXNU_SDKROOT=`), obtained by you.
-- **Mu-Silicium UEFI for ruan** (`uefi/`): `uefi/Binaries/ruan` is generated from **your tablet's own** stock `uefi_a`
-  partition with `tools/regen-binaries.sh` (not shipped), then `uefi/build-ruan.sh <Mu-Silicium checkout>`. The build packs the
-  firmware volume with the USB receiver, `SILICIUM_UEFI-log.fd`, kept in `<work>/ramroot/` (an older FD refuses current roots).
-- **Disk space:** about 50 GB free. The IPSW cache is about 8 GB, the root work tree about 4 GB, and a root output directory
-  up to 16 GB (the partition image alone is 6–10 GB).
+- **Disk space:** about 60 GB free on a fast disk (SSD, Linux file system; not NTFS/exFAT). The IPSW cache is about 8 GB, the
+  root work tree about 4 GB, and a root output directory up to 16 GB.
 
-**Layout.** The scripts expect one work directory, called `<work>` here, set in the `W=` line at the top of
-`unixnu-ruan/scripts/build-ramroot.sh` and `make-ufs-board.sh` (and the `sys.path` line in `make-ufs-root.py`). Change
-those lines to your path, or use the same one. Inside it:
+**What comes from where.** Use exactly these; nothing else in the repo is needed to build iPadOS.
 
-| Path | What |
-|---|---|
-| `<work>/UniXNU` | UniXNU checkout (`./unixnu fetch` once) |
-| `<work>/UniXNU-ruan` | this repository's `macOS/unixnu-ruan/` (copy or symlink) |
-| `<work>/uefi-ruan` | Mu-Silicium ruan checkout (also `MU=` for `mkxnuimg-ruan.py`) |
-| `<work>/ramroot/SILICIUM_UEFI-log.fd` | the UEFI firmware volume (`FD=` overrides) |
-| `<work>/unique-chip-id.txt` | any hex value: the device tree's platform seed (`--unique-chip-id`) |
+| You need | Where it comes from | How |
+|---|---|---|
+| This repo | here, branch `main` | `git clone` (step 2a) |
+| UniXNU at `8542980` + submodules | [UniXNU/UniXNU](https://github.com/UniXNU/UniXNU), public | step 2b, then `unixnu-ruan/patches/unixnu-core/apply.sh` |
+| Mu-Silicium at `e51cd877` | [Project-Silicium/Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium), public | `uefi/setup-uefi-ruan.sh` (step 2d) |
+| HakiOS APFS tools | this repo, `third_party/hakios-tools/` | `third_party/hakios-tools/build.sh` once |
+| iPadOS 17.7.11 IPSW (21H461) | Apple, fetched by UniXNU's `./unixnu fetch` | step 2b |
+| Firmware files (GPU, Wi-Fi, video, touch) | your tablet's `/vendor/firmware` | `adb pull` (step 2c) |
+| UEFI drivers `uefi/Binaries/ruan` | your tablet's `uefi_a` partition | `tools/regen-binaries.sh` (step 2c) |
+| UEFI device tree `uefi/Resources/DTBs/ruan.dtb` | your tablet's live device tree | `tools/make-uefi-dtb.sh` (step 2c) |
+| Touch firmware header | `novatek_ts_fw_boe.bin` from `/vendor/firmware` | `tools/make-touch-fw.py` (step 2c) |
 
-Set `MKXNUIMG=<repo>/macOS/uefi/mkxnuimg-ruan.py` when you run the build.
+The `macos` branch, `docs/research/` and `tools/host/` are not part of the iPadOS build: ignore them when you start.
 
 ### 1. Partition the UFS (wipes Android data)
 
@@ -103,14 +103,82 @@ adb shell su -c 'dd if=/dev/block/sda bs=4096 count=6 | sha256sum'           # m
 **d. Reformat Android's data:** reboot to recovery and wipe / format Data. Android's old file system is larger than the
 shrunk partition and will not mount until it is recreated. Android then starts like new.
 
-### 2. Build
+### 2. One-time setup
 
-All commands run from `<work>/UniXNU-ruan`. `<t>` is any build tag you choose. Every output lands in `OUT`.
+All paths below hang off one work folder, `<work>`. The scripts read it from **`UNIXNU_WORK`** (default `/root/unixnu-work`).
+Pick a folder **without spaces** on a fast Linux disk and export it in every shell you build from:
+
+```bash
+export UNIXNU_WORK=/home/you/unixnu-work      # your choice; <work> below means this folder
+mkdir -p $UNIXNU_WORK/ramroot $UNIXNU_WORK/firmware
+```
+
+When this step is done, `<work>` looks like this:
+
+| Path | What |
+|---|---|
+| `<work>/repo` | this repository |
+| `<work>/UniXNU-ruan` | **symlink** to `<work>/repo/unixnu-ruan` (not a copy, so the scripts can find `uefi/` and `third_party/`) |
+| `<work>/UniXNU` | UniXNU at `8542980`, core patches applied |
+| `<work>/uefi-ruan` | Mu-Silicium at `e51cd877` with ruan's package |
+| `<work>/firmware/` | your tablet's `/vendor/firmware` |
+| `<work>/ramroot/SILICIUM_UEFI-log.fd` | the UEFI firmware you build in 2d |
+| `<work>/unique-chip-id.txt` | any hex value, e.g. `0x1234abcd`: the device tree's platform seed |
+
+**a. This repo**
+
+```bash
+cd $UNIXNU_WORK
+git clone https://github.com/F-e-n-y-x/UniXNU-Redmi-Pad-Pro-5G repo
+ln -s $UNIXNU_WORK/repo/unixnu-ruan $UNIXNU_WORK/UniXNU-ruan
+echo 0x1234abcd > $UNIXNU_WORK/unique-chip-id.txt
+repo/third_party/hakios-tools/build.sh
+```
+
+**b. UniXNU**, pinned, with ruan's core patches. Install UniXNU's Linux toolchain to `/opt/unixnu-linux` first (UniXNU's
+`docs/building.md`).
+
+```bash
+cd $UNIXNU_WORK
+git clone https://github.com/UniXNU/UniXNU && cd UniXNU
+git checkout 8542980 && git submodule update --init --recursive
+$UNIXNU_WORK/UniXNU-ruan/patches/unixnu-core/apply.sh $UNIXNU_WORK/UniXNU    # must print "applied" four times
+export PATH=/opt/unixnu-linux/bin:$PATH
+./unixnu defconfig ruan_defconfig -D ../UniXNU-ruan
+./unixnu fetch                                                                # downloads the 21H461 IPSW (~8 GB)
+```
+
+**c. Files from your tablet** (rooted Android, `adb` connected). These stay on your PC; never commit or share them.
+
+```bash
+cd $UNIXNU_WORK
+adb shell su -c 'cp -r /vendor/firmware /sdcard/fw' && adb pull /sdcard/fw/. firmware/ && adb shell rm -r /sdcard/fw
+adb shell su -c 'cat /sys/firmware/fdt' > ruan-live.dtb
+adb shell su -c 'dd if=/dev/block/by-name/uefi_a of=/sdcard/uefi_a.img' && adb pull /sdcard/uefi_a.img && adb shell rm /sdcard/uefi_a.img
+repo/tools/make-touch-fw.py firmware           # -> unixnu-ruan/.cache/hakios-fw/ (touch firmware header)
+repo/tools/make-uefi-dtb.sh ruan-live.dtb      # -> uefi/Resources/DTBs/ruan.dtb
+repo/tools/regen-binaries.sh uefi_a.img        # -> uefi/Binaries/ruan (needs gh logged in, curl, uv); must end without MISSING lines
+```
+
+**d. The UEFI firmware**
+
+```bash
+repo/uefi/setup-uefi-ruan.sh                   # clones Mu-Silicium e51cd877 to <work>/uefi-ruan and adds ruan's package
+cd $UNIXNU_WORK/UniXNU && ./unixnu build firmware --uefi ../uefi-ruan
+cp ../uefi-ruan/Build/ruanPkg/DEBUG_CLANGPDB/FV/SILICIUM_UEFI.fd $UNIXNU_WORK/ramroot/SILICIUM_UEFI-log.fd
+```
+
+Rebuild the firmware whenever you update the repo's `uefi/` or the DarwinBoot core patch. An old FD makes the tablet refuse
+the root ("size differs from the descriptor").
+
+### 3. Build
+
+All commands run from `<work>/UniXNU-ruan`, with `UNIXNU_WORK` exported. `<t>` is any build tag you choose. Every output lands in `OUT`.
 
 **a. GPU userland overlay** (Turnip, AdrenoMetal and the smoke tool, signed ad hoc, with their CDHashes for the trust bundle):
 
 ```bash
-python3 scripts/build-turnip-smoke.py
+UNIXNU_SDKROOT=<iOS SDK> python3 scripts/build-turnip-smoke.py      # the 17.5 SDK works; its default path is /root/theos/sdks/iPhoneOS16.5.sdk
 UNIXNU_SDKROOT=<iOS 17.5 SDK> python3 scripts/build-metal-plugin.py <work>/overlay
 # optional, Wi-Fi joining (ruan-wifi=5): python3 scripts/build-wifi-userspace.py <out> --into <work>/overlay
 ```
@@ -160,7 +228,7 @@ command line always wins over them, but userland (launchd) only sees the real co
 | `ruan-bl-svc=1` | on | The AppleARMBacklight-conforming backlight service. `0` is the old path, which brings back the 5 s frame stall |
 | `ruan-bl-mirror=1` | on | Also drives the second backlight chip (the other half of the LED strings). `0` leaves it at the boot level |
 | `ruan-120hz=1` / `=2` | off | `1` switches the panel to 120 Hz (checked, reverted if the measured rate is wrong); `2` only reads and checks |
-| `ruan-wifi=0..5` | off | Wi-Fi stages: `3` firmware ready (radio off), `4` radio on + self-test scan, `5` also brings up `en0` (needs the step 2a Wi-Fi overlay and `no-lc=1`) |
+| `ruan-wifi=0..5` | off | Wi-Fi stages: `3` firmware ready (radio off), `4` radio on + self-test scan, `5` also brings up `en0` (needs the step 3a Wi-Fi overlay and `no-lc=1`) |
 | `no-lc=1` | off | Skips launch constraints, so the overlay's ad-hoc binaries can start |
 | `ruan-gpu=18`, `ruan-gpu-perf`, `ruan-gpu-dcvs`, `ruan-gpu-irq` | built in | Adreno power-up, clock levels, governor, interrupts. `ruan-gpu-max-level=N` lowers the clock ceiling (default 9 = 940 MHz) |
 | `gpu-prime=0`, `gpu-prime-system=0` | | Turn off background shader-cache priming |
@@ -168,7 +236,7 @@ command line always wins over them, but userland (launchd) only sees the real co
 
 Never pass `cs_enforcement_disable=1` (the kernel panics) or `-v` (backboardd never presents).
 
-### 3. Flash the root and boot
+### 4. Flash the root and boot
 
 Put the tablet in fastboot (Power + Volume down). This is the **only** flash, and only to `unixnu`. Never flash anything to
 `userdata`, `boot` or any other partition.
@@ -182,7 +250,7 @@ With `PERSIST=1` nothing more is sent. (Builds without `PERSIST` want their Data
 up: `fastboot stage <out>/data-usb.apfs` then `fastboot continue`.) Re-flash `unixnu` only when the root changes. Kernel or
 argument changes need only a new `fastboot boot`.
 
-### 4. First boot
+### 5. First boot
 
 - The boot page (`boot-progress=1`) steps through KERNEL … SPRINGBRD. Expect the lock screen after a few minutes. The first
   boot of a fresh Data is the slowest, because every shader compiles cold.
@@ -204,7 +272,7 @@ argument changes need only a new `fastboot boot`.
 | `pull-crashes -d crashes` | Every iOS crash report (`.ips`) |
 | `reboot-fastboot` / `reboot` | Back to fastboot / a normal (Android) boot |
 
-### 5. Back to Android, and undo
+### 6. Back to Android, and undo
 
 - **Back to Android:** `ruan-usbdbg.py reboot`, or force a restart. Android boots normally, because
   nothing it boots from was changed. Run `ruan-usbdbg.py reboot-fastboot` to get to fastboot for the next iPadOS boot.
@@ -219,8 +287,26 @@ adb shell su -c 'dd if=/sdcard/sda-backup-tail.orig.bin of=/dev/block/sda bs=409
 
 Reboot to recovery and format Data. `userdata` then spans the whole disk again, and the iPadOS root is gone.
 
-### 6. Known issues
+### 7. Known issues
 
 See [What works](../README.md#what-works). In short: SpringBoard sometimes resprings; Turnip has an alignment fault (SIGBUS) in some GPU
 writes; closing apps can take over 5 s; widgets and app snapshots draw as blank boxes; 120 Hz and Wi-Fi are still being
 tested; audio, cameras, sensors, cellular and Bluetooth do not work. A device left idle must not sleep (`noidle=1` is built in).
+
+### 8. Common build errors
+
+| Error | Cause | Fix |
+|---|---|---|
+| `hakios.novatek_ruan_fw.h: No such file` (or `focaltech_garnet_fw.h`) | touch firmware header not generated | step 2c, `tools/make-touch-fw.py <work>/firmware` |
+| `UEFI FD ... missing` | no firmware built | step 2d |
+| `.../uefi/mkxnuimg-ruan.py missing` | `<work>/UniXNU-ruan` is a copy, not a symlink | `rm -r` it and make the symlink (step 2a), or set `MKXNUIMG=<repo>/uefi/mkxnuimg-ruan.py` |
+| `missing .../mkapfs.py (set HAKIOS)` or `unzbm` | HakiOS tools not built | `third_party/hakios-tools/build.sh` |
+| `apply.sh`: `patch does not apply` | UniXNU not at `8542980`, submodules not updated, or patches already applied | fresh clone, step 2b exactly |
+| `No module named unixnu` / paths under `/root/unixnu-work` | `UNIXNU_WORK` not exported in this shell | `export UNIXNU_WORK=<work>` |
+| `a710_zap.mbn` / `gmu_gen70000.bin` not found | firmware not pulled | step 2c (`FIRMWARE_DIR=` points elsewhere if you keep it elsewhere) |
+| `Binaries/ruan missing` / `ruan.dtb missing` | step 2c skipped | step 2c, then `uefi/setup-uefi-ruan.sh` again |
+| edk2 build errors about paths | the work folder has a space in its path | use a path without spaces |
+| `kernel_args` over 1000 bytes | too many boot arguments | drop arguments; most are built-in defaults already |
+| tablet shows "size differs from the descriptor" | the FD is older than the root format | redo step 2d |
+
+Still stuck? Open an issue with the full command, the last 30 lines of output and the commit you built (`git -C <work>/repo rev-parse --short HEAD`).

@@ -11,11 +11,12 @@ Prints the root volume UUID (board root_match_volume_uuid must name it) and the 
 import hashlib
 import struct
 import zlib
+import os
 import sys
 import uuid
 from pathlib import Path
 
-sys.path.insert(0, '/root/unixnu-work/UniXNU/scripts')
+sys.path.insert(0, os.environ.get('UNIXNU_WORK', '/root/unixnu-work') + '/UniXNU/scripts')
 from unixnu import userdata   # noqa: E402  (image_size, disk_blocks: the IPSW disk image's raw disk, udif.py on Linux)
 
 MIB = 1 << 20

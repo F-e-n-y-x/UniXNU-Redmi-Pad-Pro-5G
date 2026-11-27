@@ -38,7 +38,7 @@ import subprocess
 import sys
 import zlib
 
-HAKIOS = Path(os.environ.get('HAKIOS', '/root/hakios-garnet'))
+HAKIOS = Path(os.environ.get('HAKIOS', Path(__file__).resolve().parents[2] / 'third_party/hakios-tools'))
 MKAPFS = HAKIOS / 'tools/apfs/mkapfs.py'
 APFS = HAKIOS / 'tools/apfs/apfs.py'
 UNZBM = HAKIOS / 'xnu-deps/host/bin/unzbm'
@@ -306,8 +306,7 @@ def cryptex_union(tree):
 
 # Adreno 710 firmware for the GPU bring-up (gpu-dev; read by the USB link's `gpu 5`+ from the root). From the locally
 # extracted stock vendor image (never in git); FIRMWARE_DIR overrides the path. Sizes and hashes: gpu-dev/package/RuanGmuBoard.h.
-FIRMWARE_DIR = Path(os.environ.get('FIRMWARE_DIR',
-                                   '/DATA/tower/Projects/Redmi Pad Pro 5G/work/analysis-vendor/stock/vendor_a/firmware'))
+FIRMWARE_DIR = Path(os.environ.get('FIRMWARE_DIR', os.environ.get('UNIXNU_WORK', '/root/unixnu-work') + '/firmware'))
 GPU_FIRMWARE = ('gmu_gen70000.bin', 'a710_sqe.fw', 'a710_zap.mdt', 'a710_zap.b00', 'a710_zap.b01', 'a710_zap.b02')
 GPU_FIRMWARE_PATH = 'usr/standalone/firmware/ruan'
 

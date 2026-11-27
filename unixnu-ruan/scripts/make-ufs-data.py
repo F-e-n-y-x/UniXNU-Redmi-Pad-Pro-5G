@@ -32,7 +32,7 @@ mr.fix_spaceman(data)
 if mr.apfsck(data):
     sys.exit(f'{data}: apfsck finds the Data container corrupt')
 if os.environ.get('PERSIST'):
-    sys.path.insert(0, '/root/unixnu-work/UniXNU/drivers/DarwinBoot/Test')
+    sys.path.insert(0, os.environ.get('UNIXNU_WORK', '/root/unixnu-work') + '/UniXNU/drivers/DarwinBoot/Test')
     import packed_ramdisk
     with open(data, 'rb') as f:
         head = f.read(64 << 20)

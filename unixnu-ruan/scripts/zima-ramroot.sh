@@ -8,7 +8,7 @@
 #   zima-ramroot.sh log  [DIR]   boot ruan-ramroot-usb.img, fetch the log region only, then `fastboot reboot` (to Android)
 #
 # usb and log first ask the receiver for the ramoops region (`fastboot get_staged`, a DarwinBoot with "upload":
-# patches/uefi/0003): logs/<time>-prev.bin, parsed by read-ramoops.py next to this script when it is there. It holds
+# core patch 10-DarwinBoot): logs/<time>-prev.bin, parsed by read-ramoops.py next to this script when it is there. It holds
 # Android's last kernel log, or the previous XNU run's with ruan-ramoops=1. A receiver without "upload" just says FAIL.
 # TAG=x uses ruan-ramroot-<mode>-x.img and SHA256SUMS-<mode>-x (log mode: the usb image). Keep each build's files in a
 # directory of its own: every usb build names its root root-usb.apfs.

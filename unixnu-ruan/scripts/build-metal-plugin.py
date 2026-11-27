@@ -25,7 +25,7 @@ import shutil
 import subprocess
 import sys
 
-U = Path(os.environ.get('UNIXNU', '/root/unixnu-work/UniXNU'))
+U = Path(os.environ.get('UNIXNU', os.environ.get('UNIXNU_WORK', '/root/unixnu-work') + '/UniXNU'))
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else U / 'build/ruan-metal-plugin'
 SMOKE = U / 'build/ruan-turnip-smoke'
 # The plugin needs the iOS 17 Metal headers (MTLBindingAccess and others): xybp888/iOS-SDKs iPhoneOS17.5.sdk, sparse clone.
@@ -86,7 +86,7 @@ exe = bundle / 'NativeAdrenoMetal'
 # no victim and panicked (rbu82/rbu83, 2026-11-19). Without a list priming scans only what the sandbox shows, as rbu81 did.
 PRIME_LIST = U / 'build/prime-list.txt'
 PRIME_LIST.unlink(missing_ok=True)
-MANIFEST = Path(os.environ.get('ROOT_MANIFEST', '/root/unixnu-work/ramroot/work-full/root.manifest'))   # make-ramroot.py's
+MANIFEST = Path(os.environ.get('ROOT_MANIFEST', os.environ.get('UNIXNU_WORK', '/root/unixnu-work') + '/ramroot/work-full/root.manifest'))   # make-ramroot.py's
 if os.environ.get('PRIME') == '1' and MANIFEST.is_file():
     # mode, uid, gid, path, link target; Apple's AGX runtime libraries are not translated by the plugin
     paths = sorted({'/' + line.split('\t')[3] for line in MANIFEST.read_text().splitlines()

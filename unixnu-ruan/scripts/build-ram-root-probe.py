@@ -32,7 +32,7 @@ for env, kind in (('RAM_ROOT_IMAGE', 'IMAGE'), ('RAM_ROOT_LAUNCHD', 'LAUNCHD')):
         globals()[kind + '_BYTES'], globals()[kind + '_SHA256'] = len(data), hashlib.sha256(data).hexdigest()
 RESTORE_BYTES, RESTORE_ENTRIES = 5898, 267
 RESTORE_SHA256 = '54e80085f2de19d76f870aa63366ef520a905913dc0208381010864f7d1fbb09'
-RESTORE = Path(os.environ.get('RAM_RESTORE_TRUSTCACHE', '/root/unixnu-work/ramroot/rrd/restore-tc/restore.trustcache'))
+RESTORE = Path(os.environ.get('RAM_RESTORE_TRUSTCACHE', os.environ.get('UNIXNU_WORK', '/root/unixnu-work') + '/ramroot/rrd/restore-tc/restore.trustcache'))
 
 
 def array(name, data):

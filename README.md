@@ -18,7 +18,7 @@
 </p>
 <p align="center"><sub>Native screenshots from the tablet (rbu172p, 2026-11-21): home screen, Control Center, app switcher, Safari, Settings → About.</sub></p>
 
-> **Two targets, one tree:** this folder is the **iPadOS build** (boots to the home screen). The **macOS port** lives in [`macos/`](macos/README.md):
+> **Two targets, one tree:** this folder is the **iPadOS build** (boots to the home screen). The **macOS port** lives on the [`macos` branch](https://github.com/F-e-n-y-x/UniXNU-Redmi-Pad-Pro-5G/tree/macos):
 > macOS 27.3 boots from internal storage and launchd spawns system daemons (2026-11-24); the full system volume is next.
 > Experimental research software: it boots a real Apple OS on non-Apple hardware. Back up your device first.
 >
@@ -106,20 +106,9 @@ building the kernel, root and boot payload, flashing, boot arguments, USB debugg
 
 ## Quick start
 
-Requirements: Linux host, `fastboot`, a USB cable, the UniXNU work tree at `<work>`, the iPadOS 17.7.11 (21H461) IPSW (UniXNU downloads it).
-
-```bash
-# 1. Build the root image, flash it to the unixnu partition, build and RAM-boot the kernel (tablet in fastboot)
-<work>/cycle-root.sh rbu140          # boot arguments: <work>/args-current.txt
-
-# 2. Kernel or boot-argument change only (root already flashed)
-RAMROOT=<work>/ramroot WORK=<work>/ramroot/work-full UFS=1 \
-UFS_ROOT=<work>/tr/out-rbu137root REBUILD_KERNEL=1 TAG=rbu140u OUT=<work>/tr/out-rbu140u \
-KERNEL_ARGS="$(cat <work>/args-current.txt)" unixnu-ruan/scripts/build-ramroot.sh usb
-<work>/boot-local.sh rbu140u
-```
-
-The kernel command line is limited to 1000 bytes, and the build adds about 490 of them.
+Follow [docs/INSTALL.md](docs/INSTALL.md) from step 0: it lists every input, where each one comes from, the one-time setup,
+the build, and a table of common build errors. Everything the build needs is in this branch (`main`) plus public upstream
+repositories pinned to exact commits; the proprietary parts are made from your own tablet by the scripts in `tools/`.
 
 ## Debugging
 
@@ -139,9 +128,11 @@ The kernel exposes a USB serial debug port. Use `tools/ruan-usbdbg.py`:
 | Path | Contents |
 |---|---|
 | `unixnu-ruan/` | The iPadOS device port: `board.toml`, `package/` (drivers), `patches/` (XNU, Adreno, UniXNU core), `scripts/` (build) |
-| `macos/` | The macOS port: its board fork, UniXNU-core patches, PAC tools and notes ([macos/README.md](macos/README.md)) |
-| `tools/` | `ruan-usbdbg.py` (USB debug), `host/` (build/flash/boot scripts), `probe/` |
-| `docs/` | `INSTALL.md`, `IPADOS-BRINGUP.md` (full log), `research/` (per-topic notes and staged ports), `hardware/`, `history/`, `img/` |
+| `uefi/` | ruan's Mu-Silicium UEFI package (`ruanPkg`), BootShim patch, `setup-uefi-ruan.sh`, `mkxnuimg-ruan.py` |
+| `third_party/hakios-tools/` | HakiOS's APFS writer, system selector and `unzbm`, used by the root build |
+| `tools/` | `make-touch-fw.py`, `make-uefi-dtb.sh`, `regen-binaries.sh` (turn your tablet's files into build inputs), `ruan-usbdbg.py` (USB debug); `host/` holds the maintainers' own helper scripts (not needed to build) |
+| `docs/` | `INSTALL.md` (start here), `IPADOS-BRINGUP.md` (full log), `research/` (notes, not part of the build), `hardware/`, `history/`, `img/` |
+| `macos/` | Pointer to the macOS port on the [`macos` branch](https://github.com/F-e-n-y-x/UniXNU-Redmi-Pad-Pro-5G/tree/macos) |
 
 ## Roadmap
 
@@ -150,7 +141,7 @@ The kernel exposes a USB serial debug port. Use `tools/ruan-usbdbg.py`:
 3. Stability: bisect the `rbu187` crash about 40 s after boot (`ruan-bt=1`, `ruan-video=1` or `ruan-vm-free-scale` 4).
 4. Power: CPU big cluster stays at 2.4 GHz at 0.3 % load; then test `ruan-idle-wfi-us` and `ruan-sleep=1`.
 5. Bluetooth (stages 1–3 built), audio (stage 6 not written), video decode (stages B4–B5).
-6. macOS: root from the full 26C5035r system volume + SystemOS cryptex, then Data, setup skip and WindowServer ([macos/README.md](macos/README.md), [next steps](macos/docs/next-steps.md)).
+6. macOS: root from the full 26C5035r system volume + SystemOS cryptex, then Data, setup skip and WindowServer (on the [`macos` branch](https://github.com/F-e-n-y-x/UniXNU-Redmi-Pad-Pro-5G/tree/macos)).
 
 ## Credits
 

@@ -1,8 +1,0 @@
-# Stand-in for the SoC series: vildangil's sm7435-smp-secondary.patch does not apply to xnu-10063.141.1
-# (osfmk/arm64/start.s:145). These two are FFT-infra/UniXNU-sm8250-common 166235e (the SM8250 PAC-less ports,
-# same OS profile): MAX_CPUS 8 with the Aff1 MPIDR match, and E/P clusters (A55 + A78 on ruan).
-native-smp-secondary.patch
-native-smp-type-clusters.patch
-# The OS profile's zzz-boot-progress.patch needs the XNU_SHENG_PMGR block that only this patch creates
-# (behind #if XNU_SHENG_PMGR; ruan_defconfig turns it on for the PMGR bridge). gts7xlwifi carries it the same way.
-arch:../../../patches/xnu/sheng-platform-power.patch

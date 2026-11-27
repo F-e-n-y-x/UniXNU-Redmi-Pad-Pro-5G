@@ -1,4 +1,0 @@
-# Added after the arch series for the plain arm64 (non-PAC) macOS 27.3 kernel on ruan (A78/A55 have no FEAT_PAuth).
-# The arm64e arch series stays: its native-pac-* hunks are all under HAS_NATIVE_PAC, which pexpert/arm64/BCM2837.h
-# defines only for __arm64e__, so they compile out of an arm64 build (native-arm-pan.patch needs their context).
-ruan-arm64-kernel-chained-fixups.patch
