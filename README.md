@@ -18,7 +18,10 @@
 </p>
 <p align="center"><sub>Native screenshots from the tablet (rbu172p, 2026-11-21): home screen, Control Center, app switcher, Safari, Settings → About.</sub></p>
 
-<p align="center"><a href="docs/media/ipados-demo-2026-11-27.mp4">▶ Video (22 s, 2026-11-27)</a>: lock screen, home screen, opening Settings, General → About, Wi-Fi, Control Center. Camera recording, Wi-Fi list blurred.</p>
+<p align="center">
+  <a href="docs/media/ipados-demo-2026-11-27.mp4"><img src="docs/media/ipados-demo-2026-11-27.gif" alt="iPadOS 17 running on the Redmi Pad Pro 5G: lock screen, home screen, Settings, Wi-Fi, Control Center" width="35%"></a><br>
+  <sub>iPadOS 17.7.11 on the tablet, 2026-11-27 (camera recording, Wi-Fi list blurred): lock screen, home screen, Settings → General → About, Wi-Fi, Control Center. Click for the full-quality MP4.</sub>
+</p>
 
 > **Two targets, one tree:** this branch (`ipados`, formerly `main`) is the **iPadOS build** (boots to the home screen). The **macOS port** lives on the [`macos` branch](https://github.com/F-e-n-y-x/UniXNU-Redmi-Pad-Pro-5G/tree/macos):
 > macOS 27.3 boots from internal storage and launchd spawns system daemons (2026-11-24); the full system volume is next.
