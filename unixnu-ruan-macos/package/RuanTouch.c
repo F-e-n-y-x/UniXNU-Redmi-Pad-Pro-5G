@@ -913,6 +913,27 @@ static struct {
 } contact[GOODIX_MAX_TOUCHES];
 static uint32_t flip;           /* boot-arg touch_flip: 1 = mirror left-right, 2 = mirror top-bottom */
 static uint32_t swap_axes;      /* boot-arg touch_swap: 1 = swap X and Y axes */
+static uint32_t fb_rotate;      /* boot-arg fb-rotate, used when the display driver is not linked */
+extern volatile uint32_t native_legacy_rotate __attribute__((weak_import));   /* NativeLegacyDisplay; USB `rotate` changes it live */
+
+/* touch_swap/touch_flip, then the display rotation (1 = panel turned 90 deg, 3 = 270 deg): swap, then mirror one axis */
+static void
+touch_orient(uint32_t *x, uint32_t *y)
+{
+	uint32_t r = &native_legacy_rotate ? native_legacy_rotate : fb_rotate, f = flip;
+	if (swap_axes || r == 1 || r == 3) {
+		uint32_t tmp = *x;
+		*x = *y;
+		*y = tmp;
+	}
+	f ^= r == 1 ? 2 : r == 3 ? 1 : 0;
+	if (f & 1) {
+		*x = 65535 - *x;
+	}
+	if (f & 2) {
+		*y = 65535 - *y;
+	}
+}
 
 static void
 goodix_report(const uint8_t *touches, uint32_t count)
@@ -939,17 +960,7 @@ goodix_report(const uint8_t *touches, uint32_t count)
 		seen.last_y = y;
 		x = x >= max_x ? 65535 : x * 65535 / max_x;
 		y = y >= max_y ? 65535 : y * 65535 / max_y;
-		if (swap_axes) {
-			uint32_t tmp = x;
-			x = y;
-			y = tmp;
-		}
-		if (flip & 1) {
-			x = 65535 - x;
-		}
-		if (flip & 2) {
-			y = 65535 - y;
-		}
+		touch_orient(&x, &y);
 		contact[id].seen = true;
 		if (!contact[id].down) {
 			hakios_touch_post(HAKIOS_TOUCH_DOWN, id, x, y);
@@ -1428,20 +1439,7 @@ focaltech_contact_update(uint32_t id, uint32_t event, uint32_t x, uint32_t y,
 	uint32_t norm_x = (uint32_t)(((uint64_t)x * 65535) / (max_report_x - 1));
 	uint32_t norm_y = (uint32_t)(((uint64_t)y * 65535) / (max_report_y - 1));
 
-	/* Apply axis swap if requested via boot-arg touch_swap=1 */
-	if (swap_axes) {
-		uint32_t tmp = norm_x;
-		norm_x = norm_y;
-		norm_y = tmp;
-	}
-
-	/* Apply flip: bit 0 = mirror left-right, bit 1 = mirror top-bottom */
-	if (flip & 1) {
-		norm_x = 65535 - norm_x;
-	}
-	if (flip & 2) {
-		norm_y = 65535 - norm_y;
-	}
+	touch_orient(&norm_x, &norm_y);
 
 	seen.last_x = norm_x;
 	seen.last_y = norm_y;
@@ -1909,13 +1907,7 @@ hakios_focaltech_init(void)
 	}
 	PE_parse_boot_argn("touch_flip", &flip, sizeof(flip));
 	PE_parse_boot_argn("touch_swap", &swap_axes, sizeof(swap_axes));
-	/* fb-rotate (landscape desktop, NativeLegacyDisplay): 1 = panel turned 90 deg, 3 = 270 deg. Swap, then mirror one axis. */
-	uint32_t fb_rotate = 0;
 	PE_parse_boot_argn("fb-rotate", &fb_rotate, sizeof(fb_rotate));
-	if (fb_rotate == 1 || fb_rotate == 3) {
-		swap_axes = 1;
-		flip ^= fb_rotate == 1 ? 2 : 1;
-	}
 	/* macOS: above the default kernel priority (81), so a busy WindowServer cannot stretch the poll (seen: ~4 reads/s) */
 	extern kern_return_t kernel_thread_start_priority(thread_continue_t, void *, integer_t, thread_t *);
 	if (kernel_thread_start_priority(goodix_thread, NULL, 92 /* BASEPRI_PREEMPT */, &thread) == KERN_SUCCESS) {

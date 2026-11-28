@@ -15,3 +15,6 @@ CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
 CONFIG_XNU_KERNEL_CHAINED_FIXUPS=y
 # UFS root variant (macos/tools/make-macos-ufs-board.sh): ShengUfs, root on the "unixnu" partition.
 CONFIG_XNU_NATIVE_UFS=y
+# Adreno 710 driver (scripts/build-ruan-adreno.py), force-loaded as on iPadOS so its metaclasses register; RuanGpuPower.c and the
+# IOAccelerator subclass ride in libNativeLegacyDisplay.late.a (build-gop-legacy-display-27.py).
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/ruan-adreno/libRuanAdreno.a"

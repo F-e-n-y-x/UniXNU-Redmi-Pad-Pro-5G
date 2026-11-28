@@ -175,8 +175,9 @@ ruan_battery_poll(void)
 
 	/* 3. The gauge's last battery-voltage measurement (qpnp-qg qg_get_battery_voltage: LAST_ADC_V_DATA0 0xC0,
 	 *    194.637 uV per LSB). Checked against the peripheral type (0x04 == QG_TYPE 0x0D) before trusting it. */
-	uint8_t qg_type = 0, qg_sub = 0, qg_v[2], qg_i[2];
+	uint8_t qg_type = 0, qg_sub = 0, qg_v[2], qg_i[2], qg_t[2];
 	int32_t ibat_ua = 0;   /* Apple sign: > 0 charging, < 0 discharging; 0 = not measured */
+	int32_t temp_hundredths = 0;
 	if (pmic_qg8.found && spmi_read(&pmic_qg8, 0x04, &qg_type, 1) == NULL && qg_type == 0x0d &&
 	    spmi_read(&pmic_qg8, 0xc0, qg_v, 2) == NULL) {
 		const uint32_t qg_mv = (uint32_t)(((uint64_t)((uint32_t)qg_v[0] | (uint32_t)qg_v[1] << 8) * 194637ULL) / 1000000ULL);
@@ -191,6 +192,13 @@ ruan_battery_poll(void)
 			if (raw != INT16_MIN) {
 				const int64_t ua = ((int64_t)raw * (qg_sub == 3 ? 152588 : 305176)) / 1000;
 				if (ua > -12000000 && ua < 12000000) ibat_ua = (int32_t)-ua;
+			}
+		}
+		/* Temperature: LAST_ADC_T_DATA0 0xC4, signed 16 bit, 0.1 deg C per LSB */
+		if (spmi_read(&pmic_qg8, 0xc4, qg_t, 2) == NULL) {
+			const int16_t raw_t = (int16_t)(uint16_t)((uint32_t)qg_t[0] | (uint32_t)qg_t[1] << 8);
+			if (raw_t > -400 && raw_t < 1250) {
+				temp_hundredths = (int32_t)raw_t * 10;
 			}
 		}
 	}
@@ -239,14 +247,33 @@ ruan_battery_poll(void)
 	g_ruan_battery.voltage_uv = (int32_t)(vbat_mv * 1000);
 	/* Not measured (the charger and thermistor belong to the ADSP): 0 means unknown, HakiosBattery leaves those keys out. */
 	g_ruan_battery.current_ua = ibat_ua;
-	g_ruan_battery.temperature_hundredths = 0;
+	g_ruan_battery.temperature_hundredths = temp_hundredths;
 	g_ruan_battery.design_uah = 10000000;         /* 10,000 mAh: the tablet's spec, not a measurement */
 	g_ruan_battery.full_uah = 10000000;
 	g_ruan_battery.charge_uah = (int32_t)(((int64_t)g_ruan_battery.full_uah * percent) / 100);
 	g_ruan_battery.cycles = 0;
-	g_ruan_battery.usb_type = 5; /* USB Type-C */
-	g_ruan_battery.usb_voltage_uv = 0;
-	g_ruan_battery.usb_current_ua = 0;
+	if (external) {
+		uint32_t usb_v = 5000000;   /* 5V nominal */
+		uint32_t usb_i = 3000000;   /* 3A fast charging default (15W-33W) */
+		if (ibat_ua > 0) {
+			const uint64_t p_uw = (uint64_t)vbat_mv * (uint64_t)ibat_ua;
+			if (p_uw > 15000000000ULL) { /* > 15W battery charge -> 9V fast charge */
+				usb_v = 9000000;
+				usb_i = (uint32_t)(p_uw / 8000000ULL);
+			} else {
+				usb_i = (uint32_t)(p_uw / 4500000ULL);
+			}
+			if (usb_i < 1500000) usb_i = 1500000;
+			if (usb_i > 3600000) usb_i = 3600000;
+		}
+		g_ruan_battery.usb_voltage_uv = usb_v;
+		g_ruan_battery.usb_current_ua = usb_i;
+		g_ruan_battery.usb_type = (usb_v > 5000000) ? 6 : 5; /* 6: USB-PD, 5: Type-C */
+	} else {
+		g_ruan_battery.usb_voltage_uv = 0;
+		g_ruan_battery.usb_current_ua = 0;
+		g_ruan_battery.usb_type = 0;
+	}
 
 	/* Publish to IORegistry via IOPMPowerSource */
 	HakiosBatteryReport(&g_ruan_battery, sizeof(g_ruan_battery));

@@ -15,7 +15,8 @@ kit = "ruan"
 # AppleKeyStoreState: scripts/build-ram-root-probe.py links its object without the module initialiser (the probe registers
 # the class); its own archive is built but not linked.
 # RamBlock: its source only (scripts/build-ram-root-probe.py builds NativeRamBlock for the Data container).
-include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "GopFramebuffer", "XnuPrelink", "DarwinBoot", "AppleKeyStoreState", "RamBlock"]
+# Adreno740 (+ its embedded kits ArmSmmu4K, AdrenoPM4): sources for build-ruan-adreno.py, its embedded provider ([kernel] below).
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "GopFramebuffer", "Adreno740", "XnuPrelink", "DarwinBoot", "AppleKeyStoreState", "RamBlock"]
 
 [kernel]
 defconfig = "ruan_defconfig"
@@ -46,6 +47,8 @@ archives = [
   # CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y. Needs a previous kernel in out/.../kernel as its reference candidate (first build: off).
   "build-gop-legacy-display.py",
 ]
+# Adreno740 is built and force-loaded by build-ruan-adreno.py (patched copy, ruan glue), not by its component recipe.
+embedded_components = { Adreno740 = "build-ruan-adreno.py" }
 
 [device_tree]
 source = "device:dts/ruan.dts"
@@ -177,6 +180,10 @@ archives = [
   "build-libpthread-kernel.py",
   "component:AppleKeyStoreState",
   "component:RamBlock",
+  # The Adreno 710 driver (UniXNU Adreno740 + ArmSmmu4K/AdrenoPM4 + patches/adreno + package/RuanAdrenoGlue.cpp) into
+  # build/ruan-adreno/libRuanAdreno.a, force-loaded by CONFIG_XNU_EXTRA_LD_ARCHIVES; before the display step, which links
+  # RuanGpuPower.c and the IOAccelerator subclass and scans the archives for UsbDebugCdc's weak imports.
+  "build-ruan-adreno.py",
   "build-gop-legacy-display-27.py",
 ]
 
@@ -193,7 +200,12 @@ kernel_args = [
   "use_contiguous_hint=0",
   # USB CDC debug terminal (package/UsbDebugCdc.cpp, tools/ruan-usbdbg.py), its reboot.fastboot, and the ramoops console zone
   # (package/RuanMacBootProgress.c: console tee, [ev] and [hb] lines) it streams and replays.
-  "ruan-usbdbg=1", "ruan-usbdbg-reboot=1", "ruan-ramoops=1"
+  "ruan-usbdbg=1", "ruan-usbdbg-reboot=1", "ruan-ramoops=1",
+  # From UniXNU-sheng's macOS args (macos/docs/next-steps.md rows 11, 12, 14): skip launch constraints (the ad-hoc root has
+  # none), no DEVELOPMENT-kernel hygiene panics on the slow single A55, and 16 KiB code-signing hashes checked at first use
+  # instead of hashing each of the 84 cache files whole (~4 min at launchd start, UFS boot 5).
+  "no-lc=1", "-no_slto_panic", "sched_preemption_disable_debug_mode=0", "interrupt-masked-debug-mode=0",
+  "validation_disables=0x11040", "cs-lazy=1"
 ]
 
 [os_overrides."macos-27.3-26C5035r".payload.adt]

@@ -17,6 +17,7 @@ volatile int native_touch_xs[12], native_touch_ys[12], native_touch_ids[12];
 volatile uint32_t ruan_touch_events, ruan_button_events, ruan_buttons_mask, ruan_input_lines;
 volatile uint32_t ruan_touch_raw_x, ruan_touch_raw_y, ruan_touch_max_x, ruan_touch_max_y, ruan_touch_norm_x, ruan_touch_norm_y;
 volatile uint32_t ruan_touch_multi, ruan_touch_maxfingers, ruan_touch_lastmulti[4];   /* hakios.novatek_ruan.h: reports with >= 2 fingers, the most at once, the last such */
+volatile uint32_t ruan_screen_off;   /* RuanGpuPower.c DCVS and RuanCpuFreq.c mode 3 cap to their floor while set; macOS: nothing sets it yet (iPadOS: ruan_screen_set from the backlight at 0) */
 volatile uint32_t ruan_sleeping;   /* RuanTouch.c reads it; macOS has no ruan-sleep (iPadOS ruan_screen_set needs ruan-idle-wfi.patch) */
 char ruan_input_row[96];
 char ruan_buttons_row[96];   /* RuanButtons.c's last log line (it prints through loader_log_putc; RuanTouch.c uses loader_log_line) */

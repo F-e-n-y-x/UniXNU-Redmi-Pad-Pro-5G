@@ -95,8 +95,8 @@ NativeAdrenoTimer timer;
 // A710 facts for the Vulkan driver (GPU-METAL-PORT.md): chip 0x07010000, GMEM 512 KiB, the a7xx GMEM window and trap base,
 // highest bank bit 15, UBWC 4.0 (Turnip starts with TU_DEBUG=noubwc), macrotile 0. va_size is set from the context's ias.
 // gmem_base 0: KGSL gen7_3_0 (adreno-gpulist.h .gmem_base = 0); UCHE_GMEM_RANGE reads 0/0 on the device (rbu52b).
-// ruan-macos: highest bank bit 16, the value RuanGpuPower.c programs (RB/TPL1/SP/GRAS/UCHE NC_MODE hbb_lo 3 = 16 - 13); Turnip uses it only for its
-// CPU tiled copies (VK_EXT_host_image_copy: Metal replaceRegion), which scrambled every CPU-uploaded texture at 15.
+// ruan-macos: highest bank bit 16, the value RuanGpuPower.c programs (RB/TPL1/SP/GRAS/UCHE NC_MODE hbb_lo 3 = 16 - 13); Turnip uses it for its
+// CPU tiled copies (VK_EXT_host_image_copy: Metal replaceRegion), which scramble every CPU-uploaded texture when the two disagree.
 NativeAdrenoAbiDeviceInfo deviceInfo = {0x07010000u, 512u << 10, 0x0ull, 0x1fffffffff000ull, GpuClientVaStart,
                                         0, 16, 6, 0, 4, NativeAdrenoDeviceClientIova, 0};
 
@@ -323,12 +323,12 @@ void zapExit()
 	zapLine(s);
 	if (z[11] || m.meta_bytes > 0x1000) return;
 	// The metadata page. gpu-zap 2/3: one kernel page (above 4 GiB: ruan's RAM all is). gpu-zap 4/5/6: the first page of ramoops
-	// dmesg record 0 (0x80D00000, reserved HLOS memory below 4 GiB, BootProgress.c writes only the console zone after it), since
+	// dmesg record 1 (0x80D40000, reserved HLOS memory below 4 GiB; record 0 0x80D00000 is used by USB CDC DMA arena), since
 	// Linux's qcom_scm takes the metadata from dma_alloc_coherent with the default 32-bit mask. Kept for good.
 	const bool low = zapMode >= 4;
 	uint64_t metaPa = 0;
 	if (low) {
-		IODeviceMemory *page = IODeviceMemory::withRange(0x80D00000ull, 0x1000);
+		IODeviceMemory *page = IODeviceMemory::withRange(0x80D40000ull, 0x1000);
 		IOMemoryMap *map = page ? page->map(kIOMapAnywhere | kIOMapInhibitCache) : nullptr;
 		if (page) page->release();
 		if (!map) {zapLine("zap: low metadata page map failed"); return;}
@@ -338,7 +338,7 @@ void zapExit()
 		gpb_mdt_metadata(ruan_zap_firmware, &m, buffer);
 		for (unsigned k = 0; k < 0x1000; ++k) va[k] = buffer[k];
 		barrier(nullptr);
-		metaPa = 0x80D00000ull;   // the map stays: the monitor may read the page until auth_and_reset
+		metaPa = 0x80D40000ull;   // the map stays: the monitor may read the page until auth_and_reset
 	} else {
 		// One page is physically contiguous whatever the kernel's free memory (ruan serves no larger contiguous request).
 		IOBufferMemoryDescriptor *meta = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
@@ -546,6 +546,9 @@ void publish()
 	const IOReturn timed = timer.attach(&timeIo, NativeAdrenoTimeCp);
 	const unsigned ias = NativeAdrenoGpuContextInputBits();
 	deviceInfo.va_size = ias > 32 ? (1ull << ias) - GpuClientVaStart : 0;
+	unsigned hbb = 16;
+	PE_parse_boot_argn("adreno-hbb", &hbb, sizeof hbb);
+	if (hbb >= 13 && hbb <= 16) deviceInfo.highest_bank_bit = hbb;
 	r[8] = uint32_t(native_adreno_publish(vm, &submit, &ring, &ringClock, timed ? nullptr : &timer, &deviceInfo, ias,
 	                                      ctxReport.output_bits ? ctxReport.output_bits : 40));
 	if (!r[8]) {

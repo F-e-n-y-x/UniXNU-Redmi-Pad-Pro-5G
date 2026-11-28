@@ -9,6 +9,11 @@ composes with Metal on the Adreno 710, and touch, battery, backlight and CPU clo
 with the buttons driver on, a GPU hang in one boot, and slow start-up on a single A55 core (~30 min to the desktop).
 Details: [docs/status-2026-11-26.md](docs/status-2026-11-26.md).
 
+**Update (2026-11-28):** 8 cores, the brightness slider works, wallpaper and System Settings open. Still open: changing the
+resolution in Displays freezes macOS, no rotation option in Settings, Dock icons are scrambled, battery drain is high, no USB host
+(keyboard/mouse/dock). This snapshot also carries uncommitted work in progress (CPU/GPU profiles, live rotation, resolution clamp)
+that has not yet booted cleanly; see `unixnu-core-macos/10-GopFramebuffer.patch` and `unixnu-ruan-macos/package/`.
+
 <p align="center">
   <img src="docs/img/first-desktop-usb.jpg" alt="macOS 27.3 Finder desktop with Dock and menu bar on the Redmi Pad Pro 5G, captured over USB" width="45%"><br>
   <sub>First desktop, 2026-11-26: full-resolution framebuffer dump over the USB debug link (<code>tools/ruan-usbdbg.py fullshot</code>).</sub>

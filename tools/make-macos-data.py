@@ -235,6 +235,26 @@ def main():
         'SystemVersionStampAsNumber': (major << 8 | minor) << 16, 'BuildVersionStampAsNumber': build_number},
         fmt=plistlib.FMT_BINARY), 0o600, 501, 20)
     tree.write(f'{user_prefs}/com.apple.SetupAssistant.plist', plistlib.dumps(seen, fmt=plistlib.FMT_BINARY), 0o600, 501, 20)
+    # Desktop Wallpaper: configure a static PNG wallpaper so com.apple.wallpaper doesn't stall on HEVC or offline network Aerials
+    wp_img = Path('/DATA/tower/Projects/Redmi Pad Pro 5G/macOS/wallpaper.png')
+    if wp_img.is_file():
+        tree.write(f'Users/{name}/Pictures/wallpaper.png', wp_img.read_bytes(), 0o644, 501, 20)
+        wallpaper_plist = {
+            'AllSpacesAndDisplays': {
+                'Desktop': {
+                    'Content': {
+                        'Choices': [{
+                            'Files': [{
+                                'relative': f'file:///Users/{name}/Pictures/wallpaper.png'
+                            }],
+                            'Provider': 'image'
+                        }]
+                    }
+                }
+            }
+        }
+        tree.write(f'Users/{name}/Library/Application Support/com.apple.wallpaper/Store/Index.plist',
+                   plistlib.dumps(wallpaper_plist, fmt=plistlib.FMT_XML), 0o600, 501, 20)
     # Keep the display awake (UniXNU make-macos-autologin-addon.py:116-117, macos-pixel8a): no sleep while nothing can wake it.
     tree.write('Library/LaunchDaemons/org.ruan.desktop-awake.plist', plistlib.dumps(dict(
         Label='org.ruan.desktop-awake', ProgramArguments=['/usr/bin/caffeinate', '-d', '-i', '-s'], RunAtLoad=True, KeepAlive=True),
@@ -257,23 +277,94 @@ def main():
                      # then audiomxd took over the spinning (90k log lines in 17 min)
                      'com.apple.audiomxd': True,
                      # waits 300 s for Wi-Fi firmware that this port never loads
-                     'com.apple.wifiFirmwareLoader': True})
+                     'com.apple.wifiFirmwareLoader': True,
+                     # runaway OOM / respawn services that starve RAM
+                     'com.apple.postfixsetup': True,
+                     'com.apple.postfix.master': True,
+                     'com.apple.CommCenter': True,
+                     'com.apple.PowerUIAgent': True,
+                     'com.apple.backupd': True,
+                     'com.apple.backupd-helper': True,
+                     'com.apple.softwareupdated': True,
+                     'com.apple.mobile.softwareupdated': True,
+                     'com.apple.suhelperd': True,
+                     'com.apple.icloud.findmydeviced': True,
+                     'com.apple.findmymacd': True,
+                     'com.apple.corecaptured': True,
+                     'com.apple.nfcd': True,
+                     'com.apple.biometrickitd': True,
+                     'com.apple.nearbyd': True,
+                     # runaway crash / telemetry / analytics loops that exhaust memory and freeze WindowServer:
+                     'com.apple.analyticsd': True,
+                     'com.apple.osanalytics.osanalyticshelper': True,
+                     'com.apple.cloudtelemetryd': True,
+                     'com.apple.SubmitDiagInfo': True,
+                     'com.apple.rtcreportingd': True,
+                     'com.apple.systemstats.analysis': True,
+                     'com.apple.systemstats.daily': True,
+                     'com.apple.tailspind': True,
+                     'com.apple.symptomsd-diag': True,
+                     'com.apple.PerfPowerServices': True,
+                     'com.apple.PerfPowerServicesExtended': True,
+                     'com.apple.perfpowermetricd': True,
+                     'com.apple.icloud.searchpartyd': True,
+                     'com.apple.triald.system': True,
+                     'com.apple.modelcatalogd': True,
+                     'com.apple.powerdatad': True,
+                     'com.apple.seputil': True,
+                     'com.apple.usermanagerd': True,
+                     'com.apple.dirhelper': True,
+                     'com.apple.ReportCrash': True,
+                     'com.apple.corespeechd_system': True,
+                     'com.apple.uarpd': True,
+                     'com.apple.uarpassetmanagerd': True,
+                     'com.apple.accessoryupdaterd': True,
+                     'com.apple.aned': True,
+                     'com.apple.aneuserd': True,
+                     'com.apple.seld': True,
+                     'com.apple.diskspaced': True,
+                     'com.apple.SetStoreUpdateService': True,
+                     'com.apple.ReportCrashService': True,
+                     'com.apple.SecuritySubscriber': True,
+                     'com.apple.ScreenSharingSubscriber': True,
+                     'com.apple.AssetCacheSubscriber': True,
+                     'com.apple.SoftwareUpdateSubscriber': True,
+                     'com.apple.ExtensibleSSOSubscriber': True,
+                     'com.apple.DeviceConfigurationSubscriber': True,
+                     'com.apple.LegacyProfilesSubscriber': True,
+                     'com.apple.ASPCarryLog': True,
+                     'com.apple.dmd': True})
     tree.write(LAUNCHD_DISABLED, plistlib.dumps(disabled, fmt=plistlib.FMT_XML), 0o644)
     # The user's heavy agents, which only fill the RAM Data volume and memory here (DroidVM stage-gpu-plugin.py:44,300; pixel8a).
+    user_off = (
+        'com.apple.duetexpertd', 'com.apple.routined', 'com.apple.intelligenceplatformd', 'com.apple.imagent',
+        'com.apple.knowledge-agent', 'com.apple.knowledgeconstructiond', 'com.apple.BiomeAgent', 'com.apple.biomesyncd',
+        'com.apple.suggestd', 'com.apple.siriknowledged', 'com.apple.assistantd', 'com.apple.siriactionsd',
+        'com.apple.corespeechd', 'com.apple.generativeexperiencesd', 'com.apple.intelligenceflowd',
+        'com.apple.intelligencecontextd', 'com.apple.mlhostd', 'com.apple.ModelCatalogAgent', 'com.apple.voicebankingd',
+        'com.apple.textunderstandingd', 'com.apple.speechmaintenanced', 'com.apple.speech.speechsynthesisd.arm64',
+        'com.apple.accessibility.axassetsd', 'com.apple.photolibraryd', 'com.apple.photoanalysisd',
+        'com.apple.mediaanalysisd', 'com.apple.homed', 'com.apple.CommCenter', 'com.apple.identityservicesd',
+        'com.apple.telephonyutilities.callservicesd', 'com.apple.CallHistoryPluginHelper', 'com.apple.CallHistorySyncHelper',
+        'com.apple.sharingd', 'com.apple.rapportd', 'com.apple.bird', 'com.apple.cloudd', 'com.apple.replicatord',
+        'com.apple.mediastream.mstreamd', 'com.apple.findmy.findmylocateagent', 'com.apple.ScreenTimeAgent',
+        'com.apple.UsageTrackingAgent', 'com.apple.ScreenTimeSettingsAgent', 'com.apple.financed', 'com.apple.Maps.mapssyncd',
+        'com.apple.parsecd', 'com.apple.triald', 'com.apple.corespotlightd', 'com.apple.spotlightknowledged.updater',
+        'com.apple.metadata.mdbulkimport', 'com.apple.managedcorespotlightd', 'com.apple.chronod', 'com.apple.liveactivitiesd',
+        'com.apple.AMPDeviceDiscoveryAgent', 'com.apple.cmio.ContinuityCaptureAgent', 'com.apple.amsaccountsd',
+        'com.apple.amsengagementd', 'com.apple.storekitagent', 'com.apple.itunescloudd', 'com.apple.sociallayerd',
+        'com.apple.SoftwareUpdateNotificationManager', 'com.apple.followupd', 'com.apple.milod',
+        'com.apple.mobilerepaird', 'com.apple.askpermissiond', 'com.apple.appplaceholdersyncd',
+        'com.apple.WallpaperAerialsExtension', 'com.apple.wallpaperexportd', 'com.apple.wallpaper.aerials',
+        'com.apple.CrashReporterSupportHelper', 'com.apple.spindump_agent', 'com.apple.seedusaged',
+        'com.apple.appinstalld', 'com.apple.remindd', 'com.apple.gamepolicyd', 'com.apple.CoreLocationAgent',
+        'com.apple.homeenergyd', 'com.apple.intelligencetasksd', 'com.apple.iCloudNotificationAgent',
+        'com.apple.email.maild', 'com.apple.sirittsd', 'com.apple.AMPArtworkAgent', 'com.apple.betaenrollmentagent'
+    )
     tree.write('private/var/db/com.apple.xpc.launchd/disabled.501.plist', plistlib.dumps(
-        {k: True for k in ('com.apple.duetexpertd', 'com.apple.routined', 'com.apple.intelligenceplatformd', 'com.apple.imagent')},
+        {k: True for k in user_off},
         fmt=plistlib.FMT_XML), 0o644)
     tree.write('private/var/db/com.apple.xpc.launchd/disabled.migrated', b'', 0o644)
-    # configd's InterfaceNamer waits for IOKit to go quiet (two entries never do here) before it names a new interface, and
-    # clocksyncd, so WindowServer, waits for en0: 240.0 s on every boot (boot-time agent 2026-11-26, *START*/*TIMEOUT* in the log).
-    # An interface already in this database is named at once. RuanDummyEth's fixed MAC 02:72:75:61:00:01.
-    tree.write('Library/Preferences/SystemConfiguration/NetworkInterfaces.plist', plistlib.dumps({
-        'Interfaces': [{
-            'BSD Name': 'en0', 'IOBuiltin': True, 'IOInterfaceNamePrefix': 'en', 'IOInterfaceType': 6, 'IOInterfaceUnit': 0,
-            'IOMACAddress': bytes.fromhex('027275610001'),
-            'IOPathMatch': 'IOService:/ArmDTPlatform/RuanDummyEth/IOEthernetInterface',
-            'SCNetworkInterfaceType': 'Ethernet', 'SCNetworkInterfaceInfo': {'UserDefinedName': 'Ethernet'}}]},
-        fmt=plistlib.FMT_XML), 0o644)
 
     # OSLOG_DAEMON=<adrenoprobed>: UniXNU's probe daemon (drivers/AdrenoMetal, built by build-adreno-metal-plugin-ruanmac.py) as a
     # RunAtLoad job; it writes the unified log (every process's os_log lines, WindowServer's included) as gzip text to
@@ -286,9 +377,6 @@ def main():
         assert struct.unpack_from('<II', data_bytes, 0) == (0xfeedfacf, 0x100000c), 'expected an arm64 Mach-O'
         struct.pack_into('<I', data_bytes, 8, 0x80000002)
         tree.write(rel, bytes(data_bytes), 0o755)
-        out.mkdir(parents=True, exist_ok=True)
-        subprocess.run([sys.executable, Path(__file__).resolve().parent / 'adhoc-resign.py', work / 'private/var/ngpu/bin',
-                        out / 'oslog.cdhash'], check=True)
         tree.write('Library/LaunchDaemons/org.blu-sharky.adrenoprobed.plist', plistlib.dumps(dict(
             Label='org.blu-sharky.adrenoprobed', ProgramArguments=['/' + rel], RunAtLoad=True, KeepAlive=False,
             UserName='root', StandardErrorPath='/dev/null'), fmt=plistlib.FMT_XML), 0o644)
@@ -296,6 +384,22 @@ def main():
                   'private/var/mobile/Library/Caches/com.apple.backboardd', 'private/var/mobile/Library/Caches/com.apple.backboardd/m2v'):
             if d not in tree.entries:
                 tree.mkdir(d, 0o755)
+
+    # Brightness daemon: bridges Control Center brightness slider to RuanBacklight
+    bdaemon = Path(os.environ.get('BRIGHTNESS_DAEMON', '/root/unixnu-work/handover-20261126/staged/drivers-bbb/brightnessd/ruan-brightnessd'))
+    if bdaemon.is_file():
+        rel = 'private/var/ngpu/bin/ruan-brightnessd'
+        tree.write(rel, bdaemon.read_bytes(), 0o755)
+        tree.write('Library/LaunchAgents/com.ruan.brightnessd.plist', plistlib.dumps(dict(
+            Label='com.ruan.brightnessd', ProgramArguments=['/' + rel], LimitLoadToSessionType='Aqua',
+            RunAtLoad=True, KeepAlive=True, ProcessType='Background'), fmt=plistlib.FMT_XML), 0o644)
+        print('Data: ruan-brightnessd + LaunchAgent installed')
+
+    bin_dir = work / 'private/var/ngpu/bin'
+    if bin_dir.is_dir() and any(bin_dir.iterdir()):
+        out.mkdir(parents=True, exist_ok=True)
+        subprocess.run([sys.executable, Path(__file__).resolve().parent / 'adhoc-resign.py', bin_dir,
+                        out / 'oslog.cdhash'], check=True)
     # The Metal plugin in /Library/GPUBundles (Data): on 27.3 IOGPU's trusted-bundle check refuses it in /System/Library/Extensions
     # alone and WindowServer aborts in WSSystemCanCompositeWithMetal (UniXNU-sheng porting.toml, run64). The root copy
     # (add-macos-metal.py) is already marked arm64e and re-signed, its CDHashes are in the trust cache: copied byte for byte.
@@ -316,7 +420,7 @@ def main():
     spec_mr = importlib.util.spec_from_file_location('make_ramroot', W / 'UniXNU-ruan/scripts/make-ramroot.py')
     mr = importlib.util.module_from_spec(spec_mr)
     spec_mr.loader.exec_module(mr)
-    slack = int(os.environ.get('DATA_SLACK', 360448))   # 1.375 GiB free for the running system's writes (RAM-backed)
+    slack = int(os.environ.get('DATA_SLACK', 196608))   # 768 MiB free for running writes; avoids ENOSPC and tccd SQLite corruption
     subprocess.run([sys.executable, '-I', mr.MKAPFS, '-o', data, '--slack', str(slack), f'Data={work},manifest={manifest}'],
                    check=True)
     mr.fix_spaceman(data)

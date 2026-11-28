@@ -19,6 +19,7 @@ W=/root/unixnu-work; U=$W/UniXNU-macos; D=$W/UniXNU-ruan-macos
 O=$U/out/ruan/macos-27.3-26C5035r/ruan_macos_arm64; DEFCONFIG=ruan_macos_arm64_defconfig
 # UFS=1: the UFS-root variant (make-macos-ufs-board.sh): ShengUfs, root on the "unixnu" partition. UFS_ROOT_UUID names its volume.
 if [ -n "${UFS:-}" ]; then
+	export UFS_ROOT_UUID="${UFS_ROOT_UUID:-4C15B884-6D41-FA68-15FA-10423D08C1A0}"
 	"$(cd "$(dirname "$0")" && pwd)/make-macos-ufs-board.sh"
 	V=$W/ufs-variant-macos; D=$V/device; DEFCONFIG=ruan_macos_arm64_ufs_defconfig
 	export UNIXNU_OUT=$V/out UNIXNU_DEVICE=$D
@@ -101,7 +102,7 @@ sha256sum "$IMG" payload.xnup kernel.macho > SHA256SUMS-out
 if [ -z "${NO_INSTALL:-}" ]; then
 	echo "== install into $EXTRACT"
 	cp "$IMG" "$EXTRACT/$IMG"
-	(cd "$EXTRACT" && sha256sum "$IMG" root-usb.apfs root-usb.desc root-usb.split data-usb.apfs data-usb.desc trust.bundle > SHA256SUMS-macos \
+	(cd "$EXTRACT" && sha256sum "$IMG" root-usb.apfs root-usb.desc root-usb.split trust.bundle > SHA256SUMS-macos \
 		&& sha256sum -c SHA256SUMS-macos)
 fi
 grep -o '"kernel_args": "[^"]*"' "$OUT/payload.json"

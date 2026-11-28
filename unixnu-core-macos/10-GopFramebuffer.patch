@@ -1,5 +1,5 @@
 diff --git a/NativeLegacyDisplay.cpp b/NativeLegacyDisplay.cpp
-index a654ed8..521605e 100644
+index a654ed8..9372fe2 100644
 --- a/NativeLegacyDisplay.cpp
 +++ b/NativeLegacyDisplay.cpp
 @@ -103,6 +103,9 @@ extern "C" void native_legacy_gpu_fallback_observed(int status);
@@ -17,22 +17,40 @@ index a654ed8..521605e 100644
  // boot-arg vsync; a platform may answer otherwise (its display device's mode).
  extern "C" __attribute__((weak)) unsigned native_legacy_refresh_hz(void) {
 -    unsigned hz=0;PE_parse_boot_argn("vsync",&hz,sizeof(hz));return hz;
-+    unsigned hz=60;PE_parse_boot_argn("vsync",&hz,sizeof(hz));return hz;   // ruan: 60 Hz panel by default (no command-line room); vsync=0 turns it off
++    unsigned hz=120;PE_parse_boot_argn("vsync",&hz,sizeof(hz));return hz;   // ruan: 120 Hz Novatek panel by default; vsync=0 turns it off
  }
  // The unchanged original setDisplayRefreshProperties: publishes IOMFBDisplayRefresh from slot 301 (getRefreshAttributes below).
  extern "C" bool native_legacy_set_refresh_properties(void *display);
-@@ -300,19 +303,29 @@ class NativeLegacyDisplay : public IOMobileFramebufferLegacy {
+@@ -300,19 +303,47 @@ class NativeLegacyDisplay : public IOMobileFramebufferLegacy {
      bool fenceCaptured=false,fenceSlow=false;
      IOTimerEventSource *fenceTimer=nullptr;
      bool directOn=false,directBoot=true;
 -    static constexpr uint32_t kVig[2]={0x4000,0x6000},kCtlFlush=0x15018,kBootIova=0xb8000000U,kBootStride=0x2fa0;
 +    // fb-rotate=1 (90 deg) or 3 (270 deg): macOS sees the panel as landscape (GOP height x width) and the CPU copy rotates each
-+    // frame into the portrait scanout. shortcut: CPU copy only (no direct DPU flip, no GPU blit, no half-float), add a rotated blit later.
++    // frame into the portrait scanout. shortcut: CPU copy only (no direct DPU flip, no GPU blit), add a rotated blit later.
 +    uint32_t rotate=0;
++    int setRotateLive(uint32_t r,uint32_t live) {
++        if(r!=0 && r!=1 && r!=3)return -1;
++        if(r==rotate)return 1;
++        rotate=r;
++        native_legacy_rotate=r;
++        if(live) {
++            native_legacy_hotplug_notify(this,0);
++            PE_Video video={};
++            if(!PE_current_console(&video)) {
++                if(rotate)installBootDimensions((uint32_t)video.v_height,(uint32_t)video.v_width);
++                else installBootDimensions((uint32_t)video.v_width,(uint32_t)video.v_height);
++            }
++            uint32_t nw=0,nh=0;getDisplayDimensions(&nw,&nh);
++            publishDisplayAttributes(nw,nh);
++            native_legacy_hotplug_notify(this,1);
++        }
++        return 0;
++    }
 +    bool panelMatches(const PE_Video &video,uint32_t width,uint32_t height) const {
 +        return rotate?(video.v_width==height && video.v_height==width):(video.v_width==width && video.v_height==height);
 +    }
-+    static constexpr uint32_t kVig[2]={0x4000,0x6000},kCtlFlush=0x15018,kBootIova=0xb8000000U,kBootStride=0x1900;   // ruan VIG0 stride0 (USB `dpu`); was sheng's 0x2fa0
++    static constexpr uint32_t kVig[1]={0x4000},kCtlFlush=0x15018,kCtlFlushMask=0x1,kBootIova=0xb8000000U,kBootStride=0x1900;   // ruan: one VIG (dpu probe rbu127u)
      void startDirect() {
 +        IOWorkLoop *loop=getWorkLoop();
 +        // ruan: the CPU copy waits for the GPU fence too (kickOnce, fb-fence), so the fence timer exists without direct scanout.
@@ -42,8 +60,9 @@ index a654ed8..521605e 100644
 +        }
          unsigned mode=0;PE_parse_boot_argn("dpu-scanout",&mode,sizeof(mode));
 -        if(mode<2 || !&native_ufs_dpu_map || !&native_ufs_dpu_state || !(native_ufs_dpu_state>>31) || !primary)return;
-+        if(mode<2 || rotate || !&native_ufs_dpu_map || !&native_ufs_dpu_state || !(native_ufs_dpu_state>>31) || !primary)return;
-         IODeviceMemory *memory=IODeviceMemory::withRange(0xae01000,0x8f000);
+-        IODeviceMemory *memory=IODeviceMemory::withRange(0xae01000,0x8f000);
++        if(mode<2 || rotate || !&native_ufs_dpu_map || !&native_ufs_dpu_state || (native_ufs_dpu_state&0xffff0000U)!=0x80000000U || !primary)return;
++        IODeviceMemory *memory=IODeviceMemory::withRange(0xae01000,0x83000);
          mdpMap=memory?memory->map(kIOMapAnywhere|kIOMapInhibitCache):nullptr;
          if(memory)memory->release();
          directPages=static_cast<uint64_t *>(IOMallocData(8192*sizeof(uint64_t)));
@@ -57,7 +76,16 @@ index a654ed8..521605e 100644
              if(directPages){IOFreeData(directPages,8192*sizeof(uint64_t));directPages=nullptr;}
              return;
          }
-@@ -372,7 +385,7 @@ class NativeLegacyDisplay : public IOMobileFramebufferLegacy {
+@@ -335,7 +366,7 @@ class NativeLegacyDisplay : public IOMobileFramebufferLegacy {
+         shownStride=stride;
+         for(uint32_t vig:kVig){mdp[(vig+0x14)/4]=iova;mdp[(vig+0x24)/4]=stride&0xffff;}
+         __asm__ volatile("dsb sy" ::: "memory");
+-        mdp[kCtlFlush/4]=0x3;
++        mdp[kCtlFlush/4]=kCtlFlushMask;
+         __asm__ volatile("dsb sy" ::: "memory");
+     }
+     // The slot that holds this surface, mapping it into a free one (never the one on screen or the one waiting to latch) the first time.
+@@ -372,7 +403,7 @@ class NativeLegacyDisplay : public IOMobileFramebufferLegacy {
      // A provider's failed query is not completion. Poll without blocking the display work loop;
      // a slow GPU leaves the previous frame on screen until completion or family cancellation.
      bool traceGpuComplete=false;
@@ -66,7 +94,7 @@ index a654ed8..521605e 100644
          traceGpuComplete=false;
          if(fenceFor!=request) {
              fenceFor=request;fenceTarget=0;fenceSince=0;fenceCaptured=false;fenceSlow=false;
-@@ -384,6 +397,9 @@ class NativeLegacyDisplay : public IOMobileFramebufferLegacy {
+@@ -384,6 +415,9 @@ class NativeLegacyDisplay : public IOMobileFramebufferLegacy {
          }
          const bool known=&native_adreno_fences_detail?native_adreno_fences_detail(&submitted,&retired,detail):
              (&native_adreno_fences && native_adreno_fences(&submitted,&retired));
@@ -76,7 +104,16 @@ index a654ed8..521605e 100644
          if(known && !fenceCaptured) {
              fenceTarget=submitted;fenceCaptured=true;
          }
-@@ -621,14 +637,14 @@ public:
+@@ -418,7 +452,7 @@ class NativeLegacyDisplay : public IOMobileFramebufferLegacy {
+         if(!latchRequest)return;
+         uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time()-latchStart,&ns);
+         gpuTraceEvent(GpuTraceDisplayLatch,0,traceId(latchRequest),mdp[kCtlFlush/4],ns,shownSlot,pendingSlot);
+-        if((mdp[kCtlFlush/4]&0x3) && ns<50000000ull){latchTimer->setTimeoutUS(500);return;}
++        if((mdp[kCtlFlush/4]&kCtlFlushMask) && ns<50000000ull){latchTimer->setTimeoutUS(500);return;}
+         if(ns>=50000000ull)native_legacy_direct[3]=native_legacy_direct[3]+1;
+         const uint32_t us=uint32_t(ns/1000);
+         if(us>native_legacy_direct[4])native_legacy_direct[4]=us;
+@@ -621,14 +655,14 @@ public:
              uint32_t bw=0,bh=0;getDisplayDimensions(&bw,&bh);
              uint64_t blankLength=(uint64_t)bw*bh*4;
              if(PE_current_console(&blank) || blank.v_baseAddr!=bootMapping->getPhysicalAddress() ||
@@ -94,8 +131,19 @@ index a654ed8..521605e 100644
                  native_legacy_transfer_observed(kIOReturnBadArgument,request,0);return;
              }
              __asm__ volatile("dsb sy" ::: "memory");
-@@ -652,8 +668,8 @@ public:
-            native_legacy_surface_width(surface)<width || native_legacy_surface_height(surface)<height ||
+@@ -648,12 +682,17 @@ public:
+         uint64_t length=(uint64_t)width*height*4;
+         uint64_t sourceStride=native_legacy_surface_stride(surface);
+         uint64_t allocation=native_legacy_surface_allocation(surface);
+-        if(!memory || !memory->metaCast("IOMemoryDescriptor") || !native_legacy_surface_bounds(width,height,sourceStride,allocation,memory->getLength()) ||
+-           native_legacy_surface_width(surface)<width || native_legacy_surface_height(surface)<height ||
++        const uint32_t sw=(uint32_t)native_legacy_surface_width(surface);
++        const uint32_t sh=(uint32_t)native_legacy_surface_height(surface);
++        if(!sw || !sh) {native_legacy_transfer_observed(kIOReturnBadArgument,request,0);return;}
++        const uint32_t cw=(sw<width)?sw:width;
++        const uint32_t ch=(sh<height)?sh:height;
++        const bool resChanged=(sw!=width || sh!=height);
++        if(!memory || !memory->metaCast("IOMemoryDescriptor") || !native_legacy_surface_bounds(sw,sh,sourceStride,allocation,memory->getLength()) ||
             !nativeScanoutFormat(native_legacy_surface_format(surface),native_legacy_surface_planes(surface)) ||
             PE_current_console(&video) || video.v_baseAddr!=bootMapping->getPhysicalAddress() ||
 -           video.v_width!=width || video.v_height!=height || video.v_depth!=32 || video.v_rotate ||
@@ -105,7 +153,7 @@ index a654ed8..521605e 100644
              native_legacy_transfer_observed(kIOReturnNotReady,request,0);return;
          }
          // The diagnostic renderer repaints the page over the scanout until it is told the system owns the display; the GPU path needs that as much
-@@ -663,6 +679,7 @@ public:
+@@ -663,6 +702,7 @@ public:
          }
          noteSurface(surface,memory);
          const bool half=nativeHalf(native_legacy_surface_format(surface),native_legacy_surface_planes(surface));
@@ -113,16 +161,27 @@ index a654ed8..521605e 100644
          if(half) {
              // Every 32nd half-float frame: the centre pixel's four raw components and the sample count, for the boot log. They tell
              // whether a compositor writes linear or encoded values (a mid grey is 0.214 linear and 0.5 encoded).
-@@ -694,7 +711,7 @@ public:
+@@ -677,8 +717,8 @@ public:
+                 }
+             }
+         }
+-        if(directOn && !half && !gpuBypass && latchRequest)stat(5);
+-        if(directOn && !half && !gpuBypass && !latchRequest) {
++        if(directOn && !half && !gpuBypass && !resChanged && latchRequest)stat(5);
++        if(directOn && !half && !gpuBypass && !resChanged && !latchRequest) {
+             if(!gpuWrote(request)) {transferred=true;return;}
+             const int slot=directSlot(surface,memory);
+             if(slot>=0) {
+@@ -694,7 +734,7 @@ public:
          }
          directToBoot();
          stat(7);note(7,-1,request);
 -        if(!gpuBypass && native_legacy_gpu_offer(this,memory,sourceStride,width,height,half?halfOfferFormat():NGP_BGRX8888)) {
-+        if(!gpuBypass && !rotate && native_legacy_gpu_offer(this,memory,sourceStride,width,height,half?halfOfferFormat():NGP_BGRX8888)) {
++        if(!gpuBypass && !rotate && !resChanged && native_legacy_gpu_offer(this,memory,sourceStride,width,height,half?halfOfferFormat():NGP_BGRX8888)) {
              // The GPU writes the scanout memory behind the CPU's back: the differential copy's picture of it is stale from now on.
              native_legacy_swap_stage(1);countFormat(half?7:6);
              shadowValid=false;gpuRequest=request;gpuTraceRequest=traceId(request);gpuLength=length;transferred=true;
-@@ -708,6 +725,14 @@ public:
+@@ -708,6 +748,14 @@ public:
              }
              return;
          }
@@ -137,23 +196,37 @@ index a654ed8..521605e 100644
          // Surfaces may be write-combined (iPadOS 27 display surfaces are): reading them uncached costs seconds per frame. Read through
          // a cacheable view, after cleaning and invalidating it so lines from the previous frame are not reused.
          IOMemoryMap *source=memory->map(kIOMapAnywhere|kIOMapReadOnly|kIOMapCopybackCache);
-@@ -729,7 +754,7 @@ public:
+@@ -719,7 +767,7 @@ public:
+             if(!native_legacy_prepare_scanout()) {OSSafeReleaseNULL(source);native_legacy_transfer_observed(kIOReturnNotReady,request,0);return;}
+             uint64_t copyStart;__asm__ volatile("isb\n\tmrs %0, cntpct_el0":"=r"(copyStart));
+             if(!convertHalfRows(reinterpret_cast<volatile void *>(bootMapping->getVirtualAddress()),bootMapping->getLength(),video.v_rowBytes,
+-                reinterpret_cast<const void *>(source->getVirtualAddress()),source->getLength(),sourceStride,width,height)) {
++                reinterpret_cast<const void *>(source->getVirtualAddress()),source->getLength(),sourceStride,cw,ch)) {
+                 OSSafeReleaseNULL(source);native_legacy_transfer_observed(kIOReturnBadArgument,request,0);return;
+             }
+             __asm__ volatile("dsb sy" ::: "memory");
+@@ -729,9 +777,9 @@ public:
              finishTransfer(request);
              return;
          }
 -        if(!native_legacy_copy_layout(reinterpret_cast<volatile void *>(bootMapping->getVirtualAddress()),
 +        if(!rotate && !native_legacy_copy_layout(reinterpret_cast<volatile void *>(bootMapping->getVirtualAddress()),
              bootMapping->getLength(),video.v_rowBytes,reinterpret_cast<const void *>(source->getVirtualAddress()),
-             source->getLength(),sourceStride,width,height)) {
+-            source->getLength(),sourceStride,width,height)) {
++            source->getLength(),sourceStride,cw,ch)) {
              OSSafeReleaseNULL(source);native_legacy_transfer_observed(kIOReturnBadArgument,request,0);return;
-@@ -739,7 +764,13 @@ public:
+         }
+         if(!native_legacy_prepare_scanout()) {
+@@ -739,7 +787,15 @@ public:
          }
          uint64_t copyStart;__asm__ volatile("isb\n\tmrs %0, cntpct_el0":"=r"(copyStart));
          uint64_t stored=UINT64_MAX;
 -        {
 +        if(rotate) {
++            const uint32_t rcw = cw & ~1u;
++            const uint32_t rch = ch & ~1u;
 +            if(!native_legacy_copy_rotated(reinterpret_cast<volatile void *>(bootMapping->getVirtualAddress()),bootMapping->getLength(),
-+                video.v_rowBytes,reinterpret_cast<const void *>(source->getVirtualAddress()),source->getLength(),sourceStride,width,height,rotate)) {
++                video.v_rowBytes,reinterpret_cast<const void *>(source->getVirtualAddress()),source->getLength(),sourceStride,rcw,rch,rotate)) {
 +                OSSafeReleaseNULL(source);native_legacy_transfer_observed(kIOReturnBadArgument,request,0);return;
 +            }
 +            stored=length;shadowValid=false;
@@ -161,7 +234,58 @@ index a654ed8..521605e 100644
              // Store only what changed since the previous frame (the scanout memory is slow device memory).
              uint64_t need=(uint64_t)width*height*4;
              // Differential copy is opt-in (fb-diff=1): on hardware it reads the whole source every frame and was not faster
-@@ -972,7 +1003,9 @@ public:
+@@ -747,8 +803,8 @@ public:
+             // lock screen that disappeared with the plain copy (int-005).
+             static int diffOff=-1;
+             if(diffOff<0){unsigned v=0;PE_parse_boot_argn("fb-diff",&v,sizeof v);diffOff=(v!=1);}
+-            if(!diffOff && !shadow && need<=(64ull<<20)){shadow=IOMallocAligned((vm_size_t)need,16384);if(shadow){shadowBytes=need;shadowValid=false;}}
+-            if(!diffOff && shadow && shadowBytes>=need)
++            if(!diffOff && !resChanged && !shadow && need<=(64ull<<20)){shadow=IOMallocAligned((vm_size_t)need,16384);if(shadow){shadowBytes=need;shadowValid=false;}}
++            if(!diffOff && !resChanged && shadow && shadowBytes>=need)
+                 stored=native_legacy_copy_diff(reinterpret_cast<volatile void *>(bootMapping->getVirtualAddress()),
+                     bootMapping->getLength(),video.v_rowBytes,reinterpret_cast<const void *>(source->getVirtualAddress()),
+                     source->getLength(),sourceStride,width,height,shadow,shadowValid);
+@@ -758,7 +814,7 @@ public:
+             shadowValid=false;
+             if(!native_legacy_copy_pixels(reinterpret_cast<volatile void *>(bootMapping->getVirtualAddress()),
+                 bootMapping->getLength(),video.v_rowBytes,reinterpret_cast<const void *>(source->getVirtualAddress()),
+-                source->getLength(),sourceStride,width,height)) {
++                source->getLength(),sourceStride,cw,ch)) {
+                 OSSafeReleaseNULL(source);native_legacy_transfer_observed(kIOReturnBadArgument,request,0);return;
+             }
+             stored=length;
+@@ -916,22 +972,26 @@ public:
+             if(surface && surface->metaCast("IOSurface") && !surfaces[1] && !surfaces[2] && !surfaces[3] &&
+                native_legacy_single_layer_state(word(kRequestMasks),word(kRequestMasks+4),word(kRequestMasks+8))) {
+                 reason=3;bool rectangles=true;
++                const uint32_t reqW = word(kRequestDims), reqH = word(kRequestDims+4);
+                 const unsigned rectOffsets[]={kRequestRect0,kRequestRect1};
+                 for(unsigned offset: rectOffsets) {
+                     uint32_t rect[4]={};memcpy(rect,bytes+offset,sizeof(rect));
+-                    rectangles=rectangles && rect[0]==0 && rect[1]==0 && rect[2]==width && rect[3]==height;
++                    rectangles=rectangles && rect[0]==0 && rect[1]==0 && (rect[2]==width || rect[2]==reqW || rect[2]==height) && (rect[3]==height || rect[3]==reqH || rect[3]==width);
+                 }
+                 bool options=true;for(unsigned offset=kRequestOptions;offset<=kRequestOptions+8;offset+=4)options=options && word(offset)==0;
+-                if(width && height && rectangles && options && word(kRequestDims)==width && word(kRequestDims+4)==height) {
++                const bool dimMatch=(reqW && reqH && ((reqW<=width && reqH<=height) || (reqW<=height && reqH<=width)));
++                if(width && height && rectangles && options && dimMatch) {
+                     reason=4;
+                     IOMemoryDescriptor *memory=native_legacy_surface_descriptor(surface);
+                     // A surface larger than the display (rows or lines padded to the GPU's alignment) is accepted: only the visible rectangle,
+                     // which the request's rectangles already name as the whole display, is copied.
+                     const uint32_t format=native_legacy_surface_format(surface),planes=native_legacy_surface_planes(surface);
+-                    if(native_legacy_surface_width(surface)>=width && native_legacy_surface_height(surface)>=height &&
++                    const uint32_t sw=(uint32_t)native_legacy_surface_width(surface);
++                    const uint32_t sh=(uint32_t)native_legacy_surface_height(surface);
++                    if(sw && sh &&
+                        nativeScanoutFormat(format,planes) &&
+                        memory && memory->metaCast("IOMemoryDescriptor") &&
+-                       native_legacy_surface_bounds(width,height,native_legacy_surface_stride(surface),
++                       native_legacy_surface_bounds(sw,sh,native_legacy_surface_stride(surface),
+                            native_legacy_surface_allocation(surface),memory->getLength())) {
+                         reason=0;accepted=true;
+                         countFormat(nativeHalf(format,planes)?2:format==0x26424741?1:0);
+@@ -972,7 +1032,9 @@ public:
          if(!pitch)return kIOReturnBadArgument;
          *pitch=0;IOService *provider=getProvider();if(!provider)return kIOReturnNotReady;
          OSObject *property=provider->getProperty("dot-pitch");
@@ -172,7 +296,7 @@ index a654ed8..521605e 100644
          OSData *data=OSDynamicCast(OSData,property);
          if(!data || data->getLength()!=sizeof(*pitch))return kIOReturnBadArgument;
          memcpy(pitch,data->getBytesNoCopy(),sizeof(*pitch));return kIOReturnSuccess;
-@@ -997,14 +1030,20 @@ public:
+@@ -997,14 +1059,21 @@ public:
             !video.v_width || !video.v_height || video.v_depth!=32 || video.v_rotate ||
             video.v_width>16384 || video.v_height>16384 || video.v_rowBytes<video.v_width*4 ||
             video.v_rowBytes>UINT64_MAX/video.v_height)return false;
@@ -188,6 +312,7 @@ index a654ed8..521605e 100644
          if(valid) {
 -            installBootDimensions((uint32_t)video.v_width,(uint32_t)video.v_height);
 +            unsigned rot=0;PE_parse_boot_argn("fb-rotate",&rot,sizeof(rot));rotate=(rot==1 || rot==3)?rot:0;
++            native_legacy_rotate=rotate;
 +            if(rotate)installBootDimensions((uint32_t)video.v_height,(uint32_t)video.v_width);
 +            else installBootDimensions((uint32_t)video.v_width,(uint32_t)video.v_height);
              uint32_t width=0,height=0;getDisplayDimensions(&width,&height);
@@ -196,16 +321,55 @@ index a654ed8..521605e 100644
              if(valid) {
                  OSSafeReleaseNULL(bootMapping);bootMapping=mapping;mapping=nullptr;primary=video.v_display==1;
                  valid=native_legacy_gop_mapping_observed(this,bootMapping,width,height);
-@@ -1068,7 +1107,7 @@ public:
+@@ -1045,7 +1114,7 @@ public:
+     // has no timing generator), and the pixel clock from it. The color element is 8-bit RGB SDR with sRGB chromaticities. The
+     // physical size comes only from the provider's dot pitch; without one it is left out, as no panel size is known here.
+     bool publishDisplayAttributes(uint32_t width,uint32_t height) {
+-        unsigned hz=60;PE_parse_boot_argn("vsync",&hz,sizeof(hz));if(!hz || hz>240)hz=60;
++        unsigned hz=120;PE_parse_boot_argn("vsync",&hz,sizeof(hz));if(!hz || hz>240)hz=120;
+         uint8_t timingData[80]={};
+         uint32_t hTotal=width+160,vTotal=height+23;
+         auto word=[&](unsigned offset,uint32_t value){memcpy(timingData+offset,&value,4);};
+@@ -1053,10 +1122,16 @@ public:
+         word(36,vTotal);word(40,height);word(44,6);word(48,14);word(52,3);word(56,hz<<16);
+         word(68,(uint32_t)((uint64_t)hTotal*vTotal*hz));
+         OSObject *timing=native_legacy_ioav_timing(timingData,2,4);
++        uint8_t timing60Data[80]={};
++        auto word60=[&](unsigned offset,uint32_t value){memcpy(timing60Data+offset,&value,4);};
++        word60(4,hTotal);word60(8,width);word60(12,32);word60(16,80);word60(20,48);word60(28,1);
++        word60(36,vTotal);word60(40,height);word60(44,6);word60(48,14);word60(52,3);word60(56,60<<16);
++        word60(68,(uint32_t)((uint64_t)hTotal*vTotal*60));
++        OSObject *timing60=native_legacy_ioav_timing(timing60Data,2,4);
+         OSObject *color=native_legacy_ioav_color(2,8,0,0,0,16,false,nullptr,nullptr,nullptr,nullptr);
+         OSDictionary *attributes=OSDictionary::withCapacity(16),*product=OSDictionary::withCapacity(8),*chromaticity=OSDictionary::withCapacity(3);
+         OSDictionary *white=point(20493,21561),*transport=OSDictionary::withCapacity(2),*source=OSDictionary::withCapacity(5),*scaling=OSDictionary::withCapacity(2);
+-        OSArray *colors=OSArray::withCapacity(1),*timings=OSArray::withCapacity(1),*timingColors=OSArray::withCapacity(1);
++        OSArray *colors=OSArray::withCapacity(1),*timings=OSArray::withCapacity(2),*timingColors=OSArray::withCapacity(1);
+         bool done=false;
+         do {
+             if(!timing || !color || !attributes || !product || !chromaticity || !white || !transport || !source || !scaling ||
+@@ -1067,8 +1142,9 @@ public:
+             };
              ident(color,kDisplayColorID);ident(timing,kDisplayTimingID);
              if(!colors->setObject(color) || !timingColors->setObject(color) || !timings->setObject(timing))break;
++            if(timing60){ident(timing60,kDisplayTimingID+1);timings->setObject(timing60);}
              native_legacy_ioav_timing_colors(timing,timingColors);
 -            if(!putString(product,"ManufacturerID","UNX") || !putNumber(product,"ProductID",0) || !putNumber(product,"SerialNumber",0) ||
 +            if(!putString(product,"ManufacturerID","UNX") || !putNumber(product,"ProductID",0x5250) || !putNumber(product,"SerialNumber",width<<16|height) ||
                 !putString(product,"ProductName","UniXNU Display"))break;
              if(!putPoint(chromaticity,"Red",41943,21627) || !putPoint(chromaticity,"Green",19661,39322) ||
                 !putPoint(chromaticity,"Blue",9830,3932) || !putNumber(white,"Gamma",144179))break;
-@@ -1219,6 +1258,23 @@ public:
+@@ -1194,6 +1270,9 @@ public:
+             display->setProperty("IODisplayEDID",edid);
+             display->setProperty("DisplayVendorID",(unsigned long long)(bytes[8]<<8|bytes[9]),32);
+             display->setProperty("DisplayProductID",(unsigned long long)(bytes[10]|bytes[11]<<8),32);
++            display->setProperty("SupportsRotation",kOSBooleanTrue);
++            display->setProperty("SupportedRotations",0xf,32);
++            display->setProperty("IODisplayIsBuiltIn",kOSBooleanFalse);
+             display->setName("NativeDisplay");
+             attached=display->attach(self);
+         }
+@@ -1219,12 +1298,34 @@ public:
      IOReturn getColorRemapMode(uint32_t *mode) override {if(!mode)return kIOReturnBadArgument;*mode=colorRemapMode;return kIOReturnSuccess;}
      // No color matrix hardware either; the compositor's matrix is accepted, as the virtual-machine display accepts it.
      IOReturn swapSetColorMatrix(void *,uint32_t,uint32_t) override {return kIOReturnSuccess;}
@@ -229,11 +393,22 @@ index a654ed8..521605e 100644
  #endif
  #define LEAF(n) __attribute__((noreturn,noinline)) void opaque##n() override { native_legacy_backend_guard(n,this,__builtin_return_address(0)); }
      NATIVE_LEGACY_LEAVES(LEAF)
+ #undef LEAF
+ };
+ OSDefineMetaClassAndStructors(NativeLegacyDisplay,IOMobileFramebufferLegacy)
++extern "C" volatile uint32_t native_legacy_rotate = 0;
++extern "C" int native_legacy_set_rotate(uint32_t r, uint32_t live) {
++    if (!gDirectDisplay) return -2;
++    return gDirectDisplay->setRotateLive(r, live);
++}
+ extern "C" void native_legacy_direct_snapshot(void) {if(gDirectDisplay)gDirectDisplay->snapshot();}
+ IOService *native_legacy_display_allocate(void) {return new NativeLegacyDisplay;}
+ extern "C" void native_legacy_gpu_complete(void *display,int status) {if(display)static_cast<NativeLegacyDisplay *>(display)->gpuComplete(status);}
 diff --git a/NativeLegacyRequest.h b/NativeLegacyRequest.h
-index c5a1e1b..ca79b38 100644
+index c5a1e1b..2973e3c 100644
 --- a/NativeLegacyRequest.h
 +++ b/NativeLegacyRequest.h
-@@ -144,6 +144,32 @@ static inline int native_legacy_copy_pixels(volatile void *destination,
+@@ -144,6 +144,79 @@ static inline int native_legacy_copy_pixels(volatile void *destination,
      return 1;
  }
  

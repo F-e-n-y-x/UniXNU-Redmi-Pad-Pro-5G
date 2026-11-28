@@ -13,6 +13,7 @@ extern "C" volatile uint32_t native_ufs_dpu_state __attribute__((weak_import));
 extern "C" volatile uint32_t native_ufs_dpu_smmu[24] __attribute__((weak_import));
 extern "C" volatile uint32_t native_ufs_dpu_check[8] __attribute__((weak_import));
 extern "C" void ruan_cpufreq_report(char *, unsigned) __attribute__((weak_import));
+extern "C" volatile int32_t ruan_gpu_dcvs[12] __attribute__((weak_import));   // RuanGpuPower.c governor state, USB `gpufreq`
 // ArmCpu.cpp secondary bring-up evidence (smp=1), per logical core; USB `cpu` prints it before the stats rows. Steps: 1 nub,
 // 2 registered, 3 start thread, 4 PSCI CPU_ON issued, 5 initCPU on the new core, 6 GIC redistributor ready, 7 running.
 // fail: 1 MPIDR mismatch, 2 redistributor, 3 remote redistributor (smp-gic=1), 4 ml_processor_register.
@@ -28,7 +29,12 @@ extern "C" volatile uint32_t sheng_sigp_recovered __attribute__((weak_import)), 
     sheng_idle_sigp_refused __attribute__((weak_import)), sheng_edge_cross_type_steals[2] __attribute__((weak_import)),
     sheng_edge_idle_beside_excess[2] __attribute__((weak_import));
 extern "C" unsigned armcpu_stats_row(unsigned, char *, unsigned) __attribute__((weak_import));   // ArmCpu.cpp, USB `cpu` (per-core rows need diag=1)   // RuanCpuFreq.c, USB `cpufreq`
+extern "C" int ruan_cpufreq_set_profile(unsigned) __attribute__((weak_import));   // RuanCpuFreq.c, USB `cpuprof N`
+extern "C" uint64_t ruan_idle_wfi_count[] __attribute__((weak_import));   // ruan-idle-wfi.patch (xnu cpu.c), USB `cpu`
+extern "C" const uint32_t ruan_idle_wfi_us __attribute__((weak_import));
 extern "C" volatile uint32_t native_legacy_direct[14] __attribute__((weak_import));   // NativeLegacyDisplay direct-scanout counters
+extern "C" volatile uint32_t native_legacy_rotate __attribute__((weak_import));        // NativeLegacyDisplay: current fb-rotate
+extern "C" int native_legacy_set_rotate(uint32_t, uint32_t) __attribute__((weak_import));
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <string.h>
@@ -572,7 +578,7 @@ static void handleCommand(TerminalSession &s, const char *raw) {
     if (strEq(raw, "ping")) {
         s.reply.writeStr("[usb] PONG ruan\r\n");
     } else if (strEq(raw, "features") || strEq(raw, "help")) {
-        s.reply.writeStr("FEATURES: ping status bootargs display usb touch battery wifi wifi.log bt bt.log video video.log audio replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg fb fb.scan gpu\r\n");
+        s.reply.writeStr("FEATURES: ping status bootargs display usb touch battery wifi wifi.log bt bt.log video video.log audio replay screen.snapshot screen.start screen.stop screen.configure reboot.status reboot reboot.fastboot ls cat dmesg fb fb.scan gpu rotate gpufreq cpuprof\r\n");
     } else if (strEq(raw, "wifi") || strEq(raw, "wlan")) {
         if (&ruan_wifi_status_str && ruan_wifi_status_str) {
             snprintf(buf, sizeof(buf), "[usb] WIFI: %s\r\n", ruan_wifi_status_str());
@@ -633,6 +639,16 @@ static void handleCommand(TerminalSession &s, const char *raw) {
             s.reply.writeStr(buf);
             if (&ruan_bl_mirror_status) {snprintf(buf, sizeof(buf), "[usb] BACKLIGHT %s\r\n", ruan_bl_mirror_status); s.reply.writeStr(buf);}
         }
+    } else if (strEq(raw, "rotate") || strStarts(raw, "rotate ")) {
+        // "rotate" shows it; "rotate 1|3" flips 90<->270 live (booted with fb-rotate); "rotate 0|1|3 live" also tries portrait<->landscape
+        const char *p = raw + 6;
+        bool ok = false;
+        const uint32_t r = parseUint(p, &ok);
+        const bool live = strStarts(p, " live");
+        static const char *const why[] = {"done", "unchanged", "bad value (0, 1 or 3)", "no display", "portrait<->landscape needs 'live' or fb-rotate at boot", "failed or busy, retry"};
+        const int rc = !&native_legacy_set_rotate ? -2 : strEq(raw, "rotate") ? 1 : ok ? native_legacy_set_rotate(r, live) : -1;
+        snprintf(buf, sizeof(buf), "[usb] ROTATE: %s now=%u\r\n", why[rc < 0 ? 1 - rc : rc], &native_legacy_rotate ? native_legacy_rotate : 0u);
+        s.reply.writeStr(buf);
     } else if (strEq(raw, "battery") || strEq(raw, "power")) {
         // g_ruan_battery declared at file scope in extern "C" block above (weak_import)
         if (&g_ruan_battery) {
@@ -897,6 +913,14 @@ static void handleCommand(TerminalSession &s, const char *raw) {
         } else {
             s.reply.writeStr("[usb] CPU smp: ArmCpu counters not linked\r\n");
         }
+        if (&ruan_idle_wfi_count && &ruan_idle_wfi_us) {
+            // WFIs per CPU; a spinning core (SIGPdisabled, ruan-idle-wfi-us=0) stays at 0 and only raises sigp refused above
+            const uint64_t *w = ruan_idle_wfi_count;
+            snprintf(buf, sizeof(buf), "[usb] IDLE: wfi-us=%u wfi %llu/%llu/%llu/%llu/%llu/%llu/%llu/%llu\r\n", ruan_idle_wfi_us,
+                     (unsigned long long)w[0], (unsigned long long)w[1], (unsigned long long)w[2], (unsigned long long)w[3],
+                     (unsigned long long)w[4], (unsigned long long)w[5], (unsigned long long)w[6], (unsigned long long)w[7]);
+            s.reply.writeStr(buf);
+        }
         char row[480];
         for (unsigned i = 0; &armcpu_stats_row && i < 32 && armcpu_stats_row(i, row, sizeof(row)) != 0; i++) {
             snprintf(buf, sizeof(buf), "[usb] %s\r\n", row);
@@ -916,10 +940,37 @@ static void handleCommand(TerminalSession &s, const char *raw) {
                      (unsigned)p[24], (unsigned)p[25], (int)p[26], (unsigned)p[27], (int)p[28], (unsigned)p[29], (unsigned)p[30], (unsigned)p[31]);
         } else snprintf(buf, sizeof(buf), "[usb] PANEL120: not linked\r\n");
         s.reply.writeStr(buf);
+    } else if (strStarts(raw, "cpuprof ")) {
+        // "cpuprof N": 0 performance, 1 schedutil, 2 powersave, 3 ondemand; also accepts governor names
+        const char *p = raw + 8;
+        while (*p == ' ' || *p == '\t') ++p;
+        uint32_t n = 0;
+        bool ok = true;
+        if (strEq(p, "performance") || strEq(p, "0")) n = 0;
+        else if (strEq(p, "schedutil") || strEq(p, "balanced") || strEq(p, "1")) n = 1;
+        else if (strEq(p, "powersave") || strEq(p, "powersaving") || strEq(p, "2")) n = 2;
+        else if (strEq(p, "ondemand") || strEq(p, "3")) n = 3;
+        else n = parseUint(p, &ok);
+        const int rc = ok && &ruan_cpufreq_set_profile ? ruan_cpufreq_set_profile(n) : -2;
+        static const char *const gov_names[4] = {"performance", "schedutil", "powersave", "ondemand"};
+        const char *gov = n <= 3 ? gov_names[n] : "unknown";
+        snprintf(buf, sizeof(buf), "[usb] CPUPROF %u (%s): %s\r\n", n, gov, rc == 0 ? "set" : rc == -2 ? "bad governor or not linked" : "refused (N > 3 or no governor)");
+        s.reply.writeStr(buf);
     } else if (strEq(raw, "cpufreq")) {
         char row[160] = "not linked";
         if (&ruan_cpufreq_report) ruan_cpufreq_report(row, sizeof(row));
         snprintf(buf, sizeof(buf), "[usb] CPUFREQ: %s\r\n", row);
+        s.reply.writeStr(buf);
+    } else if (strEq(raw, "gpufreq")) {
+        // L = HFI perf index (1 295 .. 6 734 .. 9 940 MHz); boot L0 = one-level NOM tables (cpuprof=0, today's path)
+        static const unsigned mhz[10] = {0, 295, 345, 500, 600, 650, 734, 816, 875, 940};
+        if (&ruan_gpu_dcvs) {
+            const volatile int32_t *g = ruan_gpu_dcvs;
+            const unsigned l = (unsigned)g[1] < 10 ? (unsigned)g[1] : 0;
+            snprintf(buf, sizeof(buf), "[usb] GPUFREQ: prof %d boot L%d dcvs %s L%u %u MHz ceil L%d busy %d/1000 temp %d dC changes %d failed %d (stat %d) secs %d no-tsens %d\r\n",
+                     (int)g[9], (int)g[10], g[0] ? "run" : "off", l, mhz[l], (int)g[2], (int)g[5], (int)g[6], (int)g[3], (int)g[4], (int)g[11],
+                     (int)g[7], (int)g[8]);
+        } else snprintf(buf, sizeof(buf), "[usb] GPUFREQ: not linked\r\n");
         s.reply.writeStr(buf);
     } else if (strEq(raw, "dpu.flip")) {
         // Step b (docs/research/dpu-scanout-sm7435.md): point VIG0 at our own buffer (colour bars, below 4 GiB, contiguous) for
